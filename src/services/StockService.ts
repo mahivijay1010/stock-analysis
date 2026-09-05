@@ -1,0 +1,1801 @@
+/**
+ * StockService — slim orchestrator over the market data layer (Module 1) and
+ * the pure quant engine (Module 2). Owns all API-facing composition:
+ *
+ *  - analyze():      resolve → bars → quant analysis → projections → persist
+ *  - top picks:      30-min cached universe scan from DB bars
+ *  - backtest():     walk-forward backtest + ModelPerformance upsert
+ *  - accuracy():     aggregate measured accuracy across the universe
+ *  - chart()/universe()/history(): read endpoints
+ *  - cron hooks:     refreshUniverseBars, scanUniverse(logPredictions),
+ *                    verifyMaturedPredictions, cleanupOldAnalyses
+ *
+ * NEVER fabricates data: every number comes from Yahoo bars/quotes or the DB.
+ */
+
+import { AppDataSource } from "../config/database";
+import { Stock } from "../entities/Stock";
+import { Analysis } from "../entities/Analysis";
+import { PredictionLog } from "../entities/PredictionLog";
+import { ModelPerformance } from "../entities/ModelPerformance";
+import { NSE_UNIVERSE } from "../data/nseUniverse";
+import { marketDataService } from "./market/MarketDataService";
+import { fundamentalsService } from "./market/FundamentalsService";
+import { macroService } from "./market/MacroService";
+import { newsService } from "./market/NewsService";
+import { frameworkService, SectorMomentumSnapshot } from "./framework/FrameworkService";
+import { buildTradePlan, buildInvestmentPlan } from "./framework/plan";
+import { computeEntryTiming } from "./framework/entryTiming";
+import {
+  analyzeBars,
+  buildProjections,
+  HORIZONS,
+  TRADING_DAY_OFFSETS,
+} from "./quant/engine";
+import { simulateBootstrap } from "./quant/montecarlo";
+import { backtestBars, isDirectionHit, PROB_BUCKET_EDGES } from "./quant/backtest";
+import { dailyReturns, smaSeries } from "./quant/indicators";
+import { predictAll, MODEL_NAMES, ModelName } from "./quant/models";
+import { evaluateModelPool, mergeModelStats } from "./quant/models/evaluate";
+import { selectEnsemble, blendProb, EnsembleSelection } from "./quant/models/selector";
+import { ensembleService } from "./ensemble/EnsembleService";
+import {
+  AccuracyPerStock,
+  AccuracyResponse,
+  AccuracySummary,
+  AnalyzeResponse,
+  BacktestResult,
+  Bar,
+  CalibrationHorizon,
+  CalibrationLiveHorizon,
+  CalibrationModels,
+  CalibrationResponse,
+  EnsembleBlock,
+  EnsembleWeightEntry,
+  ModelAggregateStat,
+  ModelHorizonStat,
+  ProbBucket,
+  ResearchBrief,
+  ChartPayload,
+  ChartRange,
+  ChartResponse,
+  DISCLAIMER,
+  EntryAction,
+  Fundamentals,
+  HttpError,
+  Horizon,
+  HorizonPrediction,
+  InvestmentPlan,
+  MarketRegime,
+  MonteCarloForecast,
+  NewsSummary,
+  ProjectionRow,
+  QuantAnalysis,
+  Quote,
+  TopPick,
+  TopPicksResponse,
+  TradePlan,
+  UniverseStockRow,
+} from "../types";
+
+const MODEL_VERSION = "quant-v1";
+const TOP_PICKS_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const MIN_BARS_FOR_ANALYSIS = 60;
+const DEFAULT_BACKTEST_DAYS = 60;
+
+/** Fetch range per chart range (wider fetch so SMA200 has warm-up bars). */
+const CHART_FETCH_RANGE: Record<ChartRange, "1y" | "2y" | "5y"> = {
+  "7d": "1y",
+  "15d": "1y",
+  "1mo": "1y",
+  "3mo": "1y",
+  "6mo": "2y",
+  "1y": "2y",
+  "5y": "5y",
+};
+
+/** Calendar days shown per chart range. */
+const CHART_WINDOW_DAYS: Record<ChartRange, number> = {
+  "7d": 7,
+  "15d": 15,
+  "1mo": 31,
+  "3mo": 92,
+  "6mo": 183,
+  "1y": 366,
+  "5y": 1827,
+};
+
+export interface ScanEntry {
+  ticker: string;
+  name: string;
+  sector: string;
+  price: number;
+  changePercent: number;
+  score: number;
+  recommendation: "BUY" | "HOLD" | "AVOID";
+  riskLevel: "LOW" | "MEDIUM" | "HIGH";
+  topReasons: string[];
+  predictions: HorizonPrediction[];
+  projections: ProjectionRow[];
+  // V2: extra real quant values the admin daily-plan needs for trade planning.
+  atr14: number | null;
+  annualVolatilityPct: number | null;
+  directionProb7d: number | null;
+  // V5: technical-only entry timing (news=null, pop7d=directionProb7d).
+  entryAction: EntryAction;
+  entryScore: number;
+}
+
+export interface ScanResult {
+  asOf: string;
+  scannedCount: number;
+  entries: ScanEntry[]; // sorted by score desc, ALL scanned stocks
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** YYYY-MM-DD in Asia/Kolkata. */
+function istDateString(d: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+/** dateStr (YYYY-MM-DD) + n calendar days → YYYY-MM-DD. */
+function addCalendarDays(dateStr: string, n: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + n));
+  return dt.toISOString().slice(0, 10);
+}
+
+function toNum(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === "number" ? v : Number.parseFloat(String(v));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** pg 'date' columns can come back as Date or string — normalize to YYYY-MM-DD. */
+function toDateStr(v: unknown): string {
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v).slice(0, 10);
+}
+
+function mapRiskToEntity(risk: "LOW" | "MEDIUM" | "HIGH"): "Low" | "Medium" | "High" {
+  return risk === "LOW" ? "Low" : risk === "HIGH" ? "High" : "Medium";
+}
+
+/** Old rows may carry legacy vocabulary — surface only BUY/HOLD/AVOID. */
+function mapRecommendationOut(rec: string | null): string | null {
+  if (rec === null) return null;
+  return rec === "SELL" ? "AVOID" : rec;
+}
+
+export class StockService {
+  private topPicksCache: ScanResult | null = null;
+  private topPicksBuiltAt = 0;
+  private scanInFlight: Promise<ScanResult> | null = null;
+  private scanInFlightLogsPredictions = false;
+
+  // ── Search ─────────────────────────────────────────────────────────────────
+
+  async search(query: string): Promise<Array<{ ticker: string; name: string; exchange: string }>> {
+    const q = (query ?? "").trim();
+    if (!q) return [];
+    return marketDataService.search(q);
+  }
+
+  // ── Analyze ────────────────────────────────────────────────────────────────
+
+  async analyze(tickerOrName: string, amount?: number): Promise<AnalyzeResponse> {
+    const resolved = await marketDataService.resolve(tickerOrName);
+    if (!resolved) {
+      throw new HttpError(
+        404,
+        `Could not resolve "${tickerOrName}" to an analyzable NSE/BSE stock. This tool analyzes individual ` +
+          `listed companies (technicals + fundamentals) — mutual funds, ETFs and index products aren't ` +
+          `supported since they don't have the daily price/fundamental data this analysis needs. ` +
+          `Try a company name or ticker instead, e.g. "Reliance", "TCS", "HDFC Bank".`
+      );
+    }
+    const ticker = resolved.ticker;
+
+    // V2: kick off fundamentals / macro / sector-momentum fetches NOW so they
+    // run concurrently with the bars+quote work below. Each degrades honestly:
+    // a failure yields null and the framework phases are marked no-data with
+    // the warning recorded — the analyze request itself never fails for this.
+    let fundamentalsWarning: string | null = null;
+    const fundamentalsP: Promise<Fundamentals | null> = fundamentalsService
+      .getFundamentals(ticker)
+      .catch((err: Error) => {
+        fundamentalsWarning = err.message;
+        return null;
+      });
+    const regimeP: Promise<MarketRegime | null> = macroService
+      .getMarketRegime()
+      .catch((err: Error) => {
+        console.warn(`⚠️ macro regime unavailable: ${err.message}`);
+        return null;
+      });
+    const sectorP: Promise<SectorMomentumSnapshot | null> = frameworkService
+      .getSectorMomentum()
+      .catch((err: Error) => {
+        console.warn(`⚠️ sector momentum unavailable: ${err.message}`);
+        return null;
+      });
+    // V5: two-source news radar — a failure yields null and NEVER blocks the
+    // analysis (the entry-timing verdict simply becomes non-news-aware).
+    const newsP: Promise<NewsSummary | null> = newsService
+      .getNews(ticker, resolved.name)
+      .catch((err: Error) => {
+        console.warn(`⚠️ news unavailable for ${ticker}: ${err.message}`);
+        return null;
+      });
+
+    const { bars, source: barsSource } =
+      await marketDataService.getDailyBarsWithSource(ticker, "2y");
+    if (bars.length < MIN_BARS_FOR_ANALYSIS) {
+      throw new HttpError(
+        422,
+        `${ticker} does not have enough real trading history to analyze (${bars.length} of the required ` +
+          `${MIN_BARS_FOR_ANALYSIS} daily bars). This usually means it's a newly listed stock, a thinly-traded ` +
+          `product, or not a regular equity — this tool needs real price history to compute anything.`
+      );
+    }
+
+    let niftyBars: Bar[] | undefined;
+    try {
+      niftyBars = await marketDataService.getNiftyBars("1y");
+    } catch {
+      niftyBars = undefined; // relative-strength signal degrades to neutral
+    }
+
+    let quote: Quote;
+    let dataStatus: "live" | "cached";
+    try {
+      quote = await marketDataService.getQuote(ticker);
+      // A live quote alone is not enough: if the bars silently fell back to
+      // stale DB history (Yahoo unreachable), the analysis is degraded and
+      // must say so (REBUILD_SPEC ground rule 2).
+      dataStatus = barsSource === "db-stale" ? "cached" : "live";
+    } catch {
+      // Yahoo quote unavailable — fall back to the latest REAL bar (never fabricated).
+      quote = this.quoteFromBars(ticker, bars);
+      dataStatus = "cached";
+    }
+
+    const analysis = analyzeBars(bars, { niftyBars });
+    const projections = buildProjections(quote.price, analysis.predictions);
+    const chart = this.buildChartPayload(bars, 250);
+    const accuracy = await this.latestAccuracySummary(ticker);
+
+    // V5: seeded bootstrap Monte Carlo from the SAME real bars' daily returns.
+    let monteCarlo: MonteCarloForecast;
+    try {
+      monteCarlo = simulateBootstrap(dailyReturns(bars.map((b) => b.close)));
+    } catch (err) {
+      // Only possible with <61 bars (we already require 60) — surface honestly.
+      throw new HttpError(
+        422,
+        `${ticker} has too little real return history for the Monte Carlo forecast: ${(err as Error).message}`
+      );
+    }
+
+    // V5: 1-year beta vs NIFTY (cov/var over overlapping daily returns).
+    const beta1y = this.computeBeta1y(bars, niftyBars);
+
+    // V2: await the concurrent fetches and compose framework + plans.
+    const [fundamentals, macro, sectorMomentum, news] = await Promise.all([
+      fundamentalsP,
+      regimeP,
+      sectorP,
+      newsP,
+    ]);
+
+    // V7 A2: 6-model ensemble — pure pool prediction on the SAME bars, blended
+    // by measured per-model skill (stored walk-forward briers / live weights).
+    const ensemble = await this.buildEnsembleBlock({
+      ticker,
+      bars,
+      niftyBars: niftyBars ?? null,
+      newsSentimentScore: news?.sentimentScore ?? null,
+      regimeScore: macro?.score ?? null,
+      accuracy,
+    });
+
+    // V5: news-aware entry timing — pop7d from the Monte Carlo forecast;
+    // V7: when the ensemble is available, pop7d = 0.5×MC + 0.5×blendedProb7d.
+    const mcPop7 = monteCarlo.horizons.find((h) => h.horizonDays === 7)?.pop ?? null;
+    const blended7 = ensemble ? ensemble.blendedProbUp[7] : null;
+    const pop7dInput =
+      mcPop7 !== null && blended7 !== null ? 0.5 * mcPop7 + 0.5 * blended7 : mcPop7;
+    const entryTiming = computeEntryTiming({
+      quantScore: analysis.score,
+      recommendation: analysis.recommendation,
+      rsi14: analysis.technicals.rsi14,
+      bollingerPercentB: analysis.technicals.bollinger?.percentB ?? null,
+      regime: macro?.regime ?? null,
+      pop7d: pop7dInput,
+      expected1dPct:
+        analysis.predictions.find((p) => p.horizonDays === 1)?.expectedReturnPct ?? null,
+      news: news
+        ? {
+            sentimentScore: news.sentimentScore,
+            hypeTemperature: news.hypeTemperature,
+            fresh24hCount: news.fresh24hCount,
+          }
+        : null,
+      bollingerLower: analysis.technicals.bollinger?.lower ?? null,
+    });
+    if (mcPop7 !== null && blended7 !== null && pop7dInput !== null) {
+      entryTiming.reasons.push(
+        `7-day PoP input is a 50/50 blend of Monte Carlo (${(mcPop7 * 100).toFixed(1)}%) ` +
+          `and the 6-model ensemble (${(blended7 * 100).toFixed(1)}%) → ${(pop7dInput * 100).toFixed(1)}%`
+      );
+    }
+
+    const tradePlan: TradePlan | null = buildTradePlan({
+      entry: quote.price,
+      atr14: analysis.technicals.atr14,
+      annualVolatilityPct: analysis.technicals.annualVolatilityPct,
+      recommendation: analysis.recommendation,
+    });
+
+    const sector =
+      NSE_UNIVERSE.find((u) => u.ticker === ticker)?.sector ?? null;
+    const framework = frameworkService.buildReport({
+      ticker,
+      sector,
+      price: quote.price,
+      quant: analysis,
+      fundamentals,
+      fundamentalsWarning,
+      regime: macro,
+      sectorMomentum,
+      tradePlan,
+    });
+
+    const investmentPlan: InvestmentPlan | null =
+      amount !== undefined
+        ? buildInvestmentPlan({
+            amount,
+            price: quote.price,
+            ticker,
+            tradePlan,
+            predictions: analysis.predictions,
+            recommendation: analysis.recommendation,
+          })
+        : null;
+
+    // Persist Analysis + PredictionLog rows (best-effort: a storage hiccup
+    // must not turn a completed analysis into a 500).
+    try {
+      await this.persistAnalysis(ticker, quote, analysis);
+      await this.persistPredictionLogs(ticker, bars, analysis);
+    } catch (err) {
+      console.error(`⚠️ Failed to persist analysis rows for ${ticker}:`, err);
+    }
+
+    return {
+      ticker,
+      name: resolved.name,
+      exchange: resolved.exchange,
+      currency: "INR",
+      quote,
+      analysis,
+      projections,
+      accuracy,
+      chart,
+      dataStatus,
+      disclaimer: DISCLAIMER,
+      framework,
+      macro,
+      fundamentals,
+      tradePlan,
+      investmentPlan,
+      news,
+      monteCarlo,
+      entryTiming,
+      beta1y,
+      ensemble,
+    };
+  }
+
+  /**
+   * V7 A2: build the AnalyzeResponse ensemble block. Pure model-pool
+   * probabilities on the given bars, weighted per horizon by (in preference
+   * order) live regret weights fresher than the backtest, stored inverse-Brier
+   * backtest weights, or equal weights when nothing is stored yet. Never
+   * throws — a failure yields null (the analyze response degrades honestly).
+   */
+  private async buildEnsembleBlock(args: {
+    ticker: string;
+    bars: Bar[];
+    niftyBars: Bar[] | null;
+    newsSentimentScore: number | null;
+    regimeScore: number | null;
+    accuracy: AccuracySummary | null;
+  }): Promise<EnsembleBlock | null> {
+    try {
+      const probs = predictAll({
+        bars: args.bars,
+        niftyBars: args.niftyBars,
+        newsSentimentScore: args.newsSentimentScore,
+        regimeScore: args.regimeScore,
+      });
+      const liveByHorizon = await ensembleService
+        .getLiveWeights(args.ticker)
+        .catch(() => new Map<Horizon, { weights: Record<string, number>; updatedAt: Date }>());
+      const ranAt = args.accuracy?.ranAt ?? null;
+
+      const blendedProbUp = {} as Record<Horizon, number>;
+      let headline: EnsembleSelection | null = null;
+      for (const h of HORIZONS) {
+        const stats: Record<string, ModelHorizonStat> | null =
+          args.accuracy?.horizons.find((x) => x.horizonDays === h)?.models ?? null;
+        const sel = selectEnsemble({
+          backtestStats: stats,
+          backtestRanAt: ranAt,
+          liveWeights: liveByHorizon.get(h) ?? null,
+        });
+        const perModelProbs: Partial<Record<ModelName, number>> = {};
+        for (const name of MODEL_NAMES) perModelProbs[name] = probs[name][h];
+        blendedProbUp[h] = Number(blendProb(sel.weights, perModelProbs).toFixed(4));
+        if (h === 7) headline = sel;
+      }
+      if (!headline) return null;
+
+      const stats7 =
+        args.accuracy?.horizons.find((x) => x.horizonDays === 7)?.models ?? null;
+      const weights: EnsembleWeightEntry[] = MODEL_NAMES.map((name) => ({
+        model: name,
+        weightPct: Number((headline!.weights[name] * 100).toFixed(2)),
+        brier: stats7?.[name]?.brier ?? null,
+      }));
+
+      const note =
+        headline.source === "live"
+          ? "Weights: live regret-updated (FTRL-style, refreshed after each evening verification). " +
+            "The 7d weights are shown; each horizon is blended with its own weights. " +
+            "Model skill is measured, not promised — near-equal weights mean no model has a real edge."
+          : headline.source === "backtest"
+            ? "Weights: inverse-Brier from this stock's 60-day walk-forward backtest (w ∝ 0.25 − brier). " +
+              "The 7d weights are shown; each horizon is blended with its own weights. " +
+              "Model skill is measured, not promised — near-equal weights mean no model has a real edge."
+            : "Weights: equal — no stored per-model backtest stats for this stock yet " +
+              "(run scripts/refreshBacktests.ts). The blend is an honest average, not a skill claim.";
+
+      return { blendedProbUp, bestModel: headline.bestModel, weights, note };
+    } catch (err) {
+      console.warn(
+        `⚠️ ensemble block unavailable for ${args.ticker}:`,
+        (err as Error).message
+      );
+      return null;
+    }
+  }
+
+  /**
+   * V5: 1-year beta vs NIFTY 50 — cov(stock, nifty) / var(nifty) over
+   * overlapping daily returns (dates present in BOTH series). Returns null
+   * when fewer than 100 overlapping return observations exist — an honest
+   * "not enough data", never a made-up 1.0.
+   */
+  private computeBeta1y(bars: Bar[], niftyBars: Bar[] | undefined): number | null {
+    if (!niftyBars || niftyBars.length < 2) return null;
+    const niftyByDate = new Map(niftyBars.map((b) => [b.date, b.close]));
+    const window = bars.slice(-260); // ~1 trading year
+    const paired: Array<{ s: number; n: number }> = [];
+    for (const b of window) {
+      const n = niftyByDate.get(b.date);
+      if (n !== undefined && b.close > 0 && n > 0) paired.push({ s: b.close, n });
+    }
+    const sRet: number[] = [];
+    const nRet: number[] = [];
+    for (let i = 1; i < paired.length; i++) {
+      sRet.push(paired[i].s / paired[i - 1].s - 1);
+      nRet.push(paired[i].n / paired[i - 1].n - 1);
+    }
+    if (sRet.length < 100) return null;
+    const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const mS = mean(sRet);
+    const mN = mean(nRet);
+    let cov = 0;
+    let varN = 0;
+    for (let i = 0; i < sRet.length; i++) {
+      cov += (sRet[i] - mS) * (nRet[i] - mN);
+      varN += (nRet[i] - mN) ** 2;
+    }
+    if (varN === 0) return null;
+    return Number((cov / varN).toFixed(3));
+  }
+
+  /** Quote derived from the latest real bars (fallback when Yahoo is down). */
+  private quoteFromBars(ticker: string, bars: Bar[]): Quote {
+    const last = bars[bars.length - 1];
+    const prev = bars.length > 1 ? bars[bars.length - 2] : last;
+    const w52 = bars.slice(-252);
+    const change = last.close - prev.close;
+    return {
+      ticker,
+      price: last.close,
+      previousClose: prev.close,
+      change,
+      changePercent: prev.close !== 0 ? (change / prev.close) * 100 : 0,
+      dayHigh: last.high,
+      dayLow: last.low,
+      volume: last.volume,
+      fiftyTwoWeekHigh: Math.max(...w52.map((b) => b.high)),
+      fiftyTwoWeekLow: Math.min(...w52.map((b) => b.low)),
+      currency: "INR",
+      asOf: new Date(`${last.date}T15:30:00+05:30`).toISOString(),
+    };
+  }
+
+  private buildChartPayload(bars: Bar[], windowBars: number): ChartPayload {
+    const closes = bars.map((b) => b.close);
+    const start = Math.max(0, bars.length - windowBars);
+    return {
+      bars: bars.slice(start),
+      sma20: smaSeries(closes, 20).slice(start),
+      sma50: smaSeries(closes, 50).slice(start),
+      sma200: smaSeries(closes, 200).slice(start),
+    };
+  }
+
+  private async latestAccuracySummary(ticker: string): Promise<AccuracySummary | null> {
+    const row = await AppDataSource.getRepository(ModelPerformance).findOne({
+      where: { ticker, modelVersion: MODEL_VERSION },
+      order: { ranAt: "DESC" },
+    });
+    if (!row || !row.horizons || !row.ranAt) return null;
+    return {
+      testDays: row.testDays ?? DEFAULT_BACKTEST_DAYS,
+      horizons: row.horizons as AccuracySummary["horizons"],
+      ranAt: new Date(row.ranAt).toISOString(),
+    };
+  }
+
+  private async persistAnalysis(
+    ticker: string,
+    quote: Quote,
+    analysis: QuantAnalysis
+  ): Promise<void> {
+    const stock = await AppDataSource.getRepository(Stock).findOne({ where: { ticker } });
+    if (!stock) return; // stock row is created by getDailyBars persistence; nothing to attach to
+
+    const p30 = analysis.predictions.find((p) => p.horizonDays === 30);
+    const summaryParts = [
+      `${ticker}: score ${analysis.score}/100 — ${analysis.recommendation} (${analysis.riskLevel} risk).`,
+    ];
+    if (p30) {
+      summaryParts.push(
+        `30d expected ${p30.expectedReturnPct >= 0 ? "+" : ""}${p30.expectedReturnPct.toFixed(2)}% ` +
+          `(80% band ${p30.low80Pct.toFixed(2)}%..${p30.high80Pct.toFixed(2)}%).`
+      );
+    }
+    if (analysis.reasons.positive[0]) summaryParts.push(analysis.reasons.positive[0]);
+    if (analysis.reasons.negative[0]) summaryParts.push(analysis.reasons.negative[0]);
+
+    const row = AppDataSource.getRepository(Analysis).create({
+      stockId: stock.id,
+      summary: summaryParts.join(" "),
+      recommendation: analysis.recommendation,
+      riskLevel: mapRiskToEntity(analysis.riskLevel),
+      currentPrice: quote.price,
+      rsi: analysis.technicals.rsi14 ?? undefined,
+      score: analysis.score,
+      priceChangePercent: Number(quote.changePercent.toFixed(2)),
+    });
+    await AppDataSource.getRepository(Analysis).save(row);
+  }
+
+  /**
+   * One PredictionLog row per horizon, keyed to the date of the last bar the
+   * prediction was computed from. Re-analyzing the same day replaces that
+   * day's rows (latest analysis wins) so verification never double-counts.
+   */
+  private async persistPredictionLogs(
+    ticker: string,
+    bars: Bar[],
+    analysis: QuantAnalysis
+  ): Promise<void> {
+    const lastBar = bars[bars.length - 1];
+    const predictionDate = lastBar.date;
+    const repo = AppDataSource.getRepository(PredictionLog);
+
+    await repo.delete({
+      ticker,
+      modelVersion: MODEL_VERSION,
+      predictionDate: predictionDate as unknown as Date,
+    });
+
+    const rows = analysis.predictions.map((p) =>
+      repo.create({
+        ticker,
+        predictionDate: predictionDate as unknown as Date,
+        modelVersion: MODEL_VERSION,
+        predictedDirection:
+          p.directionProb > 0.5 ? "UP" : p.directionProb < 0.5 ? "DOWN" : "UNCERTAIN",
+        predictedProbability: p.directionProb,
+        confidence: p.directionProb,
+        expectedReturn: p.expectedReturnPct,
+        expectedVolatility: analysis.technicals.annualVolatilityPct ?? undefined,
+        horizonDays: p.horizonDays,
+        targetDate: addCalendarDays(predictionDate, p.horizonDays) as unknown as Date,
+        basePrice: lastBar.close,
+        expectedPrice: p.expectedPrice,
+        low80Pct: p.low80Pct,
+        high80Pct: p.high80Pct,
+        score: analysis.score,
+        predictionUncertainty: analysis.riskLevel.toLowerCase(),
+        recommendationGiven: analysis.recommendation,
+      })
+    );
+    await repo.save(rows);
+  }
+
+  // ── Top picks (30-min cached universe scan) ───────────────────────────────
+
+  async getTopPicks(count: number, maxPrice?: number): Promise<TopPicksResponse> {
+    const scan = await this.getScan(false);
+    let eligible = scan.entries.filter(
+      (e) => e.riskLevel !== "HIGH" || e.score >= 75
+    );
+    let affordableCount: number | null = null;
+    if (maxPrice !== undefined && Number.isFinite(maxPrice) && maxPrice > 0) {
+      // Budget mode: rank only what the user can actually buy one share of.
+      const affordable = scan.entries.filter((e) => e.price <= maxPrice);
+      affordableCount = affordable.length;
+      eligible = affordable.filter((e) => e.riskLevel !== "HIGH" || e.score >= 75);
+    }
+    const note =
+      maxPrice !== undefined && affordableCount !== null
+        ? `Budget mode: of ${scan.scannedCount} stocks scanned, ${affordableCount} trade at or under ` +
+          `₹${maxPrice.toLocaleString("en-IN")} per share; these are the highest-scoring among them ` +
+          `(HIGH-risk names need a score ≥ 75 to qualify). A smaller pond can mean weaker setups — ` +
+          `check each pick's score and reasons rather than assuming rank 1 here equals rank 1 overall.`
+        : `Ranked by quant score across all ${scan.scannedCount} scanned stocks; HIGH-risk names need a score ≥ 75 to qualify.`;
+    const picks: TopPick[] = eligible.slice(0, count).map((e, i) => ({
+      rank: i + 1,
+      ticker: e.ticker,
+      name: e.name,
+      sector: e.sector,
+      price: e.price,
+      changePercent: e.changePercent,
+      score: e.score,
+      recommendation: e.recommendation,
+      riskLevel: e.riskLevel,
+      topReasons: e.topReasons,
+      predictions: e.predictions,
+      projections: e.projections,
+      entryAction: e.entryAction,
+      entryScore: e.entryScore,
+    }));
+    return {
+      asOf: scan.asOf,
+      universeSize: NSE_UNIVERSE.length,
+      scannedCount: scan.scannedCount,
+      maxPrice: maxPrice !== undefined && Number.isFinite(maxPrice) && maxPrice > 0 ? maxPrice : null,
+      affordableCount,
+      note,
+      picks,
+    };
+  }
+
+  /**
+   * V2-D: public accessor to the same cached universe scan the top-picks
+   * endpoint uses — the admin daily plan REUSES this cache (no extra scans).
+   */
+  async getScanSnapshot(): Promise<ScanResult> {
+    return this.getScan(false);
+  }
+
+  /**
+   * V10 B4 — cache-only scan peek: the ticker's entry from the FRESH (≤30min)
+   * cached scan, or null. NEVER triggers a scan — the buy-path entry-context
+   * snapshot must not add a ~90s universe scan to a trade record.
+   */
+  peekScanEntry(ticker: string): ScanEntry | null {
+    if (!this.topPicksCache || Date.now() - this.topPicksBuiltAt >= TOP_PICKS_TTL_MS) {
+      return null;
+    }
+    return this.topPicksCache.entries.find((e) => e.ticker === ticker) ?? null;
+  }
+
+  /** Cached scan accessor — 30-minute TTL; scanUniverse() single-flights. */
+  private async getScan(force: boolean): Promise<ScanResult> {
+    if (
+      !force &&
+      this.topPicksCache &&
+      Date.now() - this.topPicksBuiltAt < TOP_PICKS_TTL_MS
+    ) {
+      return this.topPicksCache;
+    }
+    return this.scanUniverse({ logPredictions: false });
+  }
+
+  /**
+   * Scan the whole universe from DB bars (stale tickers are refreshed from
+   * Yahoo best-effort; actual Yahoo fetches are followed by a throttle pause).
+   *
+   * Single-flight: at most one scan runs at a time, whether triggered by HTTP
+   * (top-picks) or by the 08:45 cron. Callers that don't need prediction
+   * logging piggyback on any in-flight scan; a logging caller (the cron) never
+   * piggybacks on a non-logging scan — it waits, then runs its own.
+   */
+  async scanUniverse(opts?: { logPredictions?: boolean }): Promise<ScanResult> {
+    const logPredictions = opts?.logPredictions === true;
+    while (this.scanInFlight) {
+      if (!logPredictions || this.scanInFlightLogsPredictions) {
+        return this.scanInFlight;
+      }
+      await this.scanInFlight.catch(() => undefined);
+    }
+    const run = this.runScan(logPredictions).finally(() => {
+      if (this.scanInFlight === run) {
+        this.scanInFlight = null;
+      }
+    });
+    this.scanInFlight = run;
+    this.scanInFlightLogsPredictions = logPredictions;
+    return run;
+  }
+
+  /** The actual universe scan — only ever entered via scanUniverse(). */
+  private async runScan(logPredictions: boolean): Promise<ScanResult> {
+    let niftyBars: Bar[] | undefined;
+    try {
+      niftyBars = await marketDataService.getNiftyBars("1y");
+    } catch {
+      niftyBars = undefined;
+    }
+    // V5: one regime fetch for the whole scan (entry timing input); no news
+    // fetches here — 151 tickers would hammer the free sources.
+    const scanRegime: MarketRegime | null = await macroService
+      .getMarketRegime()
+      .catch(() => null);
+
+    const entries: ScanEntry[] = [];
+    for (const u of NSE_UNIVERSE) {
+      try {
+        const { bars, source } = await marketDataService.getDailyBarsWithSource(
+          u.ticker,
+          "1y"
+        );
+        if (bars.length < MIN_BARS_FOR_ANALYSIS) continue;
+
+        const analysis = analyzeBars(bars, { niftyBars });
+        const last = bars[bars.length - 1];
+        const prev = bars.length > 1 ? bars[bars.length - 2] : last;
+        const directionProb7d =
+          analysis.predictions.find((p) => p.horizonDays === 7)?.directionProb ?? null;
+        // V5: technical-only entry timing (news=null → newsAware=false).
+        const entryTiming = computeEntryTiming({
+          quantScore: analysis.score,
+          recommendation: analysis.recommendation,
+          rsi14: analysis.technicals.rsi14,
+          bollingerPercentB: analysis.technicals.bollinger?.percentB ?? null,
+          regime: scanRegime?.regime ?? null,
+          pop7d: directionProb7d,
+          expected1dPct:
+            analysis.predictions.find((p) => p.horizonDays === 1)?.expectedReturnPct ?? null,
+          news: null,
+          bollingerLower: analysis.technicals.bollinger?.lower ?? null,
+        });
+        entries.push({
+          ticker: u.ticker,
+          name: u.name,
+          sector: u.sector,
+          price: last.close,
+          changePercent:
+            prev.close !== 0
+              ? Number((((last.close - prev.close) / prev.close) * 100).toFixed(2))
+              : 0,
+          score: analysis.score,
+          recommendation: analysis.recommendation,
+          riskLevel: analysis.riskLevel,
+          topReasons: analysis.reasons.positive.slice(0, 3),
+          predictions: analysis.predictions,
+          projections: buildProjections(last.close, analysis.predictions),
+          atr14: analysis.technicals.atr14,
+          annualVolatilityPct: analysis.technicals.annualVolatilityPct,
+          directionProb7d,
+          entryAction: entryTiming.action,
+          entryScore: entryTiming.score,
+        });
+
+        if (logPredictions) {
+          await this.persistPredictionLogs(u.ticker, bars, analysis);
+        }
+        // Space out actual Yahoo fetches ≥300ms (spec ground rule 1);
+        // DB-served tickers need no pause.
+        if (source === "yahoo") await sleep(350);
+      } catch (err) {
+        console.warn(`⚠️ scan skipped ${u.ticker}:`, (err as Error).message);
+      }
+    }
+
+    entries.sort((a, b) => b.score - a.score);
+    const result: ScanResult = {
+      asOf: new Date().toISOString(),
+      scannedCount: entries.length,
+      entries,
+    };
+    this.topPicksCache = result;
+    this.topPicksBuiltAt = Date.now();
+    return result;
+  }
+
+  // ── Backtest & accuracy ────────────────────────────────────────────────────
+
+  async runBacktest(tickerOrName: string, testDays: number): Promise<BacktestResult> {
+    const resolved = await marketDataService.resolve(tickerOrName);
+    if (!resolved) {
+      throw new HttpError(
+        404,
+        `Could not resolve "${tickerOrName}" to an Indian (NSE/BSE) listing.`
+      );
+    }
+    const days = Math.min(Math.max(Math.floor(testDays), 10), 250);
+    const bars = await marketDataService.getDailyBars(resolved.ticker, "2y");
+    if (bars.length < 122) {
+      throw new HttpError(
+        422,
+        `Not enough price history for ${resolved.ticker} to backtest: need at least 122 daily bars, have ${bars.length}.`
+      );
+    }
+    const result = await this.backtestWithModelPool(resolved.ticker, bars, days);
+    await this.upsertModelPerformance(resolved.ticker, result, bars);
+    return result;
+  }
+
+  /**
+   * V7 A2: walk-forward backtest of the quant engine PLUS the 6-model pool on
+   * the same bars — the pool's per-model stats (and the out-of-sample blended
+   * stat) are merged into result.horizons so ONE ModelPerformance row carries
+   * everything. Pool failure never sinks the backtest (stats simply absent).
+   */
+  async backtestWithModelPool(
+    ticker: string,
+    bars: Bar[],
+    testDays: number
+  ): Promise<BacktestResult> {
+    const result = backtestBars(ticker, bars, { testDays });
+    try {
+      const niftyBars = await marketDataService.getNiftyBars("1y").catch(() => null);
+      const pool = evaluateModelPool(bars, { testDays, niftyBars });
+      mergeModelStats(result.horizons, pool);
+    } catch (err) {
+      console.warn(`⚠️ model-pool eval failed for ${ticker}:`, (err as Error).message);
+    }
+    return result;
+  }
+
+  async upsertModelPerformance(
+    ticker: string,
+    result: BacktestResult,
+    bars: Bar[]
+  ): Promise<void> {
+    const totalPredictions = result.horizons.reduce((s, h) => s + h.samples, 0);
+    const correctPredictions = result.horizons.reduce(
+      (s, h) => s + Math.round((h.directionHitRatePct / 100) * h.samples),
+      0
+    );
+    const accuracy =
+      totalPredictions > 0
+        ? Number((correctPredictions / totalPredictions).toFixed(4))
+        : 0;
+
+    // Walk-forward window: T ranges over the last testDays trading days.
+    const n = bars.length;
+    const startIdx = Math.min(Math.max(120, n - result.testDays), Math.max(0, n - 2));
+    const periodStart = bars[startIdx]?.date ?? bars[0].date;
+    const periodEnd = bars[n - 1].date;
+
+    // Atomic ON CONFLICT upsert on the (ticker, model_version) unique index —
+    // concurrent backtests can never create duplicate rows.
+    await AppDataSource.getRepository(ModelPerformance).upsert(
+      {
+        ticker,
+        modelVersion: MODEL_VERSION,
+        testDays: result.testDays,
+        ranAt: new Date(result.ranAt),
+        horizons: result.horizons,
+        periodStart: periodStart as unknown as Date,
+        periodEnd: periodEnd as unknown as Date,
+        aggregationLevel: "backtest",
+        totalPredictions,
+        correctPredictions,
+        accuracy,
+        accuracyBelowThreshold: accuracy < 0.65,
+      },
+      ["ticker", "modelVersion"]
+    );
+  }
+
+  async getAccuracy(): Promise<AccuracyResponse> {
+    const rows = await AppDataSource.getRepository(ModelPerformance)
+      .createQueryBuilder("mp")
+      .where("mp.model_version = :mv", { mv: MODEL_VERSION })
+      .andWhere("mp.ticker IS NOT NULL")
+      .andWhere("mp.horizons IS NOT NULL")
+      .orderBy("mp.ran_at", "DESC")
+      .getMany();
+
+    // Latest row per ticker (upsert should keep one, but be defensive).
+    const latestByTicker = new Map<string, ModelPerformance>();
+    for (const row of rows) {
+      if (row.ticker && !latestByTicker.has(row.ticker)) {
+        latestByTicker.set(row.ticker, row);
+      }
+    }
+
+    // Aggregate horizons across the universe, weighted by sample count.
+    const agg = new Map<
+      number,
+      { samples: number; hit: number; err: number; pred: number; act: number; band: number }
+    >();
+    for (const row of latestByTicker.values()) {
+      for (const h of row.horizons ?? []) {
+        const a =
+          agg.get(h.horizonDays) ??
+          { samples: 0, hit: 0, err: 0, pred: 0, act: 0, band: 0 };
+        a.samples += h.samples;
+        a.hit += (h.directionHitRatePct / 100) * h.samples;
+        a.err += h.avgAbsErrorPct * h.samples;
+        a.pred += h.avgPredictedPct * h.samples;
+        a.act += h.avgActualPct * h.samples;
+        a.band += (h.withinBandPct / 100) * h.samples;
+        agg.set(h.horizonDays, a);
+      }
+    }
+    const overall = [1, 3, 7, 15, 30]
+      .filter((h) => agg.has(h))
+      .map((h) => {
+        const a = agg.get(h)!;
+        const n = a.samples || 1;
+        return {
+          horizonDays: h as Horizon,
+          samples: a.samples,
+          directionHitRatePct: Number(((a.hit / n) * 100).toFixed(2)),
+          avgAbsErrorPct: Number((a.err / n).toFixed(4)),
+          avgPredictedPct: Number((a.pred / n).toFixed(4)),
+          avgActualPct: Number((a.act / n).toFixed(4)),
+          withinBandPct: Number(((a.band / n) * 100).toFixed(2)),
+        };
+      });
+
+    const universeNames = new Map(NSE_UNIVERSE.map((u) => [u.ticker, u.name]));
+    const perStock: AccuracyPerStock[] = Array.from(latestByTicker.values())
+      .map((row) => {
+        const horizons = row.horizons ?? [];
+        const rate = (h: number): number | null => {
+          const stat = horizons.find((x) => x.horizonDays === h);
+          return stat && stat.samples > 0 ? Number(stat.directionHitRatePct.toFixed(2)) : null;
+        };
+        return {
+          ticker: row.ticker!,
+          name: universeNames.get(row.ticker!) ?? row.ticker!,
+          hitRate1d: rate(1),
+          hitRate7d: rate(7),
+          hitRate30d: rate(30),
+          samples: horizons.reduce((s, h) => s + h.samples, 0),
+        };
+      })
+      .sort((a, b) => (b.hitRate7d ?? -1) - (a.hitRate7d ?? -1));
+
+    const updatedAt = rows[0]?.ranAt
+      ? new Date(rows[0].ranAt).toISOString()
+      : new Date(0).toISOString();
+
+    return {
+      overall,
+      perStock,
+      updatedAt,
+      perStockCaveat:
+        "Per-stock horizon hit rates use OVERLAPPING backtest windows (e.g. ~40 samples of " +
+        "21-trading-day windows share most of their days — closer to 2–3 independent observations). " +
+        "Extreme per-stock rates (0% or 100%) at 15d/30d are usually one trend counted many times, " +
+        "not skill. Trust the aggregate table and short horizons first.",
+      methodology:
+        "Accuracy is measured by walk-forward backtesting: for each of the last 60 trading days, " +
+        "the model was given only the bars available up to that day, its 1/3/7/15/30-day predictions were " +
+        "recorded, and then compared against what the stock actually did. Direction hit rate is the share of " +
+        "predictions that got the direction right; within-band is the share of actual returns that landed inside " +
+        "the stated 80% range. 100% accuracy is impossible — these are honest, measured historical rates, " +
+        "and they change as markets change.",
+      disclaimer: DISCLAIMER,
+    };
+  }
+
+  // ── V6: Calibration dashboard (SPEC_CALIBRATION Module C2) ────────────────
+
+  /**
+   * GET /api/calibration — how honest are the stated direction probabilities?
+   * Backtest side: sample-weighted aggregation of the brierScore/probBuckets
+   * stored on ModelPerformance rows (run scripts/refreshBacktests.ts to fill
+   * them). Live side: brier measured on VERIFIED PredictionLog rows
+   * (predicted_probability vs actual_direction), null under 10 samples.
+   * The interpretation string is COMPUTED from the real numbers, never canned.
+   */
+  async getCalibration(): Promise<CalibrationResponse> {
+    const rows = await AppDataSource.getRepository(ModelPerformance)
+      .createQueryBuilder("mp")
+      .where("mp.model_version = :mv", { mv: MODEL_VERSION })
+      .andWhere("mp.ticker IS NOT NULL")
+      .andWhere("mp.horizons IS NOT NULL")
+      .orderBy("mp.ran_at", "DESC")
+      .getMany();
+
+    const latestByTicker = new Map<string, ModelPerformance>();
+    for (const row of rows) {
+      if (row.ticker && !latestByTicker.has(row.ticker)) {
+        latestByTicker.set(row.ticker, row);
+      }
+    }
+
+    // Sample-weighted pooling per horizon; buckets pooled by fixed edge index.
+    interface HAgg {
+      samples: number;
+      brierSum: number; // Σ brier × samples
+      bandSum: number; // Σ withinBand fraction × samples (for the interpretation)
+      buckets: Array<{ n: number; predSum: number; upSum: number }>;
+    }
+    const agg = new Map<Horizon, HAgg>();
+
+    // V7: per-model + blended-ensemble aggregation (same sample weighting).
+    interface MAgg {
+      samples: number;
+      brierSum: number;
+      hitSum: number; // Σ hitRate fraction × samples
+    }
+    const modelAgg = new Map<string, Map<Horizon, MAgg>>();
+    const blendAgg = new Map<Horizon, MAgg>();
+    const bumpM = (map: Map<Horizon, MAgg>, h: Horizon, s: ModelHorizonStat): void => {
+      if (!(s.samples > 0) || !Number.isFinite(s.brier)) return;
+      const a = map.get(h) ?? { samples: 0, brierSum: 0, hitSum: 0 };
+      a.samples += s.samples;
+      a.brierSum += s.brier * s.samples;
+      a.hitSum += (s.hitRatePct / 100) * s.samples;
+      map.set(h, a);
+    };
+
+    for (const row of latestByTicker.values()) {
+      for (const h of row.horizons ?? []) {
+        // V7 model stats aggregate even when V6 calibration fields are absent.
+        const hKey = h.horizonDays as Horizon;
+        if (h.models) {
+          for (const name of MODEL_NAMES) {
+            const s = h.models[name];
+            if (!s) continue;
+            const byH = modelAgg.get(name) ?? new Map<Horizon, MAgg>();
+            bumpM(byH, hKey, s);
+            modelAgg.set(name, byH);
+          }
+        }
+        if (h.ensemble) bumpM(blendAgg, hKey, h.ensemble);
+
+        if (
+          h.samples <= 0 ||
+          typeof h.brierScore !== "number" ||
+          !Array.isArray(h.probBuckets)
+        ) {
+          continue; // pre-calibration row — honest omission, not a zero
+        }
+        const key = h.horizonDays as Horizon;
+        const a =
+          agg.get(key) ??
+          {
+            samples: 0,
+            brierSum: 0,
+            bandSum: 0,
+            buckets: PROB_BUCKET_EDGES.map(() => ({ n: 0, predSum: 0, upSum: 0 })),
+          };
+        a.samples += h.samples;
+        a.brierSum += h.brierScore * h.samples;
+        a.bandSum += (h.withinBandPct / 100) * h.samples;
+        for (const b of h.probBuckets) {
+          const idx = PROB_BUCKET_EDGES.findIndex(
+            ([lo, hi]) => lo === b.pLow && hi === b.pHigh
+          );
+          if (idx < 0 || b.n <= 0) continue;
+          a.buckets[idx].n += b.n;
+          a.buckets[idx].predSum += b.meanPredicted * b.n;
+          a.buckets[idx].upSum += b.observedUpFreq * b.n;
+        }
+        agg.set(key, a);
+      }
+    }
+
+    const backtest: CalibrationHorizon[] = ([1, 3, 7, 15, 30] as Horizon[])
+      .filter((h) => (agg.get(h)?.samples ?? 0) > 0)
+      .map((h) => {
+        const a = agg.get(h)!;
+        const brier = a.brierSum / a.samples;
+        const buckets: ProbBucket[] = PROB_BUCKET_EDGES.map(([pLow, pHigh], i) => {
+          const b = a.buckets[i];
+          return {
+            pLow,
+            pHigh,
+            n: b.n,
+            meanPredicted: b.n > 0 ? Number((b.predSum / b.n).toFixed(4)) : 0,
+            observedUpFreq: b.n > 0 ? Number((b.upSum / b.n).toFixed(4)) : 0,
+          };
+        });
+        return {
+          horizonDays: h,
+          samples: a.samples,
+          brierScore: Number(brier.toFixed(4)),
+          coinFlipBrier: 0.25 as const,
+          skillPct: Number((((0.25 - brier) / 0.25) * 100).toFixed(2)),
+          buckets,
+        };
+      });
+
+    // Live brier from VERIFIED PredictionLog rows (real outcomes only).
+    const liveRows: Array<{ horizon_days: number; n: string; brier: string | null }> =
+      await AppDataSource.query(
+        `SELECT horizon_days,
+                COUNT(*) AS n,
+                AVG(POWER(predicted_probability::float8 -
+                          CASE WHEN actual_direction = 'UP' THEN 1 ELSE 0 END, 2)) AS brier
+           FROM prediction_logs
+          WHERE model_version = $1
+            AND actual_direction IS NOT NULL
+            AND predicted_probability IS NOT NULL
+            AND horizon_days IS NOT NULL
+          GROUP BY horizon_days
+          ORDER BY horizon_days`,
+        [MODEL_VERSION]
+      );
+    const liveByHorizon = new Map(liveRows.map((r) => [Number(r.horizon_days), r]));
+    const live: CalibrationLiveHorizon[] = [1, 3, 7, 15, 30].map((h) => {
+      const r = liveByHorizon.get(h);
+      const samples = r ? Number(r.n) : 0;
+      const brier = r?.brier !== null && r?.brier !== undefined ? Number(r.brier) : null;
+      return {
+        horizonDays: h,
+        samples,
+        // Under 10 verified samples a brier is noise, not a measurement.
+        brierScore: samples >= 10 && brier !== null ? Number(brier.toFixed(4)) : null,
+      };
+    });
+
+    // ── Interpretation: computed from the numbers above, never hardcoded ──
+    const totalSamples = backtest.reduce((s, h) => s + h.samples, 0);
+    let interpretation: string;
+    if (totalSamples === 0) {
+      interpretation =
+        "No calibration data stored yet — run `npx ts-node scripts/refreshBacktests.ts` to " +
+        "re-backtest the universe and fill ModelPerformance with brier scores.";
+    } else {
+      const overallBrier =
+        backtest.reduce((s, h) => s + h.brierScore * h.samples, 0) / totalSamples;
+      const overallSkillPct = ((0.25 - overallBrier) / 0.25) * 100;
+      const overallBandPct =
+        (Array.from(agg.values()).reduce((s, a) => s + a.bandSum, 0) / totalSamples) * 100;
+      const skillText =
+        overallSkillPct >= 0
+          ? `${overallSkillPct.toFixed(1)}% skill over a coin flip`
+          : `${Math.abs(overallSkillPct).toFixed(1)}% WORSE than a coin flip`;
+      const readText =
+        overallSkillPct >= 5
+          ? "the stated probabilities carry a modest real edge, but keep position sizing tight"
+          : overallSkillPct >= -5
+            ? "the direction probabilities are honest but carry essentially no directional edge — " +
+              `trust the ranges (~${overallBandPct.toFixed(1)}% measured band coverage) and risk discipline over direction calls`
+            : "the probabilities are overconfident — ignore direction confidence entirely and rely on the 80% ranges and stops";
+      interpretation =
+        `Brier ≈ ${overallBrier.toFixed(3)} vs 0.25 coin-flip across ` +
+        `${totalSamples.toLocaleString("en-IN")} walk-forward samples (${skillText}): ${readText}.`;
+      const liveWithData = live.filter((l) => l.brierScore !== null);
+      if (liveWithData.length > 0) {
+        const liveSamples = liveWithData.reduce((s, l) => s + l.samples, 0);
+        const liveBrier =
+          liveWithData.reduce((s, l) => s + (l.brierScore ?? 0) * l.samples, 0) / liveSamples;
+        const gap = liveBrier - overallBrier;
+        interpretation +=
+          ` Live verified predictions (${liveSamples.toLocaleString("en-IN")} samples) show a brier of ` +
+          `${liveBrier.toFixed(3)} — ${
+            Math.abs(gap) <= 0.01
+              ? "consistent with the backtest"
+              : gap > 0
+                ? "somewhat worse than the backtest, as live conditions usually are"
+                : "slightly better than the backtest so far, likely small-sample luck"
+          }.`;
+      } else {
+        interpretation +=
+          " Not enough verified live predictions yet (need ≥10 per horizon) for a live brier.";
+      }
+    }
+
+    const updatedAt = rows[0]?.ranAt
+      ? new Date(rows[0].ranAt).toISOString()
+      : new Date(0).toISOString();
+
+    // ── V7: per-model aggregate (DESIGN DECISION: embedded here as `models`
+    // rather than a separate /api/models/performance endpoint — one endpoint,
+    // one set of mirrored types) ─────────────────────────────────────────────
+    const statsOf = (map: Map<Horizon, MAgg>): ModelAggregateStat[] =>
+      ([1, 3, 7, 15, 30] as Horizon[])
+        .filter((h) => (map.get(h)?.samples ?? 0) > 0)
+        .map((h) => {
+          const a = map.get(h)!;
+          return {
+            horizonDays: h,
+            samples: a.samples,
+            brier: Number((a.brierSum / a.samples).toFixed(4)),
+            hitRatePct: Number(((a.hitSum / a.samples) * 100).toFixed(2)),
+          };
+        });
+
+    let models: CalibrationModels | null = null;
+    const perModel = MODEL_NAMES.map((name) => ({
+      model: name as string,
+      horizons: statsOf(modelAgg.get(name) ?? new Map()),
+    })).filter((m) => m.horizons.length > 0);
+    if (perModel.length > 0) {
+      const bestByHorizon = ([1, 3, 7, 15, 30] as Horizon[])
+        .map((h) => {
+          let best: { horizonDays: Horizon; model: string; brier: number } | null = null;
+          for (const m of perModel) {
+            const s = m.horizons.find((x) => x.horizonDays === h);
+            if (!s) continue;
+            if (best === null || s.brier < best.brier) {
+              best = { horizonDays: h, model: m.model, brier: s.brier };
+            }
+          }
+          return best;
+        })
+        .filter((x): x is { horizonDays: Horizon; model: string; brier: number } => x !== null);
+      models = {
+        perModel,
+        blended: statsOf(blendAgg),
+        engineBaseline: backtest.map((b) => ({
+          horizonDays: b.horizonDays,
+          samples: b.samples,
+          brier: b.brierScore,
+        })),
+        bestByHorizon,
+        note:
+          "Sample-weighted aggregate of each model's walk-forward brier across the universe's latest " +
+          "backtests (60 test days, zero lookahead). 'blended' is the OUT-OF-SAMPLE online inverse-Brier " +
+          "ensemble measured inside the same walk-forward; compare it against engineBaseline (the V6 " +
+          "single-model brier) — the honest delta is reported even when it is ≈ 0. Historical news/regime " +
+          "context is not archived, so the sentiment and macro models run on their price/index terms only " +
+          "in the backtest.",
+      };
+    }
+
+    const modelDrift = await ensembleService.getModelDrift().catch(() => null);
+
+    return {
+      backtest,
+      live,
+      interpretation,
+      models,
+      modelDrift,
+      methodology:
+        "Calibration is measured on the walk-forward backtest: for each of the last 60 trading days " +
+        "the model stated a probability that the stock would be UP after each horizon, using only data " +
+        "available at that moment. The Brier score is the average squared gap between that stated " +
+        "probability and what actually happened (1 if the stock closed up, 0 otherwise) — 0 is perfect, " +
+        "0.25 is what always saying 50/50 scores, and skill% = (0.25 − brier) / 0.25 × 100. The " +
+        "reliability buckets group predictions by stated probability and compare the group's mean stated " +
+        "probability against the observed up-frequency: on a perfectly calibrated model the two match. " +
+        "The live table applies the same brier to verified PredictionLog rows — real predictions logged " +
+        "in advance and checked against real later prices; horizons with fewer than 10 verified samples " +
+        "report null rather than a noisy number.",
+      updatedAt,
+    };
+  }
+
+  // ── V6: Research brief (SPEC_CALIBRATION Module C3) ────────────────────────
+
+  /**
+   * GET /api/research/:ticker — a deterministic analyst-style brief composed
+   * from ONE analyze() call. Every figure is a real value from that analysis;
+   * every nullable is guarded so the text never reads "null" or "undefined".
+   */
+  async getResearchBrief(tickerOrName: string): Promise<ResearchBrief> {
+    const a = await this.analyze(tickerOrName);
+    const sector = NSE_UNIVERSE.find((u) => u.ticker === a.ticker)?.sector ?? null;
+
+    const fmtInr = (x: number): string =>
+      `₹${x.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const sgn = (x: number, dp = 2): string => `${x >= 0 ? "+" : ""}${x.toFixed(dp)}%`;
+
+    const t = a.analysis.technicals;
+    const f = a.fundamentals;
+    const mc30 = a.monteCarlo.horizons.find((h) => h.horizonDays === 30);
+    const p1d = a.analysis.predictions.find((p) => p.horizonDays === 1);
+    const p30d = a.analysis.predictions.find((p) => p.horizonDays === 30);
+
+    // ── Verdict strip ──
+    const verdict = {
+      recommendation: a.analysis.recommendation,
+      entryAction: a.entryTiming.action,
+      quantScore: a.analysis.score,
+      masterScore: a.framework.masterScore,
+      riskLevel: a.analysis.riskLevel,
+      timingScore: a.entryTiming.score,
+    };
+
+    // ── Bull / bear cases: quant reasons + framework check evidence (≤5) ──
+    const checks = a.framework.phases.flatMap((ph) => ph.checks);
+    const passChecks = checks
+      .filter((c) => c.result === "pass")
+      .map((c) => `${c.name}: ${c.value}`);
+    const failChecks = checks
+      .filter((c) => c.result === "fail")
+      .map((c) => `${c.name}: ${c.value}`);
+    const dedupe = (xs: string[]): string[] => Array.from(new Set(xs));
+    const bullCase = dedupe([...a.analysis.reasons.positive, ...passChecks]).slice(0, 5);
+    const bearCase = dedupe([...a.analysis.reasons.negative, ...failChecks]).slice(0, 5);
+
+    // ── Key numbers (honest "n/a" when free data could not provide one) ──
+    const keyNumbers: Array<{ label: string; value: string }> = [
+      { label: "Price", value: `${fmtInr(a.quote.price)} (${sgn(a.quote.changePercent)} today)` },
+      { label: "P/E (trailing)", value: f?.trailingPE != null ? f.trailingPE.toFixed(1) : "n/a" },
+      { label: "PEG ratio", value: f?.pegRatio != null ? f.pegRatio.toFixed(2) : "n/a" },
+      {
+        label: "Revenue growth",
+        value: f?.revenueGrowthPct != null ? sgn(f.revenueGrowthPct, 1) : "n/a",
+      },
+      { label: "Beta (1y vs NIFTY)", value: a.beta1y != null ? a.beta1y.toFixed(2) : "n/a" },
+      {
+        label: "Annualised volatility",
+        value: t.annualVolatilityPct != null ? `${t.annualVolatilityPct.toFixed(1)}%` : "n/a",
+      },
+      {
+        label: "52-week position",
+        value: t.week52 != null ? `${t.week52.positionPct.toFixed(0)}% of range` : "n/a",
+      },
+      {
+        label: "30d P(gain) — Monte Carlo",
+        value: mc30 != null ? `${(mc30.pop * 100).toFixed(1)}%` : "n/a",
+      },
+      {
+        label: "30d P(−20% or worse)",
+        value: mc30 != null ? `${(mc30.pDown20 * 100).toFixed(1)}%` : "n/a",
+      },
+    ];
+
+    // ── Forecast table: quant expectations + Monte Carlo P(gain) ──
+    const forecast = a.analysis.predictions.map((p) => {
+      const mcH = a.monteCarlo.horizons.find((m) => m.horizonDays === p.horizonDays);
+      return {
+        horizonDays: p.horizonDays as number,
+        expectedPct: p.expectedReturnPct,
+        low80Pct: p.low80Pct,
+        high80Pct: p.high80Pct,
+        pop: mcH ? mcH.pop : p.directionProb,
+      };
+    });
+
+    // ── Thesis: 2–3 deterministic paragraphs quoting only real values ──
+    const para1Bits: string[] = [
+      `${a.name} (${a.ticker}${sector ? `, ${sector}` : ""}) trades at ${fmtInr(a.quote.price)}, ` +
+        `${sgn(a.quote.changePercent)} on the day.`,
+      `The quant engine scores it ${a.analysis.score}/100 — ${a.analysis.recommendation} with ` +
+        `${a.analysis.riskLevel} risk` +
+        (a.framework.masterScore != null
+          ? `, while the 8-phase framework's Master Score of ${a.framework.masterScore.toFixed(1)}/100 ` +
+            `rates it ${a.framework.verdict.replace(/_/g, " ")}`
+          : "") +
+        `.`,
+      `Entry timing currently reads ${a.entryTiming.action.replace(/_/g, " ")} with a timing score of ` +
+        `${a.entryTiming.score}/100.`,
+    ];
+
+    const tape: string[] = [];
+    if (t.rsi14 != null) tape.push(`a 14-day RSI of ${t.rsi14.toFixed(1)}`);
+    if (t.week52 != null) {
+      tape.push(
+        `a price sitting at ${t.week52.positionPct.toFixed(0)}% of its 52-week range ` +
+          `(${fmtInr(t.week52.low)}–${fmtInr(t.week52.high)})`
+      );
+    }
+    if (t.annualVolatilityPct != null) {
+      tape.push(`annualised volatility of ${t.annualVolatilityPct.toFixed(1)}%`);
+    }
+    if (a.beta1y != null) tape.push(`a 1-year beta of ${a.beta1y.toFixed(2)} against the NIFTY 50`);
+    const fund: string[] = [];
+    if (f?.trailingPE != null) fund.push(`a trailing P/E of ${f.trailingPE.toFixed(1)}`);
+    if (f?.pegRatio != null) fund.push(`a PEG of ${f.pegRatio.toFixed(2)}`);
+    if (f?.revenueGrowthPct != null) fund.push(`revenue growth of ${sgn(f.revenueGrowthPct, 1)}`);
+    if (f?.returnOnEquityPct != null) fund.push(`return on equity of ${f.returnOnEquityPct.toFixed(1)}%`);
+    const para2Bits: string[] = [
+      tape.length > 0
+        ? `On the tape the stock shows ${tape.join(", ")}.`
+        : `Not enough recent price data was available to characterise the tape.`,
+      fund.length > 0
+        ? `Fundamentally it carries ${fund.join(", ")}.`
+        : `Free fundamental data was unavailable for this run, so the brief leans on price behaviour — ` +
+          `an honest gap, not a hidden one.`,
+    ];
+
+    const para3Bits: string[] = [];
+    if (p30d != null) {
+      para3Bits.push(
+        `Over the next 30 days the model expects ${sgn(p30d.expectedReturnPct)} with an 80% band of ` +
+          `${sgn(p30d.low80Pct)} to ${sgn(p30d.high80Pct)}` +
+          (mc30 != null
+            ? `, and the ${a.monteCarlo.paths.toLocaleString("en-IN")}-path bootstrap Monte Carlo puts ` +
+              `the probability of any gain at ${(mc30.pop * 100).toFixed(1)}% with a ` +
+              `${(mc30.pDown20 * 100).toFixed(1)}% chance of a 20% drawdown`
+            : "") +
+          `.`
+      );
+    } else if (mc30 != null) {
+      para3Bits.push(
+        `The ${a.monteCarlo.paths.toLocaleString("en-IN")}-path bootstrap Monte Carlo puts the 30-day ` +
+          `probability of any gain at ${(mc30.pop * 100).toFixed(1)}% with a ` +
+          `${(mc30.pDown20 * 100).toFixed(1)}% chance of a 20% drawdown.`
+      );
+    }
+    para3Bits.push(
+      a.news != null
+        ? `On the news tape, sentiment reads ${a.news.sentimentScore >= 0 ? "+" : ""}${a.news.sentimentScore.toFixed(0)}` +
+            `/100 with ${a.news.fresh24hCount} fresh item${a.news.fresh24hCount === 1 ? "" : "s"} in the last 24 hours ` +
+            `and a hype temperature of ${a.news.hypeTemperature.toFixed(0)}/100.`
+        : `The news tape is quiet for this name across the free sources, so headlines are not moving this read.`
+    );
+    para3Bits.push(
+      `These are measured, calibrated estimates rather than promises — backtested direction accuracy sits ` +
+        `close to a coin flip, so the ranges, position sizing and the stop matter more than the point forecast.`
+    );
+
+    const thesis = [para1Bits.join(" "), para2Bits.join(" "), para3Bits.join(" ")].join("\n\n");
+
+    // ── Risks: risk level rationale, drawdown odds, band caveat, fee note ──
+    const risks: string[] = [];
+    risks.push(
+      `${a.analysis.riskLevel} risk classification` +
+        (t.annualVolatilityPct != null
+          ? ` — annualised volatility of ${t.annualVolatilityPct.toFixed(1)}%` +
+            (a.beta1y != null ? ` and a 1-year beta of ${a.beta1y.toFixed(2)} vs the NIFTY 50` : "")
+          : "") +
+        `.`
+    );
+    if (mc30 != null) {
+      risks.push(
+        `Monte Carlo downside odds over 30 days: ${(mc30.pDown10 * 100).toFixed(1)}% chance of a −10% move ` +
+          `and ${(mc30.pDown20 * 100).toFixed(1)}% chance of −20% or worse.`
+      );
+    }
+    const band7 = a.accuracy?.horizons.find((h) => h.horizonDays === 7);
+    risks.push(
+      band7 != null && band7.samples > 0
+        ? `The 80% forecast bands are statistical ranges, not guarantees — measured 7-day band coverage for ` +
+          `this stock is ${band7.withinBandPct.toFixed(1)}% (${band7.samples} samples), so outcomes outside ` +
+          `the band happen regularly.`
+        : `The 80% forecast bands are statistical ranges, not guarantees — roughly 1 in 5 outcomes is ` +
+          `expected to land outside them by construction.`
+    );
+    if (p1d != null && Math.abs(p1d.expectedReturnPct) < 0.5) {
+      risks.push(
+        `Fee warning: the 1-day expected move (${sgn(p1d.expectedReturnPct)}) is smaller than typical ` +
+          `round-trip transaction costs (brokerage + STT + impact, roughly 0.2–0.5%), so very short-horizon ` +
+          `trading of this signal loses money to fees even when the direction call is right.`
+      );
+    }
+
+    // ── Accuracy context: this ticker's own measured rates + honesty line ──
+    let accuracyContext: string;
+    if (a.accuracy != null && a.accuracy.horizons.length > 0) {
+      const rate = (hd: number): string | null => {
+        const h = a.accuracy!.horizons.find((x) => x.horizonDays === hd);
+        return h && h.samples > 0
+          ? `${hd}d ${h.directionHitRatePct.toFixed(1)}% (${h.samples} samples)`
+          : null;
+      };
+      const rates = [rate(1), rate(7), rate(30)].filter((x): x is string => x !== null);
+      const brier7 = a.accuracy.horizons.find((h) => h.horizonDays === 7)?.brierScore;
+      accuracyContext =
+        `Measured walk-forward hit rates for this stock (${a.accuracy.testDays} test days): ` +
+        `${rates.join(", ")}` +
+        (brier7 != null ? `; 7d Brier score ${brier7.toFixed(4)} vs 0.25 coin-flip` : "") +
+        `. Direction accuracy near 50% is normal and honest — the value is in the calibrated ranges ` +
+        `and risk discipline, not the up/down call.`;
+    } else {
+      accuracyContext =
+        `No stored backtest exists for this ticker yet, so there are no measured hit rates to quote — ` +
+        `treat every direction call here as an unproven lean and rely on the ranges and stops.`;
+    }
+
+    // ── V7: "Prediction engine" line (best model + measured brier + blend) ──
+    let predictionEngine: string | null = null;
+    if (a.ensemble) {
+      const b7 = a.ensemble.blendedProbUp[7];
+      predictionEngine = a.ensemble.bestModel
+        ? `Prediction engine: 6-model ensemble — best model for this stock is '${a.ensemble.bestModel.name}' ` +
+          `(7d Brier ${a.ensemble.bestModel.brier.toFixed(4)} vs 0.25 coin-flip over ` +
+          `${a.ensemble.bestModel.samples} walk-forward samples, 60-day window). Today's blended P(up, 7d) ` +
+          `is ${(b7 * 100).toFixed(1)}%, with every model weighted by its measured skill — no single model ` +
+          `is trusted blindly.`
+        : `Prediction engine: 6-model ensemble at equal weights (no stored per-model backtest for this ` +
+          `stock yet). Today's blended P(up, 7d) is ${(b7 * 100).toFixed(1)}% — treat it as an unproven lean.`;
+    }
+
+    return {
+      ticker: a.ticker,
+      name: a.name,
+      sector,
+      generatedAt: new Date().toISOString(),
+      verdict,
+      thesis,
+      bullCase,
+      bearCase,
+      keyNumbers,
+      forecast,
+      newsContext:
+        a.news?.assessment ??
+        `No fresh news flow was found for this name across the free sources — a quiet tape, so the ` +
+          `analysis is driven by price action and fundamentals rather than headlines.`,
+      risks,
+      accuracyContext,
+      predictionEngine,
+      disclaimer: DISCLAIMER,
+    };
+  }
+
+  // ── Charts, universe, history ─────────────────────────────────────────────
+
+  async getChart(tickerOrName: string, range: ChartRange): Promise<ChartResponse> {
+    const resolved = await marketDataService.resolve(tickerOrName);
+    if (!resolved) {
+      throw new HttpError(
+        404,
+        `Could not resolve "${tickerOrName}" to an Indian (NSE/BSE) listing.`
+      );
+    }
+    const bars = await marketDataService.getDailyBars(
+      resolved.ticker,
+      CHART_FETCH_RANGE[range]
+    );
+    if (bars.length === 0) {
+      throw new HttpError(404, `No price history available for ${resolved.ticker}.`);
+    }
+
+    const cutoff = addCalendarDays(istDateString(), -CHART_WINDOW_DAYS[range]);
+    let start = bars.findIndex((b) => b.date >= cutoff);
+    if (start < 0) start = 0;
+
+    const closes = bars.map((b) => b.close);
+    return {
+      ticker: resolved.ticker,
+      range,
+      bars: bars.slice(start),
+      sma20: smaSeries(closes, 20).slice(start),
+      sma50: smaSeries(closes, 50).slice(start),
+      sma200: smaSeries(closes, 200).slice(start),
+    };
+  }
+
+  /** Universe list with latest cached score/recommendation + last close. */
+  async getUniverse(): Promise<UniverseStockRow[]> {
+    const tickers = NSE_UNIVERSE.map((u) => u.ticker);
+    const rows: Array<{
+      ticker: string;
+      score: string | null;
+      recommendation: string | null;
+      risk_level: string | null;
+      analyzed_at: Date | null;
+      close_price: string | null;
+      price_change_percent: string | null;
+    }> = await AppDataSource.query(
+      `SELECT s.ticker,
+              a.score, a.recommendation, a.risk_level, a.created_at AS analyzed_at,
+              h.close_price, h.price_change_percent
+         FROM stocks s
+         LEFT JOIN LATERAL (
+           SELECT score, recommendation, risk_level, created_at
+             FROM analysis WHERE stock_id = s.id
+            ORDER BY created_at DESC LIMIT 1
+         ) a ON true
+         LEFT JOIN LATERAL (
+           SELECT close_price, price_change_percent
+             FROM stock_history WHERE stock_id = s.id
+            ORDER BY trading_date DESC, fetch_timestamp DESC LIMIT 1
+         ) h ON true
+        WHERE s.ticker = ANY($1)`,
+      [tickers]
+    );
+    const byTicker = new Map(rows.map((r) => [r.ticker, r]));
+
+    // V5: merge the latest in-memory scan snapshot (fresher AND complete —
+    // every scanned stock has a score) over the DB fallback rows. This is what
+    // removes the "—" score/recommendation gaps for universe stocks that were
+    // scanned but never individually analyzed.
+    const scanByTicker = new Map<string, ScanEntry>(
+      (this.topPicksCache?.entries ?? []).map((e) => [e.ticker, e])
+    );
+    const scanAsOf = this.topPicksCache?.asOf ?? null;
+
+    return NSE_UNIVERSE.map((u) => {
+      const r = byTicker.get(u.ticker);
+      const s = scanByTicker.get(u.ticker);
+      if (s) {
+        return {
+          ticker: u.ticker,
+          name: u.name,
+          sector: u.sector,
+          price: s.price,
+          changePercent: s.changePercent,
+          score: s.score,
+          recommendation: s.recommendation,
+          riskLevel: s.riskLevel,
+          analyzedAt: scanAsOf,
+          entryAction: s.entryAction,
+        };
+      }
+      return {
+        ticker: u.ticker,
+        name: u.name,
+        sector: u.sector,
+        price: toNum(r?.close_price ?? null),
+        changePercent: toNum(r?.price_change_percent ?? null),
+        score: toNum(r?.score ?? null),
+        recommendation: mapRecommendationOut(r?.recommendation ?? null),
+        riskLevel: r?.risk_level ? r.risk_level.toUpperCase() : null,
+        analyzedAt: r?.analyzed_at ? new Date(r.analyzed_at).toISOString() : null,
+        entryAction: null,
+      };
+    });
+  }
+
+  /** Stored Analysis rows for a ticker, newest first. */
+  async getHistory(
+    tickerOrName: string,
+    limit: number
+  ): Promise<{ ticker: string; count: number; analyses: Array<Record<string, unknown>> }> {
+    const resolved = await marketDataService.resolve(tickerOrName);
+    if (!resolved) {
+      throw new HttpError(
+        404,
+        `Could not resolve "${tickerOrName}" to an Indian (NSE/BSE) listing.`
+      );
+    }
+    const stock = await AppDataSource.getRepository(Stock).findOne({
+      where: { ticker: resolved.ticker },
+    });
+    if (!stock) return { ticker: resolved.ticker, count: 0, analyses: [] };
+
+    const rows = await AppDataSource.getRepository(Analysis).find({
+      where: { stockId: stock.id },
+      order: { createdAt: "DESC" },
+      take: Math.min(Math.max(limit, 1), 100),
+    });
+    return {
+      ticker: resolved.ticker,
+      count: rows.length,
+      analyses: rows.map((r) => ({
+        id: r.id,
+        recommendation: mapRecommendationOut(r.recommendation),
+        riskLevel: r.riskLevel ? r.riskLevel.toUpperCase() : null,
+        score: toNum(r.score ?? null),
+        currentPrice: toNum(r.currentPrice ?? null),
+        rsi: toNum(r.rsi ?? null),
+        priceChangePercent: toNum(r.priceChangePercent ?? null),
+        summary: r.summary,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  // ── Cron hooks ─────────────────────────────────────────────────────────────
+
+  /** 08:45 IST — refresh universe bars from Yahoo (throttled). */
+  async refreshUniverseBars(): Promise<{ ok: string[]; failed: string[] }> {
+    return marketDataService.seedUniverse();
+  }
+
+  /**
+   * 18:30 IST — fill actual outcomes on matured PredictionLog rows using real
+   * bars, then refresh ModelPerformance for the affected tickers.
+   */
+  async verifyMaturedPredictions(): Promise<{ verified: number; tickersRefreshed: number }> {
+    const repo = AppDataSource.getRepository(PredictionLog);
+    const pending = await repo
+      .createQueryBuilder("p")
+      .where("p.actual_return IS NULL")
+      .andWhere("p.model_version = :mv", { mv: MODEL_VERSION })
+      .andWhere("p.horizon_days IS NOT NULL")
+      .getMany();
+
+    const byTicker = new Map<string, PredictionLog[]>();
+    for (const row of pending) {
+      const list = byTicker.get(row.ticker) ?? [];
+      list.push(row);
+      byTicker.set(row.ticker, list);
+    }
+
+    let verified = 0;
+    const refreshed: string[] = [];
+    for (const [ticker, logs] of byTicker) {
+      let bars: Bar[];
+      try {
+        bars = await marketDataService.getDailyBars(ticker, "1y");
+      } catch (err) {
+        console.warn(`⚠️ verify skipped ${ticker}:`, (err as Error).message);
+        continue;
+      }
+      const indexByDate = new Map(bars.map((b, i) => [b.date, i]));
+      let touched = false;
+
+      for (const log of logs) {
+        const predDate = toDateStr(log.predictionDate);
+        const horizon = log.horizonDays as Horizon | undefined;
+        if (!horizon || !(horizon in TRADING_DAY_OFFSETS)) continue;
+        // The prediction was made on a bar date; find it (exact match).
+        let idx = indexByDate.get(predDate);
+        if (idx === undefined) {
+          // Bar history may have been revised — use the last bar ≤ predDate.
+          idx = -1;
+          for (let i = bars.length - 1; i >= 0; i--) {
+            if (bars[i].date <= predDate) {
+              idx = i;
+              break;
+            }
+          }
+          if (idx < 0) continue;
+        }
+        const offset = TRADING_DAY_OFFSETS[horizon];
+        const outcomeIdx = idx + offset;
+        if (outcomeIdx > bars.length - 1) continue; // not matured yet
+
+        const base = bars[idx].close;
+        if (!(base > 0)) continue;
+        const actual = (bars[outcomeIdx].close / base - 1) * 100;
+        const predicted = toNum(log.expectedReturn) ?? 0;
+
+        log.actualReturn = Number(actual.toFixed(4));
+        log.actualDirection = actual >= 0 ? "UP" : "DOWN";
+        log.predictionCorrect = isDirectionHit(predicted, actual);
+        log.outcomeDate = bars[outcomeIdx].date as unknown as Date;
+        await repo.save(log);
+        verified++;
+        touched = true;
+      }
+
+      if (touched) {
+        try {
+          const fullBars = await marketDataService.getDailyBars(ticker, "2y");
+          if (fullBars.length >= 122) {
+            // V7: pool-merged so nightly refreshes keep the per-model stats.
+            const result = await this.backtestWithModelPool(
+              ticker,
+              fullBars,
+              DEFAULT_BACKTEST_DAYS
+            );
+            await this.upsertModelPerformance(ticker, result, fullBars);
+            refreshed.push(ticker);
+          }
+        } catch (err) {
+          console.warn(`⚠️ ModelPerformance refresh failed for ${ticker}:`, (err as Error).message);
+        }
+      }
+    }
+    return { verified, tickersRefreshed: refreshed.length };
+  }
+
+  /** Midnight — delete Analysis rows older than 365 days. NEVER touches PredictionLog/ModelPerformance. */
+  async cleanupOldAnalyses(): Promise<number> {
+    const result = await AppDataSource.getRepository(Analysis)
+      .createQueryBuilder()
+      .delete()
+      .where("created_at < NOW() - INTERVAL '365 days'")
+      .execute();
+    return result.affected ?? 0;
+  }
+}
+
+/** Shared singleton — controller and cron use the same top-picks cache. */
+export const stockService = new StockService();
+export default stockService;
