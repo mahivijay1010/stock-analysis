@@ -28,12 +28,19 @@ DEFERRED (do in D/E):
 - Month-view UI (original vs latest outlook vs actuals chart) — backend done, no dedicated frontend view yet (spec §5 monthly history display).
 - From B: CSV import/export live test, corrections live test, dividends/split live test, SELL-before-BUY validation test.
 
-## PHASE D NEXT (plan §5, spec §7–9): one engine, evidence-gated decisions, leak-proof validation
-1. Experiment registry: model_registry rows for challengers; EXPERIMENTAL labels end-to-end.
-2. Leak-proof validation harness (purged/embargoed walk-forward; no test-set reuse for selection).
-3. Challenger models run SHADOW-ONLY (log alongside champion, never surfaced as product output).
-4. Evidence-gated DecisionService: BUY/HOLD/AVOID + entry gating driven by measured stats with explicit thresholds; remove residual heuristic pathways or label them.
-5. Promotion procedure: challenger → champion only on out-of-sample superiority (document the test).
+## PHASE D IN PROGRESS (plan §6, spec §7–8)
+DONE (committed):
+- `src/services/experiments/splits.ts`: date-grouped chronological splits with PURGE (label-interval overlap dropped) + EMBARGO (post-boundary gap); dateBlockBootstrap for uncertainty (resample dates in contiguous blocks, never rows). Pure, throws on degenerate configs.
+- `src/services/experiments/baselines.ts`: constant-50 Brier (0.25 definitional), train-only base-rate Brier, always-up/majority hit rates, last-price MAE%/RMSE%, EWMA vol (λ=.94, no lookahead — tested), pinball quantile loss, Gneiting-Raftery interval score (+coverage+width).
+- tests/experiments.test.ts: 11 tests green (12 suites / 157 total).
+- DecisionService done earlier in this session (see above) — that was D-item 4.
+
+REMAINING for D:
+1. ExperimentRun entity + registry (immutable run rows: config/splits/dataset-hash/metrics/baseline-comparisons; untouched-holdout discipline).
+2. Runner: evaluate the CURRENT engine (shrunk-drift) + baselines over purged splits on real stock_history; report per-horizon vs baselines (spec §8 report set). Expect: no directional edge (state it).
+3. Challenger: TS-only regularized logistic/linear on lagged features, shadow-only PredictionLog-style logging (never surfaced). GBM quantile model = BLOCKED pending owner Q5 (Python worker).
+4. Promotion gate doc (docs/promotion-gate.md): primary metrics, min evidence, holdout discipline, shadow period.
+5. Wire decision snapshots into UI surfaces (Stock Detail first).
 
 ## Environment
 Backend :5101 (`npm run dev`, single watcher), frontend :3001 (`npx next dev -p 3001`), port 3000 = other project. Postgres `stock_analysis`. Org agent-spend limit hit 2026-09-06 — work inline until reset.
