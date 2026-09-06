@@ -29,6 +29,8 @@ import {
 } from "./intelligenceRotation";
 import { NSE_UNIVERSE } from "../data/nseUniverse";
 import { rankService } from "./RankService";
+import { sessionCalendarService } from "./forecast/SessionCalendarService";
+import { forecastService } from "./forecast/ForecastService";
 
 const TZ = "Asia/Kolkata";
 
@@ -204,6 +206,36 @@ export class CronService {
     //    as experiment artifacts; nothing writes them anymore), and
     //  - the V9 nightly Kelly-drift snapshot (kelly_drift rows preserved).
     // Both features are out of production execution per upgrade-spec §2.
+
+    // Phase C (spec §5): reconcile the session calendar against today's real
+    // bars, grade matured forecast points, and ensure the current month has an
+    // original snapshot for every followed/held instrument. All idempotent and
+    // downtime-recovering (a re-run picks up whatever was missed); failures
+    // never sink the evening job.
+    try {
+      const cal = await sessionCalendarService.reconcile();
+      console.log(
+        `📅 [CRON] Session calendar reconciled: +${cal.observed} observed, ` +
+          `${cal.closedNoData} closed(no-data), ${cal.projected} projected`
+      );
+      const graded = await forecastService.verifyOutcomes();
+      console.log(
+        `📅 [CRON] Forecast outcomes: ${graded.verified} verified, ${graded.noSession} no-session, ` +
+          `${graded.missingData} missing-data, ${graded.pending} pending (of ${graded.examined} matured)`
+      );
+      const sweep = await forecastService.issueDailyForAll();
+      console.log(
+        `📅 [CRON] Daily forecast issuances: ${sweep.issued} new, ${sweep.reused} reused, ` +
+          `${sweep.failed.length} failed`
+      );
+      const renewal = await forecastService.renewMonthly();
+      console.log(
+        `📅 [CRON] Monthly snapshots (${renewal.period}): ${renewal.issued.length} issued, ` +
+          `${renewal.skipped.length} already present, ${renewal.failed.length} failed`
+      );
+    } catch (err) {
+      console.error("📅 [CRON] Forecast maintenance failed:", err);
+    }
   }
 
   /** 00:00 IST — Analysis rows older than 365 days only. */

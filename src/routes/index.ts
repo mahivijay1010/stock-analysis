@@ -6,6 +6,7 @@ import {
   QuantController,
   AuthController,
   LedgerController,
+  ForecastController,
 } from "../controllers";
 import { createAdminRoutes } from "./admin";
 import { requireAuth, requireAuthOrAdminKey, requireCsrfHeader } from "../middleware/auth";
@@ -43,6 +44,7 @@ export const createStockRoutes = (): Router => {
   const quantController = new QuantController();
   const authController = new AuthController();
   const ledgerController = new LedgerController();
+  const forecastController = new ForecastController();
 
   // ── Auth (Phase B2, spec §12) ─────────────────────────────────────────────
   // Session cookie: httpOnly + SameSite=Strict; CSRF = custom X-Requested-With
@@ -66,6 +68,20 @@ export const createStockRoutes = (): Router => {
   router.post("/transactions", requireAuth, ledgerController.recordTransaction); //      POST /api/transactions
   router.post("/transactions/import", requireAuth, ledgerController.importTransactions); // POST /api/transactions/import { rows, dryRun? }
   router.post("/transactions/:id/correct", requireAuth, ledgerController.correctTransaction); // POST /api/transactions/:id/correct { note? }
+
+  // ── Immutable forecasts (Phase C, spec §5) ────────────────────────────────
+  // GETs read stored issuances only; POSTs (auth) create NEW immutable
+  // issuances — nothing here ever updates a forecast in place.
+  router.get("/forecast/:ticker/daily", forecastController.daily); //                 GET  /api/forecast/:t/daily
+  router.get("/forecast/:ticker/month/:period", forecastController.month); //         GET  /api/forecast/:t/month/2026-09
+  router.post("/forecast/:ticker/issue", requireAuth, forecastController.issue); //   POST /api/forecast/:t/issue
+  router.post(
+    "/forecast/:ticker/month/:period/refresh",
+    requireAuth,
+    forecastController.refreshMonth
+  ); //                                                                               POST /api/forecast/:t/month/:p/refresh
+  router.get("/holdings/projection", requireAuth, forecastController.holdingsProjection); // GET /api/holdings/projection
+  router.post("/jobs/forecast-maintenance", requireAuthOrAdminKey, forecastController.maintenance); // POST /api/jobs/forecast-maintenance
 
   // Admin trading desk (V2-D) — before any param routes. Now requires a real
   // session (or x-admin-key when ADMIN_KEY is configured) — see routes/admin.ts.

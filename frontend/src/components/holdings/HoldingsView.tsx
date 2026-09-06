@@ -4,10 +4,10 @@ import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { AlertTriangle, ArrowUpRight, Clock3 } from 'lucide-react';
-import { analyzeStock, getHoldings, isNotFound, isUnauthorized } from '@/lib/api';
+import { getHoldings, getHoldingsProjection, isNotFound, isUnauthorized } from '@/lib/api';
 import type { HoldingPosition, TransactionRecord } from '@/lib/types';
 import { quoteFreshness } from '@/lib/freshness';
-import { fmtDateTime, inr, inrSmart, signedInr, signedPct } from '@/lib/format';
+import { fmtDateShort, fmtDateTime, inr, inrSmart, signedInr, signedPct } from '@/lib/format';
 import {
   Button,
   Card,
@@ -49,31 +49,35 @@ function positionValue(p: HoldingPosition): number | null {
 /* ------------------------------------------------------------------ */
 
 function ProjectionCells({ p }: { p: HoldingPosition }) {
-  const enrich = useQuery({
-    queryKey: ['analyze', p.ticker, null],
-    queryFn: () => analyzeStock(p.ticker, null),
+  // One shared fetch for the whole table (React Query dedupes by key): the
+  // stored immutable issuance transformed to position value/P&L (spec §5 —
+  // the SAME distribution Stock Detail shows, never a second model or a
+  // silent live recompute).
+  const projQ = useQuery({
+    queryKey: ['holdings-projection'],
+    queryFn: getHoldingsProjection,
     staleTime: 5 * 60_000,
     retry: 1,
   });
 
-  if (enrich.isPending) return <Skeleton className="h-10 w-44" />;
-  const p30 = enrich.data?.analysis.predictions.find((x) => x.horizonDays === 30) ?? null;
-  const anchor = enrich.data?.quote.price ?? null;
-  if (!p30 || anchor == null) return <span className="text-xs text-slate-500">no 30d forecast</span>;
-
-  const projectedValue = p.qty * p30.expectedPrice;
-  const changeFromToday = p.qty * (p30.expectedPrice - anchor);
-  const lowV = p.qty * p30.lowPrice;
-  const highV = p.qty * p30.highPrice;
+  if (projQ.isPending) return <Skeleton className="h-10 w-44" />;
+  const row = projQ.data?.positions.find((r) => r.ticker === p.ticker) ?? null;
+  if (!row) {
+    return (
+      <span className="text-xs text-slate-500" title="Issuances are created nightly, or on demand from Stock Detail → Forecast">
+        no stored issuance yet
+      </span>
+    );
+  }
 
   return (
     <div className="text-right">
-      <p className="text-sm font-semibold text-slate-100 tabular-nums">{inrSmart(projectedValue)}</p>
-      <p className={clsx('text-xs font-medium tabular-nums', signTone(changeFromToday))}>
-        {signedInr(changeFromToday)} vs today
+      <p className="text-sm font-semibold text-slate-100 tabular-nums">{inrSmart(row.value.p50)}</p>
+      <p className={clsx('text-xs font-medium tabular-nums', signTone(row.pnl.p50))}>
+        {signedInr(row.pnl.p50)} vs basis
       </p>
       <p className="text-[11px] text-slate-500 tabular-nums">
-        80% range {inrSmart(lowV)} – {inrSmart(highV)}
+        80% range {inrSmart(row.value.p10)} – {inrSmart(row.value.p90)} · by {fmtDateShort(row.horizonDate)}
       </p>
     </div>
   );
@@ -300,8 +304,8 @@ export function HoldingsView({
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h3 className="font-display text-sm font-semibold tracking-tight text-slate-100">Positions</h3>
             <p className="text-[11px] text-slate-500">
-              &ldquo;Projected 30d&rdquo; is a <strong>model estimate</strong> from the same forecast Stock Detail
-              shows — it is not realized profit and no sale charges are subtracted.
+              &ldquo;Projected 30d&rdquo; is a <strong>model estimate</strong> transformed from the same immutable
+              forecast issuance Stock Detail shows — not realized profit; no sale charges subtracted.
             </p>
           </div>
           <div className="thin-scroll mt-3 overflow-x-auto rounded-xl border border-white/6">

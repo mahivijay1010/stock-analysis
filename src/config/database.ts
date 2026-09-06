@@ -34,6 +34,10 @@ import {
   WatchlistItem,
   LedgerTransaction,
   LedgerLotAllocation,
+  TradingSession,
+  ForecastRun,
+  ForecastPoint,
+  ForecastOutcome,
 } from "../entities";
 import * as dotenv from "dotenv";
 
@@ -92,6 +96,10 @@ export const AppDataSource = new DataSource({
     WatchlistItem,
     LedgerTransaction,
     LedgerLotAllocation,
+    TradingSession,
+    ForecastRun,
+    ForecastPoint,
+    ForecastOutcome,
   ],
   migrations: [__dirname + "/../migrations/*.{js,ts}"],
   subscribers: [],

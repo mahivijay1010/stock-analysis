@@ -160,3 +160,92 @@ export function simulateBootstrap(
       `across simulated paths, not promises.`,
   };
 }
+
+// ── Phase C (spec §5): per-trading-day cumulative-return quantiles ───────────
+
+export interface DailyQuantileStep {
+  /** Trading-day offset from the anchor (1 = next session). */
+  offset: number;
+  /** Cumulative return quantiles as FRACTIONS (0.012 = +1.2%). */
+  q: { p05: number; p10: number; p25: number; p50: number; p75: number; p90: number; p95: number };
+  /** Genuine sample mean of cumulative returns across paths. */
+  mean: number;
+  /** P(cumulative return > 0), 0..1. */
+  pop: number;
+}
+
+export interface DailyQuantileForecast {
+  paths: number;
+  seed: number;
+  poolSize: number;
+  steps: number;
+  method: string;
+  perStep: DailyQuantileStep[]; // length === steps, offset 1..steps
+}
+
+/**
+ * Same seeded bootstrap as simulateBootstrap, but records the cumulative
+ * distribution at EVERY trading-day offset 1..steps — powering the day-wise
+ * forecast table (p10–p90 = 80% interval, p05–p95 = 90%; never relabeled).
+ * PURE and deterministic: identical inputs ⇒ bit-identical output.
+ * Throws below 60 usable returns — never fabricates a forecast.
+ */
+export function simulateDailyQuantiles(
+  dailyReturns: number[],
+  steps: number,
+  opts?: MonteCarloOptions
+): DailyQuantileForecast {
+  const usable = (Array.isArray(dailyReturns) ? dailyReturns : []).filter(
+    (r) => Number.isFinite(r) && r > -1
+  );
+  if (usable.length < MIN_RETURNS) {
+    throw new Error(
+      `simulateDailyQuantiles requires at least ${MIN_RETURNS} real daily returns, got ${usable.length}`
+    );
+  }
+  if (!Number.isInteger(steps) || steps < 1 || steps > 40) {
+    throw new Error(`simulateDailyQuantiles steps must be an integer in 1..40, got ${steps}`);
+  }
+  const maxReturns = opts?.maxReturns ?? DEFAULT_MAX_RETURNS;
+  const pool = usable.slice(-maxReturns);
+  const nPool = pool.length;
+  const paths = opts?.paths ?? DEFAULT_PATHS;
+  const seed = opts?.seed ?? DEFAULT_SEED;
+  const rand = mulberry32(seed);
+
+  // paths × steps cumulative returns (10k × ≤40 ⇒ ≤3.2 MB of doubles — fine).
+  const byStep: Float64Array[] = Array.from({ length: steps }, () => new Float64Array(paths));
+  for (let p = 0; p < paths; p++) {
+    let cum = 1;
+    for (let step = 1; step <= steps; step++) {
+      cum *= 1 + pool[Math.floor(rand() * nPool)];
+      byStep[step - 1][p] = cum - 1;
+    }
+  }
+
+  const perStep: DailyQuantileStep[] = byStep.map((outcomes, i) => {
+    const sorted = Array.from(outcomes).sort((a, b) => a - b);
+    let up = 0;
+    let sum = 0;
+    for (const r of outcomes) {
+      if (r > 0) up++;
+      sum += r;
+    }
+    const q = (p: number) => round4(percentileSorted(sorted, p));
+    return {
+      offset: i + 1,
+      q: { p05: q(5), p10: q(10), p25: q(25), p50: q(50), p75: q(75), p90: q(90), p95: q(95) },
+      mean: round4(sum / paths),
+      pop: round4(up / paths),
+    };
+  });
+
+  return {
+    paths,
+    seed,
+    poolSize: nPool,
+    steps,
+    method: `bootstrap resampling with replacement (seeded mulberry32, ${nPool}-day return pool, per-step quantiles)`,
+    perStep,
+  };
+}

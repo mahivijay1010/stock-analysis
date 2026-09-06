@@ -9,6 +9,9 @@ import type {
   CalibrationResponse,
   ChartRange,
   ChartResponse,
+  DailyForecastResponse,
+  HoldingsProjectionResponse,
+  MonthForecastResponse,
   TopPicksResponse,
   ForecastLocksResponse,
   HoldingsResponse,
@@ -56,7 +59,9 @@ export function isUnauthorized(err: unknown): boolean {
 const http: AxiosInstance = axios.create({
   baseURL: BASE_URL,
   timeout: 60_000,
-  headers: { 'Content-Type': 'application/json' },
+  // X-Requested-With is the CSRF defense-in-depth token the backend requires on
+  // every mutating request (a cross-origin page cannot attach custom headers).
+  headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
   // Session-cookie auth for the private watchlist/holdings routes (plan §8 Q1).
   withCredentials: true,
 });
@@ -368,4 +373,31 @@ export function getTopPicks(count = 5, maxPrice?: number | null): Promise<TopPic
   const params: Record<string, string | number> = { count };
   if (maxPrice != null) params.maxPrice = maxPrice;
   return get<TopPicksResponse>('/api/top-picks', params);
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase C — immutable forecasts (spec §5). GETs read stored issuances */
+/* only; POST /issue creates a NEW immutable issuance (auth).          */
+/* ------------------------------------------------------------------ */
+
+/** GET /api/forecast/:ticker/daily — latest stored next-30-calendar-days issuance. */
+export function getDailyForecast(ticker: string): Promise<DailyForecastResponse> {
+  return get<DailyForecastResponse>(`/api/forecast/${encodeURIComponent(ticker)}/daily`);
+}
+
+/** GET /api/forecast/:ticker/month/:period — original snapshot vs latest outlook vs actuals. */
+export function getMonthForecast(ticker: string, period: string): Promise<MonthForecastResponse> {
+  return get<MonthForecastResponse>(
+    `/api/forecast/${encodeURIComponent(ticker)}/month/${encodeURIComponent(period)}`,
+  );
+}
+
+/** POST /api/forecast/:ticker/issue — on-demand issuance (idempotent per anchor session). */
+export function issueForecast(ticker: string): Promise<unknown> {
+  return post<unknown>(`/api/forecast/${encodeURIComponent(ticker)}/issue`, {});
+}
+
+/** GET /api/holdings/projection — positions transformed through their own forecast distributions. */
+export function getHoldingsProjection(): Promise<HoldingsProjectionResponse> {
+  return get<HoldingsProjectionResponse>('/api/holdings/projection');
 }

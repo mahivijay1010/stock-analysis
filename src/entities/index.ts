@@ -51,3 +51,9 @@ export { WatchlistItem } from "./WatchlistItem";
 export { LedgerTransaction } from "./LedgerTransaction";
 export type { LedgerTransactionType } from "./LedgerTransaction";
 export { LedgerLotAllocation } from "./LedgerLotAllocation";
+
+// Phase C — session calendar + immutable forecast issuances (spec §5)
+export { TradingSession } from "./TradingSession";
+export { ForecastRun } from "./ForecastRun";
+export { ForecastPoint } from "./ForecastPoint";
+export { ForecastOutcome } from "./ForecastOutcome";

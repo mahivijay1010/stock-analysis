@@ -34,6 +34,7 @@ import { ProjectionsTable } from './ProjectionsTable';
 import { TechnicalsGrid } from './TechnicalsGrid';
 import { AccuracyStrip } from './AccuracyStrip';
 import { PriceChartCard } from './PriceChartCard';
+import { DailyForecastCard } from './DailyForecastCard';
 import { FrameworkPanel } from './FrameworkPanel';
 import { TradePlanCard } from './TradePlanCard';
 import { RecentWindowsPanel } from './RecentWindowsPanel';
@@ -237,6 +238,7 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
 
               {section === 'forecast' && (
                 <div className="space-y-5">
+                  <DailyForecastCard ticker={data.ticker} />
                   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
                     <ForecastChart bars={data.chart.bars} predictions={data.analysis.predictions} />
                     {data.monteCarlo && <MonteCarloCard forecast={data.monteCarlo} />}

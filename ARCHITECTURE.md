@@ -2,6 +2,13 @@
 
 **Primary doc for the running system.** The v2 production upgrade is underway on branch `upgrade/product-v2` — its binding contract is `docs/upgrade-spec.md`, its evidence `docs/upgrade-audit.md`, its plan `docs/implementation-plan.md`, and its resumable state `docs/next-session.md`. Every claim below was measured live, not promised.
 
+## v2 upgrade state (Phase C complete, 2026-09-06)
+- **Session calendar** (`trading_sessions`): real sessions derived from observed stock_history bars; past weekdays with zero universe bars reconciled as closed (no_data); future weekdays are PROJECTED (provisional, no invented holiday list); reconciled at boot/evening cron.
+- **Immutable forecasts** (`forecast_runs/points/outcomes`): append-only issuances (issuedAt, featureCutoffAt, anchor session+price, versions, sha256 input manifest); one per (instrument, anchor session) for next-30, revisioned per (instrument, month) for calendar-month snapshots vs latest-outlook refreshes. EVERY calendar day gets a point row; closed days carry NULL quantiles. Distribution = seeded per-step bootstrap MC (p05..p95 prices, genuine mean, pop). Outcomes graded SEPARATELY (verified/no_session/missing_data/pending; band-80/90 hits; revision-versioned corrections) — reality never rewrites a forecast.
+- **Cadence**: evening cron reconciles calendar → grades outcomes → issues daily next-30 sweep → ensures monthly originals (idempotent, downtime-recovering). GETs read stored issuances only (B1 read/write contract); POST /api/forecast/:t/issue for on-demand.
+- **API**: GET /api/forecast/:t/daily · GET /api/forecast/:t/month/:YYYY-MM (original vs latestOutlook vs actuals) · POST /api/forecast/:t/issue · POST /api/forecast/:t/month/:p/refresh · GET /api/holdings/projection (qty × price quantiles − basis; per-position only, quantiles never summed) · POST /api/jobs/forecast-maintenance.
+- **UI**: Stock Detail → Forecast: day-wise table (every calendar day; "Market closed" states; 80%/90% intervals labeled exactly; outcome column) + issuance-boundary chart (observed solid, forecast median dashed + p10–p90 band, amber "issued" line). Holdings "Projected 30d" column now transforms the STORED issuance (no live recompute).
+
 ## v2 upgrade state (Phase B complete, 2026-09-06)
 - **Migrations**: `synchronize:false` unconditionally; BaselineSchema + CreateAccountsInstrumentsWatchlistLedger applied; all schema change via reviewed migrations with tested down(). Scratch-DB build verified.
 - **Money**: decimal.js policy (internal scale 4, display 2, ROUND_HALF_EVEN, largest-remainder allocation) in `src/services/money/`; spec §4 fixtures are unit + live-API verified (basis 1010 → realized +70.00 / 606.00 over 6 sh — exact).

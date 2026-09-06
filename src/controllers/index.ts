@@ -5,3 +5,4 @@ export { IntelligenceController } from "./IntelligenceController";
 export { QuantController } from "./QuantController";
 export { AuthController } from "./AuthController";
 export { LedgerController } from "./LedgerController";
+export { ForecastController } from "./ForecastController";

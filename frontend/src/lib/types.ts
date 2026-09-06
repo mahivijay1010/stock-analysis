@@ -883,3 +883,88 @@ export interface TopPicksResponse {
   note: string;
   picks: TopPick[];
 }
+
+/* ------------------------------------------------------------------ */
+/* Phase C — immutable forecast issuances (upgrade-spec §5)            */
+/* ------------------------------------------------------------------ */
+
+export interface ForecastDayPrices {
+  p05: number;
+  p10: number;
+  p25: number;
+  p50: number;
+  p75: number;
+  p90: number;
+  p95: number;
+  mean: number;
+}
+
+export interface ForecastOutcomeView {
+  state: 'pending' | 'verified' | 'no_session' | 'missing_data';
+  observedClose: number | null;
+  realizedReturnPct: number | null;
+  insideBand80: boolean | null;
+  insideBand90: boolean | null;
+}
+
+export interface ForecastDay {
+  date: string; // IST calendar date
+  marketState: 'expected_session' | 'weekend' | 'expected_closed';
+  tradingDayOffset: number | null;
+  prices: ForecastDayPrices | null; // null on closed days — no prediction exists
+  medianReturnPct: number | null;
+  pop: number | null;
+  carriesForwardFrom: string | null;
+  outcome: ForecastOutcomeView | null;
+}
+
+export interface ForecastIssuance {
+  runId: string;
+  ticker: string;
+  viewKind: 'next30' | 'month';
+  periodKey: string | null;
+  revision: number;
+  issuedAt: string;
+  featureCutoffAt: string;
+  anchorSessionDate: string;
+  anchorPrice: number;
+  priceBasis: string;
+  windowStart: string;
+  windowEnd: string;
+  targetSessionCount: number;
+  versions: { model: string; calibration: string; policy: string };
+  inputHash: string;
+  days: ForecastDay[];
+  realityCheck: string;
+}
+
+export type DailyForecastResponse =
+  | { available: true; view: ForecastIssuance }
+  | { available: false; reason: string };
+
+export interface MonthForecastResponse {
+  period: string;
+  ticker: string;
+  original: ForecastIssuance | null;
+  latestOutlook: ForecastIssuance | null;
+  actuals: Array<{ date: string; close: number }>;
+  realityCheck: string;
+}
+
+export interface HoldingsProjectionRow {
+  ticker: string;
+  qty: number;
+  costBasis: number;
+  anchorSessionDate: string;
+  horizonDate: string;
+  value: { p10: number; p50: number; p90: number };
+  pnl: { p10: number; p50: number; p90: number };
+  pop: number | null;
+  runId: string;
+}
+
+export interface HoldingsProjectionResponse {
+  positions: HoldingsProjectionRow[];
+  unavailable: string[];
+  note: string;
+}
