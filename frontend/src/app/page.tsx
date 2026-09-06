@@ -4,8 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { Header, type TabId } from '@/components/Header';
 import { TabPanel } from '@/components/motion';
-import { WatchlistView } from '@/components/watchlist/WatchlistView';
-import { HoldingsView } from '@/components/holdings/HoldingsView';
+import { PortfolioView } from '@/components/portfolio/PortfolioView';
 import { DiscoverView } from '@/components/DiscoverView';
 import { TrackRecordView } from '@/components/TrackRecordView';
 import { StockDetailView } from '@/components/analyze/AnalyzeView';
@@ -16,7 +15,6 @@ const PENDING_PURCHASE_KEY = 'stocksense.pendingPurchase';
 
 const CANONICAL_TABS: readonly TabId[] = [
   'watchlist',
-  'holdings',
   'discover',
   'track-record',
   'stock',
@@ -45,6 +43,8 @@ function routeFromHash(): { tab: TabId; ticker: string | null } {
   if ((CANONICAL_TABS as readonly string[]).includes(head)) return { tab: head as TabId, ticker: null };
 
   // Legacy redirects.
+  // Holdings merged into the unified Watchlist (owner request 2026-09-06).
+  if (head === 'holdings') return { tab: 'watchlist', ticker: null };
   if (head === 'analyze') {
     let stored: string | null = null;
     try {
@@ -129,7 +129,7 @@ export default function Home() {
     window.scrollTo({ top: 0 });
   }, []);
 
-  /** Watchlist "Add purchase" → Holdings form, prefilled. */
+  /** "Add purchase" from any screen → the unified Watchlist's form, prefilled. */
   const addPurchase = useCallback(
     (t: string) => {
       const up = t.toUpperCase();
@@ -139,7 +139,7 @@ export default function Home() {
       } catch {
         /* non-fatal */
       }
-      openTab('holdings');
+      openTab('watchlist');
     },
     [openTab],
   );
@@ -179,10 +179,11 @@ export default function Home() {
         <AnimatePresence mode="wait" initial={false}>
           <TabPanel key={tab} className="mx-auto w-full max-w-[1480px]">
             {tab === 'watchlist' && (
-              <WatchlistView onOpenStock={openStock} onAddPurchase={addPurchase} />
-            )}
-            {tab === 'holdings' && (
-              <HoldingsView pendingPurchaseTicker={pendingPurchase} onPendingPurchaseConsumed={consumePendingPurchase} onOpenStock={openStock} />
+              <PortfolioView
+                pendingPurchaseTicker={pendingPurchase}
+                onPendingPurchaseConsumed={consumePendingPurchase}
+                onOpenStock={openStock}
+              />
             )}
             {tab === 'discover' && <DiscoverView onOpenStock={openStock} />}
             {tab === 'track-record' && <TrackRecordView />}

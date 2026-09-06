@@ -55,6 +55,14 @@ export class DecisionSnapshot {
   @Column({ name: "holdings_review_note", type: "text" })
   holdingsReviewNote: string;
 
+  /**
+   * Risk-character holding-horizon assessment (horizon-policy-v1): label
+   * short/moderate/long + measured basis + reasons. Null on snapshots
+   * published before the feature or when evidence was insufficient.
+   */
+  @Column({ name: "horizon_suitability", type: "jsonb", nullable: true })
+  horizonSuitability?: Record<string, unknown> | null;
+
   /** Inputs the policy saw: issuance ref, measured stats, freshness. Audit trail. */
   @Column({ type: "jsonb" })
   inputs: Record<string, unknown>;

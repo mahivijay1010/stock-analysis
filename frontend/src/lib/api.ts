@@ -10,8 +10,10 @@ import type {
   ChartRange,
   ChartResponse,
   DailyForecastResponse,
+  DecisionResponse,
   HoldingsProjectionResponse,
   MonthForecastResponse,
+  PortfolioOverviewResponse,
   TopPicksResponse,
   ForecastLocksResponse,
   HoldingsResponse,
@@ -406,4 +408,14 @@ export function issueForecast(ticker: string): Promise<unknown> {
 /** GET /api/holdings/projection — positions transformed through their own forecast distributions. */
 export function getHoldingsProjection(): Promise<HoldingsProjectionResponse> {
   return get<HoldingsProjectionResponse>('/api/holdings/projection');
+}
+
+/** GET /api/portfolio/overview — the unified watchlist+holdings screen in one read. */
+export function getPortfolioOverview(): Promise<PortfolioOverviewResponse> {
+  return get<PortfolioOverviewResponse>('/api/portfolio/overview');
+}
+
+/** GET /api/decision/:ticker — the latest published evidence-gated decision snapshot. */
+export function getDecision(ticker: string): Promise<DecisionResponse> {
+  return get<DecisionResponse>(`/api/decision/${encodeURIComponent(ticker)}`);
 }

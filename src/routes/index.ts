@@ -81,6 +81,9 @@ export const createStockRoutes = (): Router => {
     forecastController.refreshMonth
   ); //                                                                               POST /api/forecast/:t/month/:p/refresh
   router.get("/holdings/projection", requireAuth, forecastController.holdingsProjection); // GET /api/holdings/projection
+  // Unified portfolio (owner request 2026-09-06): watchlist ∪ holdings with
+  // month forecast + decision + horizon per row, one read.
+  router.get("/portfolio/overview", requireAuth, forecastController.portfolioOverview); //   GET  /api/portfolio/overview
   // Canonical evidence-gated decisions (spec §9) — ONE service, every surface
   // reads the same published snapshot. BUY_CANDIDATE requires a VALIDATED
   // directional edge; today's measured record has none, stated honestly.

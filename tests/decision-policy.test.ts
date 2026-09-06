@@ -7,6 +7,7 @@
 import {
   DECISION_POLICY_VERSION,
   directionEdgeValidated,
+  effectiveSamples,
   evaluateEntryPolicy,
   PolicyInputs,
 } from "../src/services/decision/policy";
@@ -33,7 +34,7 @@ const base = (over?: Partial<PolicyInputs>): PolicyInputs => ({
 
 describe("decision policy v1", () => {
   test("policy version is pinned", () => {
-    expect(DECISION_POLICY_VERSION).toBe("decision-policy-v1");
+    expect(DECISION_POLICY_VERSION).toBe("decision-policy-v2");
   });
 
   test("no issuance → INSUFFICIENT_EVIDENCE", () => {
@@ -68,8 +69,19 @@ describe("decision policy v1", () => {
     expect(d.decisionStatus).toBe("WAIT");
     expect(d.evidenceStatus).toBe("PARTIAL");
     expect(d.reasons.join(" ")).toMatch(/No validated directional edge/i);
+    expect(d.reasons.join(" ")).toMatch(/independent observation/i); // overlap adjustment stated
     expect(d.reasons.join(" ")).toMatch(/next session/i); // after-close phrasing
     expect(d.holdingsReviewNote).toMatch(/NOT an instruction to sell/i);
+  });
+
+  test("v2 regression: a HIGH hit rate over overlapping windows is NOT an edge (the BHEL mirage)", () => {
+    // 74% over 39 daily-logged 30d predictions = ~1 independent window — v1
+    // wrongly validated this; v2 must not.
+    const d = evaluateEntryPolicy(
+      base({ measured: { ...coinFlipMeasured, directionHitRatePct: 74, samples: 39 } })
+    );
+    expect(d.decisionStatus).toBe("WAIT");
+    expect(d.reasons.join(" ")).toMatch(/~1 independent observation/);
   });
 
   test("even 55% over 59 samples is not a validated edge (within noise)", () => {
@@ -96,20 +108,24 @@ describe("decision policy v1", () => {
     expect(d.riskLevel).toBe("high");
   });
 
-  test("BUY_CANDIDATE only with a genuinely validated edge (e.g. 65% over 300)", () => {
+  test("BUY_CANDIDATE only with a genuinely validated edge (65% over 3000 raw = 100 windows)", () => {
     const d = evaluateEntryPolicy(
       base({
-        measured: { samples: 300, directionHitRatePct: 65, withinBandPct: 82, brierScore: 0.22 },
+        measured: { samples: 3000, directionHitRatePct: 65, withinBandPct: 82, brierScore: 0.22 },
         afterMarketClose: false,
       })
     );
     expect(d.decisionStatus).toBe("BUY_CANDIDATE");
     expect(d.evidenceStatus).toBe("VALIDATED");
+    expect(d.reasons.join(" ")).toMatch(/overlap adjustment/i);
   });
 
-  test("directionEdgeValidated math: 51%/59 fails, 65%/300 passes, 60%/50 fails", () => {
-    expect(directionEdgeValidated(51, 59)).toBe(false);
-    expect(directionEdgeValidated(65, 300)).toBe(true);
-    expect(directionEdgeValidated(60, 50)).toBe(false);
+  test("directionEdgeValidated math (overlap-adjusted)", () => {
+    expect(effectiveSamples(39)).toBe(1);
+    expect(effectiveSamples(3000)).toBe(100);
+    expect(directionEdgeValidated(51, 59)).toBe(false); // ~1 window
+    expect(directionEdgeValidated(74, 39)).toBe(false); // the BHEL mirage
+    expect(directionEdgeValidated(65, 300)).toBe(false); // 10 windows: 0.65−1.645·0.158 < 0.5
+    expect(directionEdgeValidated(65, 3000)).toBe(true); // 100 windows: 0.65−1.645·0.05 > 0.5
   });
 });

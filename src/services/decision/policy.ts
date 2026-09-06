@@ -1,32 +1,45 @@
 /**
- * Decision policy v1 (Phase C, spec §9) — PURE and unit-testable.
+ * Decision policy v2 (Phase C, spec §9) — PURE and unit-testable.
  *
  * Evidence-gated: BUY_CANDIDATE requires (all of)
  *   1. a fresh stored forecast issuance anchored on the latest observed session,
  *   2. a VALIDATED directional edge — the measured 30d direction hit rate must
- *      beat 50% at ~95% confidence (one-sided normal approx of the binomial),
- *      on ≥ MIN_SAMPLES matured predictions,
+ *      beat 50% at ~95% confidence on the OVERLAP-ADJUSTED sample size,
  *   3. acceptable calibration (band coverage not badly understated, Brier not
  *      worse than chance), and
  *   4. non-extreme volatility.
- * The system's measured direction accuracy is ≈ a coin flip, so gate 2 fails
- * today and BUY_CANDIDATE is honestly unreachable ("No validated directional
- * edge" — spec §8: do not lower the bar to make the UI say BUY).
+ *
+ * v2 (2026-09-06): v1 treated daily-logged 30-day predictions as independent
+ * Bernoulli trials — n=39 nightly 30d predictions span ~2 months and share
+ * ~29/30 of their outcome windows, so they are ~1–2 independent observations,
+ * not 39 (spec §8: "Do not call thousands of overlapping predictions
+ * thousands of independent observations"). v1 briefly produced a
+ * BUY_CANDIDATE from exactly this mirage (BHEL.NS, 2026-09-06); v2 divides
+ * the sample count by the label horizon (30) before the significance test.
+ * Validating a genuine 30d edge now honestly requires years of matured
+ * nightly logs — which is the truth of the matter.
  *
  * Thresholds are VERSIONED here (DECISION_POLICY_VERSION); changing them is a
  * new policy version, never a silent tweak.
  */
 
-export const DECISION_POLICY_VERSION = "decision-policy-v1";
+export const DECISION_POLICY_VERSION = "decision-policy-v2";
 
 export const POLICY_THRESHOLDS = {
   minMaturedSamples: 30, // fewer matured 30d predictions ⇒ INSUFFICIENT_EVIDENCE
+  labelOverlapDays: 30, // 30d labels logged daily ⇒ effectiveN = rawN / 30
+  minEffectiveSamples: 10, // below this, an edge test cannot validate at all
   edgeZ: 1.645, // one-sided 95% confidence that hit rate > 50%
   minBandCoveragePct: 60, // 80%-band coverage measured below this ⇒ uncertainty understated
   maxBrier: 0.3, // worse than chance ⇒ AVOID_NEW_ENTRY
   maxAnnualVolPct: 60, // extreme volatility without a validated edge ⇒ AVOID_NEW_ENTRY
   maxAnchorAgeDays: 5, // anchor older than this many calendar days ⇒ stale
 } as const;
+
+/** Overlap-adjusted independent-observation count for daily-logged h-day labels. */
+export function effectiveSamples(rawSamples: number, overlapDays: number = POLICY_THRESHOLDS.labelOverlapDays): number {
+  return Math.max(1, Math.floor(rawSamples / overlapDays));
+}
 
 export type DecisionStatus = "BUY_CANDIDATE" | "WAIT" | "AVOID_NEW_ENTRY" | "INSUFFICIENT_EVIDENCE";
 export type EvidenceStatus = "VALIDATED" | "PARTIAL" | "INSUFFICIENT";
@@ -70,15 +83,20 @@ const HOLDINGS_NOTE =
   "Holdings review is separate from new-entry advice: a new-entry caution is NOT an instruction to sell. " +
   "Judge an existing position against your own basis, horizon and the forecast ranges.";
 
-/** One-sided test: is hitRatePct significantly above 50% at z confidence? */
+/**
+ * One-sided test: is hitRatePct significantly above 50% at z confidence?
+ * `samples` is the RAW matured-prediction count; it is overlap-adjusted here
+ * (spec §8) — overlapping 30d labels are not independent observations.
+ */
 export function directionEdgeValidated(
   hitRatePct: number,
   samples: number,
   z: number = POLICY_THRESHOLDS.edgeZ
 ): boolean {
-  if (samples <= 0) return false;
+  const effN = effectiveSamples(samples);
+  if (effN < POLICY_THRESHOLDS.minEffectiveSamples) return false;
   const p = hitRatePct / 100;
-  const se = Math.sqrt(0.25 / samples); // worst-case σ for a proportion
+  const se = Math.sqrt(0.25 / effN); // worst-case σ over INDEPENDENT windows
   return p - z * se > 0.5;
 }
 
@@ -171,10 +189,12 @@ export function evaluateEntryPolicy(inputs: PolicyInputs): PolicyDecision {
   // ── Gate 2: validated directional edge required for BUY_CANDIDATE ────────
   const edge = directionEdgeValidated(m.directionHitRatePct, m.samples);
   if (!edge) {
+    const effN = effectiveSamples(m.samples);
     reasons.push(
       `No validated directional edge: measured 30-day direction hit rate is ` +
-        `${m.directionHitRatePct.toFixed(1)}% over ${m.samples} matured predictions — statistically ` +
-        `indistinguishable from a coin flip. The calibrated ranges are the supported product.`
+        `${m.directionHitRatePct.toFixed(1)}% over ${m.samples} matured predictions — but daily-logged ` +
+        `30-day windows overlap almost entirely, so that is only ~${effN} independent observation${effN === 1 ? "" : "s"} ` +
+        `(far too few to distinguish skill from chance). The calibrated ranges are the supported product.`
     );
     if (inputs.issuance.medianReturnPct30 != null) {
       reasons.push(
@@ -200,7 +220,8 @@ export function evaluateEntryPolicy(inputs: PolicyInputs): PolicyDecision {
   // ── BUY_CANDIDATE (unreachable today — kept honest and fully gated) ──────
   reasons.push(
     `Validated directional edge: ${m.directionHitRatePct.toFixed(1)}% over ${m.samples} matured ` +
-      `predictions (one-sided 95% above 50%), calibration within thresholds.`
+      `predictions (~${effectiveSamples(m.samples)} independent windows; one-sided 95% above 50% ` +
+      `after overlap adjustment), calibration within thresholds.`
   );
   if (inputs.afterMarketClose) {
     reasons.push("Market is closed — candidate for the NEXT session.");

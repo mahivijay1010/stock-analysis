@@ -968,3 +968,84 @@ export interface HoldingsProjectionResponse {
   unavailable: string[];
   note: string;
 }
+
+/* ------------------------------------------------------------------ */
+/* Unified portfolio (owner request 2026-09-06): watchlist ∪ holdings  */
+/* with month forecast + decision + horizon per row, one read.        */
+/* ------------------------------------------------------------------ */
+
+export interface OverviewMonthForecast {
+  period: string;
+  monthEnd: string;
+  anchorPrice: number;
+  anchorDate: string;
+  medianPrice: number;
+  p10: number;
+  p90: number;
+  medianReturnPct: number | null;
+  issuedAt: string;
+  revision: number;
+}
+
+export interface OverviewDecision {
+  status: string;
+  evidenceStatus: string;
+  riskLevel: string;
+  asOf: string;
+  validUntil: string;
+  expired: boolean;
+  topReason: string | null;
+  horizon: { label: string | null; reasons: string[]; evidenceStatus: string } | null;
+}
+
+export interface PortfolioOverviewRow {
+  instrumentId: string;
+  ticker: string;
+  name: string;
+  watch: { itemId: string; userHorizon: string; note: string | null } | null;
+  held: {
+    qty: number;
+    costBasis: number;
+    avgCostPerShare: number | null;
+    unrealizedGrossPnl: number | null;
+    realizedPnl: number;
+  } | null;
+  price: { current: number; asOf: string | null; source: string | null } | null;
+  monthForecast: OverviewMonthForecast | null;
+  decision: OverviewDecision | null;
+}
+
+export interface PortfolioOverviewResponse {
+  asOf: string;
+  period: string;
+  rows: PortfolioOverviewRow[];
+  totals: {
+    followed: number;
+    held: number;
+    costBasis: number;
+    unrealizedGrossPnl: number | null;
+    realizedPnl: number;
+  };
+  notes: string[];
+}
+
+export interface DecisionSnapshotView {
+  id: string;
+  ticker: string;
+  decisionStatus: 'BUY_CANDIDATE' | 'WAIT' | 'AVOID_NEW_ENTRY' | 'INSUFFICIENT_EVIDENCE';
+  evidenceStatus: 'VALIDATED' | 'PARTIAL' | 'INSUFFICIENT';
+  riskLevel: string;
+  intendedHorizon: string;
+  reasons: string[];
+  risks: string[];
+  holdingsReviewNote: string;
+  horizonSuitability: { label: string | null; reasons: string[]; evidenceStatus: string } | null;
+  asOf: string;
+  validUntil: string;
+  modelVersion: string;
+  decisionPolicyVersion: string;
+}
+
+export type DecisionResponse =
+  | { available: true; expired: boolean; snapshot: DecisionSnapshotView }
+  | { available: false; reason: string };

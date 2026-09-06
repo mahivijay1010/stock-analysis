@@ -7,6 +7,7 @@
 import { NextFunction, Request, Response } from "express";
 import { forecastService } from "../services/forecast/ForecastService";
 import { decisionService } from "../services/decision/DecisionService";
+import { portfolioOverviewService } from "../services/portfolio/PortfolioOverviewService";
 import { LedgerService } from "../services/ledger/LedgerService";
 import { HttpError } from "../types";
 
@@ -89,6 +90,15 @@ export class ForecastController {
         .filter((p) => p.status === "OPEN" && p.qty > 0)
         .map((p) => ({ ticker: p.ticker, qty: p.qty, costBasis: Number(p.costBasisExact) }));
       ok(res, await forecastService.holdingsProjection(open));
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/portfolio/overview — the unified watchlist+holdings screen in one read. */
+  portfolioOverview = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      ok(res, await portfolioOverviewService.overview(req.account!.accountId));
     } catch (err) {
       next(err);
     }

@@ -35,6 +35,7 @@ import { TechnicalsGrid } from './TechnicalsGrid';
 import { AccuracyStrip } from './AccuracyStrip';
 import { PriceChartCard } from './PriceChartCard';
 import { DailyForecastCard } from './DailyForecastCard';
+import { CanonicalDecisionCard } from './CanonicalDecisionCard';
 import { FrameworkPanel } from './FrameworkPanel';
 import { TradePlanCard } from './TradePlanCard';
 import { RecentWindowsPanel } from './RecentWindowsPanel';
@@ -227,6 +228,7 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
             <TabPanel key={section}>
               {section === 'overview' && (
                 <Stagger className="space-y-4">
+                  <StaggerItem><CanonicalDecisionCard ticker={data.ticker} /></StaggerItem>
                   <div className="overview-command-grid">
                     <StaggerItem className="overview-command-item overview-decision-item"><DecisionSummary data={data} /></StaggerItem>
                     <StaggerItem className="overview-command-item overview-chart-item"><PriceChartCard key={`chart-${data.ticker}`} ticker={data.ticker} /></StaggerItem>

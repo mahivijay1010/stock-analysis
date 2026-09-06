@@ -28,6 +28,14 @@ DEFERRED (do in D/E):
 - Month-view UI (original vs latest outlook vs actuals chart) — backend done, no dedicated frontend view yet (spec §5 monthly history display).
 - From B: CSV import/export live test, corrections live test, dividends/split live test, SELL-before-BUY validation test.
 
+## OWNER AMENDMENTS (2026-09-06, supersede spec §2 where they conflict)
+The owner merged Watchlist + Holdings into ONE unified destination and asked for a risk-based holding-horizon label everywhere. Implemented:
+- **Unified Watchlist** (`frontend/src/components/portfolio/PortfolioView.tsx`): watchlist ∪ holdings rows via GET /api/portfolio/overview (one read: held state from ledger, observed price+freshness, THIS month's stored forecast — rolls at month change via the renewal job — latest decision + horizon chips). Rows expand on click; DailyForecastCard (chart+table) mounts ONLY when expanded. AddPurchaseForm + TransactionsPanel live inside the same screen (purchase form collapsed until asked). #holdings → #watchlist redirect; Holdings nav entry removed; old WatchlistView/HoldingsView deleted (git history keeps them). Data model unchanged: watch ≠ own is intact underneath.
+- **Horizon suitability** (`src/services/decision/horizonPolicy.ts`, horizon-policy-v1, 8 tests): risk-character classification short/moderate/long from 1y measured vol + max drawdown + stored filings quality score; LONG gated on fundamentals evidence (spec §9); INSUFFICIENT below 200 bars. Stored on decision_snapshots.horizon_suitability (migration applied); published nightly with decisions; shown on unified rows + Stock Detail.
+- **DECISION POLICY v2** (important fix): v1 treated daily-logged 30d predictions as independent → BHEL briefly got a mirage BUY_CANDIDATE from 79.5%/39 overlapping windows (~1 independent obs). v2 divides samples by the 30d label overlap before the significance test (spec §8). Regression test pinned ("the BHEL mirage").
+- **Stock Detail**: CanonicalDecisionCard on the overview section (same snapshot as the unified list — 13.14).
+- Also fixed this session: login field mismatch (email→username, c62d024) and ledger form field mismatch (executedAt→tradeDate, 04d96ba); owner credentials now testing@gmail.com / OWNER_PASS in .env.
+
 ## PHASE D IN PROGRESS (plan §6, spec §7–8)
 DONE (committed):
 - `src/services/experiments/splits.ts`: date-grouped chronological splits with PURGE (label-interval overlap dropped) + EMBARGO (post-boundary gap); dateBlockBootstrap for uncertainty (resample dates in contiguous blocks, never rows). Pure, throws on degenerate configs.

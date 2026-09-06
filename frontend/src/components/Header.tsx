@@ -15,7 +15,6 @@ import {
   Gauge,
   Menu,
   Settings,
-  WalletCards,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -37,8 +36,7 @@ type NavItem = { id: TabId; label: string; short: string; description: string; i
 
 /** The four primary destinations (spec §2/§10). */
 const PRIMARY: NavItem[] = [
-  { id: 'watchlist', label: 'Watchlist', short: 'Watch', description: 'Stocks you follow — evidence-gated entry status', icon: Eye },
-  { id: 'holdings', label: 'Holdings', short: 'Holdings', description: 'Your ledger — basis, value, realized & unrealized P&L', icon: WalletCards },
+  { id: 'watchlist', label: 'Watchlist', short: 'Watch', description: 'Follow & own in one place — forecasts, decisions, your ledger', icon: Eye },
   { id: 'discover', label: 'Discover', short: 'Discover', description: 'Search & rank the covered NSE universe', icon: Compass },
   { id: 'track-record', label: 'Track Record', short: 'Record', description: 'Measured forecast performance — not marketing', icon: Gauge },
 ];

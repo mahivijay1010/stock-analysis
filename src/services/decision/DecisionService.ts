@@ -18,6 +18,14 @@ import {
   evaluateEntryPolicy,
   PolicyInputs,
 } from "./policy";
+import {
+  annualizedVolPct,
+  assessHorizonSuitability,
+  maxDrawdownPct,
+} from "./horizonPolicy";
+import { marketDataService } from "../market/MarketDataService";
+import { IntelligenceRepository } from "../intelligence/IntelligenceRepository";
+import { intelligenceQualityScore } from "../quant/intelligenceQuality";
 
 export class DecisionService {
   /** Latest published snapshot (may be expired — expiry is reported, not hidden). */
@@ -115,6 +123,47 @@ export class DecisionService {
       afterMarketClose,
     });
 
+    // Risk-character holding-horizon assessment (owner request; spec §9's
+    // separate horizon evidence). Measured inputs only: a year of real bars
+    // for vol/drawdown + the stored filings quality score when one exists.
+    // A failure here never blocks the entry decision — horizon stays null.
+    let horizonSuitability: Record<string, unknown> | null = null;
+    try {
+      const bars = await marketDataService.getDailyBars(instrument.yahooTicker, "1y");
+      const closes = bars.map((b) => b.close);
+      const rets: number[] = [];
+      for (let i = 1; i < closes.length; i++) {
+        if (closes[i - 1] > 0) rets.push(closes[i] / closes[i - 1] - 1);
+      }
+      let qualityScore: number | null = null;
+      try {
+        const stored = await new IntelligenceRepository().latestStoredMetrics([instrument.yahooTicker]);
+        const m = stored.get(instrument.yahooTicker.replace(/\.(NS|BO)$/i, "").toUpperCase());
+        if (m) {
+          const q = intelligenceQualityScore({
+            roic: m.roic,
+            fcf: m.fcf,
+            revenue: m.revenue,
+            currentRatio: m.currentRatio,
+            currentRatioNotMeaningful: m.currentRatioNotMeaningful,
+            peg: m.peg,
+          });
+          qualityScore = q ? q.score : null;
+        }
+      } catch {
+        qualityScore = null; // stored-metrics read failure = no evidence, stated
+      }
+      horizonSuitability = assessHorizonSuitability({
+        ticker: instrument.yahooTicker,
+        barCount: bars.length,
+        annualizedVolPct: annualizedVolPct(rets),
+        maxDrawdownPct: maxDrawdownPct(closes),
+        qualityScore,
+      }) as unknown as Record<string, unknown>;
+    } catch {
+      horizonSuitability = null;
+    }
+
     const repo = AppDataSource.getRepository(DecisionSnapshot);
     return repo.save(
       repo.create({
@@ -127,6 +176,7 @@ export class DecisionService {
         reasons: decision.reasons,
         risks: decision.risks,
         holdingsReviewNote: decision.holdingsReviewNote,
+        horizonSuitability,
         inputs: {
           runId: run?.id ?? null,
           issuance: issuanceInputs,
