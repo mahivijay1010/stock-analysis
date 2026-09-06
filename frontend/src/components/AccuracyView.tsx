@@ -27,7 +27,6 @@ import {
 } from '@/components/ui';
 import { Stagger, StaggerItem } from '@/components/motion';
 import { CalibrationPanel } from '@/components/CalibrationPanel';
-import { ModelsSection } from '@/components/ModelsSection';
 
 type SortKey = 'ticker' | 'hitRate1d' | 'hitRate7d' | 'hitRate30d' | 'samples';
 
@@ -104,7 +103,7 @@ function AccuracyTip({
  * the per-stock table with its overlapping-window caveat, and the model
  * pool comparison.
  */
-export function AccuracyView() {
+export function AccuracyView({ diagnosticsOpen: _diagnosticsOpen = false }: { diagnosticsOpen?: boolean } = {}) {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ['accuracy'],
     queryFn: getAccuracy,
@@ -484,7 +483,6 @@ export function AccuracyView() {
 
       {/* V7 — per-model aggregate Brier table + model drift (shares the calibration query;
           hides itself when the backend hasn't shipped calibration.models yet) */}
-      <ModelsSection />
     </div>
   );
 }

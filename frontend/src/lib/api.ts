@@ -4,29 +4,27 @@ import type {
   AdminAccountResponse,
   AdminSettingsRequest,
   AnalyzeResponse,
-  AssistantResponse,
+  AuthAccount,
+  AuthStatus,
   CalibrationResponse,
   ChartRange,
   ChartResponse,
-  DailyPlanResponse,
-  ExecutionSummaryResponse,
+  TopPicksResponse,
   ForecastLocksResponse,
-  HoldingCalcRequest,
-  HoldingCalcResponse,
-  OptionsSkewResponse,
-  PaperTrade,
-  PortfolioStrategy,
-  PortfolioStressResponse,
-  PortfolioSuggestResponse,
-  PositionSizeResponse,
+  HoldingsResponse,
+  LoginRequest,
+  NewTransactionRequest,
+  NewWatchlistItemRequest,
   PredictionAuditResponse,
   RankUniverseResponse,
   RecordTradeRequest,
   ResearchBrief,
   SearchResult,
-  TopPicksResponse,
+  TransactionRecord,
   UniverseStockRow,
+  UpdateWatchlistItemRequest,
   VolForecastResponse,
+  WatchlistItem,
 } from './types';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5101';
@@ -45,10 +43,22 @@ export class ApiError extends Error {
   }
 }
 
+/** True when the failure means "this endpoint has not shipped yet" (B2 slice pending). */
+export function isNotFound(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 404;
+}
+
+/** True when the failure means "not signed in". */
+export function isUnauthorized(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 401 || err.status === 403);
+}
+
 const http: AxiosInstance = axios.create({
   baseURL: BASE_URL,
   timeout: 60_000,
   headers: { 'Content-Type': 'application/json' },
+  // Session-cookie auth for the private watchlist/holdings routes (plan §8 Q1).
+  withCredentials: true,
 });
 
 function unwrap<T>(body: ApiEnvelope<T> | undefined, status?: number): T {
@@ -92,6 +102,37 @@ async function post<T>(url: string, body: unknown): Promise<T> {
   }
 }
 
+async function patch<T>(url: string, body: unknown): Promise<T> {
+  try {
+    const res = await http.patch<ApiEnvelope<T>>(url, body);
+    return unwrap(res.data, res.status);
+  } catch (err) {
+    throw normalizeError(err);
+  }
+}
+
+async function del<T>(url: string): Promise<T> {
+  try {
+    const res = await http.delete<ApiEnvelope<T>>(url);
+    return unwrap(res.data, res.status);
+  } catch (err) {
+    throw normalizeError(err);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Health                                                              */
+/* ------------------------------------------------------------------ */
+
+/** GET /health — powers the honest topbar status (never a hardcoded "systems normal"). */
+export async function getHealth(): Promise<{ status: string; db?: boolean; timestamp?: string }> {
+  return get<{ status: string; db?: boolean; timestamp?: string }>('/health');
+}
+
+/* ------------------------------------------------------------------ */
+/* Public research / discovery / track record                          */
+/* ------------------------------------------------------------------ */
+
 /** GET /api/search?q= */
 export function searchStocks(q: string): Promise<SearchResult[]> {
   return get<SearchResult[]>('/api/search', { q });
@@ -104,93 +145,158 @@ export function analyzeStock(ticker: string, amount?: number | null): Promise<An
   return post<AnalyzeResponse>('/api/analyze', body);
 }
 
-/** GET /api/top-picks?count=&maxPrice= — maxPrice filters to shares priced at or under your per-share budget. */
-export function getTopPicks(count = 5, maxPrice?: number | null): Promise<TopPicksResponse> {
-  const params: Record<string, string | number> = { count };
-  if (maxPrice != null && Number.isFinite(maxPrice) && maxPrice > 0) params.maxPrice = maxPrice;
-  return get<TopPicksResponse>('/api/top-picks', params);
-}
-
-/** GET /api/accuracy */
+/** GET /api/accuracy — the public track record's aggregate walk-forward stats. */
 export function getAccuracy(): Promise<AccuracyResponse> {
   return get<AccuracyResponse>('/api/accuracy');
 }
 
-/** GET /api/calibration — V6 Brier calibration (backtest + live). 404s on an older backend — callers hide the section. */
+/** GET /api/calibration — Brier calibration (backtest + live). Callers hide the section on 404. */
 export function getCalibration(): Promise<CalibrationResponse> {
   return get<CalibrationResponse>('/api/calibration');
 }
 
-/** GET /api/research/:ticker — V6 deterministic investment brief. 404s on an older backend. */
+/** GET /api/research/:ticker — deterministic research brief (read-only since B1). */
 export function getResearchBrief(ticker: string): Promise<ResearchBrief> {
   return get<ResearchBrief>(`/api/research/${encodeURIComponent(ticker)}`);
 }
 
-/** GET /api/stocks/:ticker/chart?range= */
-export function getStockChart(ticker: string, range: ChartRange): Promise<ChartResponse> {
-  return get<ChartResponse>(`/api/stocks/${encodeURIComponent(ticker)}/chart`, { range });
-}
-
-/** GET /api/stocks */
+/** GET /api/stocks — the covered NSE universe (Discover). */
 export function getStocks(): Promise<UniverseStockRow[]> {
   return get<UniverseStockRow[]>('/api/stocks');
 }
 
-/** POST /api/holdings/calculate — stateless "what profit can I book" calculator. */
-export function calculateHolding(req: HoldingCalcRequest): Promise<HoldingCalcResponse> {
-  return post<HoldingCalcResponse>('/api/holdings/calculate', req);
-}
-
-/** POST /api/portfolio/suggest — multi-stock allocation for any ₹ amount + strategy. */
-export function suggestPortfolio(amount: number, strategy: PortfolioStrategy): Promise<PortfolioSuggestResponse> {
-  return post<PortfolioSuggestResponse>('/api/portfolio/suggest', { amount, strategy });
-}
-
-/**
- * GET /api/portfolio/stress — V7 historical-window + block-bootstrap stress test.
- * Omit tickers/weights to let the backend fall back to the admin open positions.
- * 404s on an older backend — callers hide the card.
- */
-export function getPortfolioStress(tickers?: string[], weights?: number[]): Promise<PortfolioStressResponse> {
-  const params: Record<string, string> = {};
-  if (tickers && tickers.length > 0) params.tickers = tickers.join(',');
-  if (weights && weights.length > 0) params.weights = weights.map((w) => String(w)).join(',');
-  return get<PortfolioStressResponse>('/api/portfolio/stress', params);
-}
-
-/* ------------------------------------------------------------------ */
-/* V8 — SPEC_V8.md endpoints (rank / vol forecast / options / Kelly).  */
-/* All four 404 on an older backend — every caller hides gracefully.   */
-/* ------------------------------------------------------------------ */
-
-/** GET /api/rank/universe — cross-sectional composite ranks + measured-or-null IC. */
+/** GET /api/rank/universe — cross-sectional composite ranks (Discover's momentum sort; ~90s cold). */
 export function getRankUniverse(): Promise<RankUniverseResponse> {
   return get<RankUniverseResponse>('/api/rank/universe');
 }
 
-/** GET /api/volatility/forecast/:ticker — HAR-RV (daily-proxy) vol forecast with both R²s. */
+/** GET /api/volatility/forecast/:ticker — HAR/HAR-X vol forecast, labeled diagnostic. */
 export function getVolForecast(ticker: string): Promise<VolForecastResponse> {
   return get<VolForecastResponse>(`/api/volatility/forecast/${encodeURIComponent(ticker)}`);
 }
 
-/** GET /api/options/skew/:ticker — NSE option-chain PCR/skew; probe-first, may be NOT_AVAILABLE. */
-export function getOptionsSkew(ticker: string): Promise<OptionsSkewResponse> {
-  return get<OptionsSkewResponse>(`/api/options/skew/${encodeURIComponent(ticker)}`);
+/* ------------------------------------------------------------------ */
+/* B2 — accounts / auth (session cookie; endpoints may land after this */
+/* UI ships — every consumer treats 404 as "backend slice pending").   */
+/* ------------------------------------------------------------------ */
+
+function readAccount(raw: unknown): AuthAccount {
+  if (raw && typeof raw === 'object') {
+    const o = raw as Record<string, unknown>;
+    const inner = (o.account ?? o.user ?? o) as Record<string, unknown>;
+    return {
+      id: (inner.id as number | string | undefined) ?? undefined,
+      email: (inner.email as string | undefined) ?? null,
+      name: (inner.name as string | undefined) ?? null,
+    };
+  }
+  return {};
 }
 
-/** GET /api/position-size/:ticker?capital= — measured-inputs Kelly sizing (half-Kelly headline). */
-export function getPositionSize(ticker: string, capital: number): Promise<PositionSizeResponse> {
-  return get<PositionSizeResponse>(`/api/position-size/${encodeURIComponent(ticker)}`, { capital });
+/**
+ * GET /api/auth/me → authenticated | unauthenticated | unavailable.
+ * 401/403 = not signed in; 404 = the accounts backend has not shipped yet
+ * (no fake login wall — private views degrade honestly instead).
+ */
+export async function getAuthStatus(): Promise<AuthStatus> {
+  try {
+    const data = await get<unknown>('/api/auth/me');
+    return { status: 'authenticated', account: readAccount(data) };
+  } catch (err) {
+    if (isUnauthorized(err)) return { status: 'unauthenticated' };
+    if (isNotFound(err)) {
+      return {
+        status: 'unavailable',
+        note: 'The accounts service has not shipped on this backend yet (upgrade slice B2). Private views run unauthenticated against the local single-user backend until it lands.',
+      };
+    }
+    throw err;
+  }
 }
 
-/** POST /api/assistant — Sensei, the stocks-only chat assistant. */
-export function askAssistant(message: string): Promise<AssistantResponse> {
-  return post<AssistantResponse>('/api/assistant', { message });
+/** POST /api/auth/login */
+export async function login(req: LoginRequest): Promise<AuthAccount> {
+  const data = await post<unknown>('/api/auth/login', req);
+  return readAccount(data);
+}
+
+/** POST /api/auth/logout */
+export function logout(): Promise<unknown> {
+  return post<unknown>('/api/auth/logout', {});
 }
 
 /* ------------------------------------------------------------------ */
-/* V2 — Admin trading desk (/api/admin, no auth for local use;         */
-/* x-admin-key sent only when NEXT_PUBLIC_ADMIN_KEY is configured).    */
+/* B2 — watchlist ("I follow this stock"; removing an item NEVER       */
+/* touches holdings or history)                                        */
+/* ------------------------------------------------------------------ */
+
+function readItems<T>(raw: unknown, key: string): T[] {
+  if (Array.isArray(raw)) return raw as T[];
+  if (raw && typeof raw === 'object') {
+    const v = (raw as Record<string, unknown>)[key];
+    if (Array.isArray(v)) return v as T[];
+  }
+  return [];
+}
+
+/** GET /api/watchlist */
+export async function getWatchlist(): Promise<WatchlistItem[]> {
+  const raw = await get<unknown>('/api/watchlist');
+  return readItems<WatchlistItem>(raw, 'items');
+}
+
+/** POST /api/watchlist */
+export function addWatchlistItem(req: NewWatchlistItemRequest): Promise<unknown> {
+  return post<unknown>('/api/watchlist', req);
+}
+
+/** PATCH /api/watchlist/items/:id */
+export function updateWatchlistItem(id: number | string, req: UpdateWatchlistItemRequest): Promise<unknown> {
+  return patch<unknown>(`/api/watchlist/items/${encodeURIComponent(String(id))}`, req);
+}
+
+/** DELETE /api/watchlist/items/:id — never deletes holdings or their history. */
+export function removeWatchlistItem(id: number | string): Promise<unknown> {
+  return del<unknown>(`/api/watchlist/items/${encodeURIComponent(String(id))}`);
+}
+
+/* ------------------------------------------------------------------ */
+/* B2 — transactions / holdings (immutable ledger; FIFO lots;          */
+/* corrections are linked records, never in-place edits)               */
+/* ------------------------------------------------------------------ */
+
+/** GET /api/holdings — positions derived from the transaction ledger. */
+export async function getHoldings(): Promise<HoldingsResponse> {
+  const raw = await get<unknown>('/api/holdings');
+  if (Array.isArray(raw)) return { positions: raw as HoldingsResponse['positions'] };
+  const o = (raw ?? {}) as Record<string, unknown>;
+  return {
+    positions: readItems<HoldingsResponse['positions'][number]>(raw, 'positions'),
+    totals: (o.totals as HoldingsResponse['totals']) ?? null,
+    asOf: (o.asOf as string | undefined) ?? null,
+    note: (o.note as string | undefined) ?? null,
+  };
+}
+
+/** GET /api/transactions — full history including corrections. */
+export async function listTransactions(): Promise<TransactionRecord[]> {
+  const raw = await get<unknown>('/api/transactions');
+  return readItems<TransactionRecord>(raw, 'transactions');
+}
+
+/** POST /api/transactions — idempotency key makes retries and CSV re-imports safe. */
+export function createTransaction(req: NewTransactionRequest): Promise<unknown> {
+  return post<unknown>('/api/transactions', req);
+}
+
+/** POST /api/transactions/:id/correct — supersedes the original; never edits it in place. */
+export function correctTransaction(id: number | string, req: NewTransactionRequest): Promise<unknown> {
+  return post<unknown>(`/api/transactions/${encodeURIComponent(String(id))}/correct`, req);
+}
+
+/* ------------------------------------------------------------------ */
+/* Sandbox (old paper trading desk — secondary navigation; x-admin-key */
+/* sent only when NEXT_PUBLIC_ADMIN_KEY is configured).                */
 /* ------------------------------------------------------------------ */
 
 const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_KEY;
@@ -213,17 +319,7 @@ export function getAdminAccount(): Promise<AdminAccountResponse> {
   return adminGet<AdminAccountResponse>('/api/admin/account');
 }
 
-/** GET /api/admin/daily-plan */
-export function getAdminDailyPlan(): Promise<DailyPlanResponse> {
-  return adminGet<DailyPlanResponse>('/api/admin/daily-plan');
-}
-
-/** GET /api/admin/trades — full paper-trade history. */
-export function getAdminTrades(): Promise<PaperTrade[]> {
-  return adminGet<PaperTrade[]>('/api/admin/trades');
-}
-
-/** GET /api/admin/prediction-audit — live predictions vs reality, trade review and expectancy. */
+/** GET /api/admin/prediction-audit — live predictions vs reality, trade review, loss guard. */
 export function getPredictionAudit(): Promise<PredictionAuditResponse> {
   return adminGet<PredictionAuditResponse>('/api/admin/prediction-audit');
 }
@@ -232,7 +328,7 @@ export function getPredictionAudit(): Promise<PredictionAuditResponse> {
  * GET /api/admin/forecast-locks — every BUY freezes its purchase-day 7d/30d
  * forecast into the trade; this tracks live price vs the frozen band and
  * grades matured horizons against the real close on the target date. Locks
- * are never recomputed. 404s on an older backend — the desk card hides itself.
+ * are never recomputed.
  */
 export function getForecastLocks(): Promise<ForecastLocksResponse> {
   return adminGet<ForecastLocksResponse>('/api/admin/forecast-locks');
@@ -248,7 +344,11 @@ export async function recordAdminTrade(req: RecordTradeRequest): Promise<unknown
   }
 }
 
-/** POST /api/admin/account/settings — update capital/target (capital change resets the challenge). */
+/**
+ * POST /api/admin/account/settings — currently rejected by the backend with an
+ * honest 400 (the destructive reset path was removed pending rework). The UI
+ * surfaces that server message verbatim.
+ */
 export async function updateAdminSettings(req: AdminSettingsRequest): Promise<AdminAccountResponse> {
   try {
     const res = await http.post<ApiEnvelope<AdminAccountResponse>>('/api/admin/account/settings', req, adminConfig());
@@ -258,17 +358,14 @@ export async function updateAdminSettings(req: AdminSettingsRequest): Promise<Ad
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* V9 — SPEC_V9.md Execution Feedback Loop.                            */
-/* ------------------------------------------------------------------ */
+/** GET /api/stocks/:ticker/chart?range= (Stock Detail price history). */
+export function getStockChart(ticker: string, range: ChartRange): Promise<ChartResponse> {
+  return get<ChartResponse>(`/api/stocks/${encodeURIComponent(ticker)}/chart`, { range });
+}
 
-/**
- * GET /api/execution/summary — YOUR measured win rate / payoff / half-Kelly
- * from closed paper trades vs the model, plus the nightly Kelly-drift series.
- * 404s on an older backend — the desk feedback card hides itself. Uses
- * adminGet so the x-admin-key header rides along when configured (the data
- * comes from the admin PaperTrade ledger).
- */
-export function getExecutionSummary(): Promise<ExecutionSummaryResponse> {
-  return adminGet<ExecutionSummaryResponse>('/api/execution/summary');
+/** GET /api/top-picks?count&maxPrice (Discover ranked scan). */
+export function getTopPicks(count = 5, maxPrice?: number | null): Promise<TopPicksResponse> {
+  const params: Record<string, string | number> = { count };
+  if (maxPrice != null) params.maxPrice = maxPrice;
+  return get<TopPicksResponse>('/api/top-picks', params);
 }

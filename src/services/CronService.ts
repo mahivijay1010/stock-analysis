@@ -10,11 +10,15 @@
  *  - 00:00 IST daily    delete Analysis rows older than 365 days.
  *                       NEVER deletes PredictionLog or ModelPerformance rows —
  *                       those are the permanent accuracy record.
+ *
+ * REMOVED in the v2 upgrade (upgrade-spec §2; audit §2.2): the evening
+ * ensemble-weight update (FTRL) and the nightly Kelly-drift snapshot. Their
+ * historical rows (ensemble_weights, kelly_drift) are preserved untouched.
+ * The morning rank snapshot STAYS — rank_snapshots feed future evaluation.
  */
 
 import * as cron from "node-cron";
 import { StockService } from "./StockService";
-import { ensembleService } from "./ensemble/EnsembleService";
 import { intelligenceService } from "./intelligence/IntelligenceService";
 import { IntelligenceRepository } from "./intelligence/IntelligenceRepository";
 import {
@@ -25,7 +29,6 @@ import {
 } from "./intelligenceRotation";
 import { NSE_UNIVERSE } from "../data/nseUniverse";
 import { rankService } from "./RankService";
-import { executionAnalyticsService } from "./admin/ExecutionAnalyticsService";
 
 const TZ = "Asia/Kolkata";
 
@@ -196,31 +199,11 @@ export class CronService {
     console.log(`🔎 [CRON] Verified ${verified} predictions; refreshed ModelPerformance for ${tickersRefreshed} tickers`);
     console.log("🔎 [CRON] Admin paper account equity is derived on request (no storage step).");
 
-    // V7 A3: online regret update of the ensemble weights from the freshly
-    // matured outcomes. A failure here never sinks the verify job.
-    try {
-      const r = await ensembleService.updateFromLatestMaturedDay();
-      console.log(
-        `⚖️ [CRON] Ensemble weights updated: ${r.updatedPairs} (ticker,horizon) pairs from ` +
-          `${r.latestOutcomeDate ?? "no matured day"}; ${r.switches} best-model switches, ${r.skipped} skipped`
-      );
-    } catch (err) {
-      console.error("⚖️ [CRON] Ensemble weight update failed:", err);
-    }
-
-    // V9 E3: nightly Kelly-drift snapshot AFTER the verify step — upserts
-    // today's kelly_drift row from the measured execution stats (same code
-    // path as scripts/recordKellyDrift.ts). A failure never sinks the job.
-    try {
-      const row = await executionAnalyticsService.recordDriftSnapshot();
-      console.log(
-        `📈 [CRON] Kelly drift recorded for ${row.date}: closedTrades=${row.closedTrades}, ` +
-          `measuredP=${row.measuredP ?? "null"}, measuredB=${row.measuredB ?? "null"}, ` +
-          `halfKelly=${row.halfKellyPct ?? "null"}%, applied=${row.applied}`
-      );
-    } catch (err) {
-      console.error("📈 [CRON] Kelly drift snapshot failed:", err);
-    }
+    // REMOVED in the v2 upgrade (upgrade-audit §2.2 evening steps 2–3):
+    //  - the V7 FTRL ensemble-weight update (ensemble_weights rows preserved
+    //    as experiment artifacts; nothing writes them anymore), and
+    //  - the V9 nightly Kelly-drift snapshot (kelly_drift rows preserved).
+    // Both features are out of production execution per upgrade-spec §2.
   }
 
   /** 00:00 IST — Analysis rows older than 365 days only. */

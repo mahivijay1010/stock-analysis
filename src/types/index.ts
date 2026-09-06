@@ -29,9 +29,6 @@ export type {
   ModelHorizonStat,
 } from "../services/quant/types";
 
-// V7: model-pool names/shapes (pure module under quant/models).
-export type { ModelName, ModelInput, DirectionModel } from "../services/quant/models/types";
-
 import type { Fundamentals, MarketRegime } from "../services/market/types";
 export type { Fundamentals, MarketRegime } from "../services/market/types";
 
@@ -124,26 +121,9 @@ export interface AnalyzeResponse {
   monteCarlo: MonteCarloForecast; // seeded bootstrap over real daily returns
   entryTiming: EntryTiming; // news-aware "buy today or wait" lean
   beta1y: number | null; // cov/var vs NIFTY daily returns; null if <100 overlapping days
-  // ── V7 additions ──
-  ensemble: EnsembleBlock | null; // null only if the model pool could not run
-}
-
-// ── V7 A2: model ensemble block on AnalyzeResponse ──────────────────────────
-
-export interface EnsembleWeightEntry {
-  model: string; // ModelName
-  weightPct: number; // 0..100, all entries sum ≈ 100
-  brier: number | null; // stored walk-forward brier for this (ticker, 7d), null when unproven
-}
-
-export interface EnsembleBlock {
-  /** Inverse-Brier (or live regret) weighted blend of the 6 models, per horizon. */
-  blendedProbUp: Record<Horizon, number>;
-  /** Lowest stored walk-forward brier model for the 7d horizon. */
-  bestModel: { name: string; brier: number; samples: number } | null;
-  /** 7d-horizon weights (each horizon is weighted separately for the blend). */
-  weights: EnsembleWeightEntry[];
-  note: string;
+  // NOTE: the V7 `ensemble` block was removed from production execution
+  // (upgrade-spec §2 row 6). ensemble_weights rows remain as archived
+  // experiment artifacts; no active code path reads or writes them.
 }
 
 // ── V2-B: Framework report ──────────────────────────────────────────────────
@@ -244,28 +224,15 @@ export interface OpenPositionView {
   adviceReason: string;
 }
 
-export interface GoalMilestone {
-  day: number;
-  target: number;
-}
-
-export interface GoalTracker {
-  milestones: GoalMilestone[]; // day 7 → ₹5k, 15 → ₹10k, 25 → ₹50k, 30 → ₹1L
-  startedAt: string; // account createdAt
-  currentEquity: number;
-  currentDay: number;
-  onTrack: boolean;
-  requiredDailyReturnPctToNextMilestone: number;
-  achievedAvgDailyReturnPct: number;
-}
-
 export interface AdminAccountResponse {
   account: { name: string; startCapital: number; cash: number };
   equity: number;
   openPositions: OpenPositionView[];
   realizedPnl: number;
   equityCurve: Array<{ date: string; equity: number }>; // derived, never stored
-  goals: GoalTracker;
+  // NOTE: the goal/milestone tracker was removed from active execution
+  // (upgrade-spec §2 row 13). PaperAccount.targetAmount/targetDays/
+  // challengeStartedAt COLUMNS and values are preserved as user state.
   history: PaperTradeView[]; // full trade history, newest first
 }
 
@@ -290,96 +257,9 @@ export interface RecordTradeResponse {
   message: string;
 }
 
-// ── Multi-stock allocation (PortfolioService) ──────────────────────────────
-
-/**
- * short-term  — swing ranking by quant/momentum score (days to weeks)
- * long-term   — quality ranking by the 8-phase framework Master Score
- *               (fundamentals + valuation heavy; months+), with staggered entry
- * balanced    — half momentum, half quality
- */
-export type PortfolioStrategy = "short-term" | "long-term" | "balanced";
-
-/** One framework check quoted as selection evidence ("PEG 0.82 — pass"). */
-export interface AllocationEvidence {
-  name: string;
-  value: string;
-  result: "pass" | "fail" | "neutral" | "no-data";
-}
-
-export interface AllocationStock {
-  ticker: string;
-  name: string;
-  sector: string;
-  price: number;
-  qty: number;
-  invested: number;
-  weightPct: number; // % of cashUsed
-  score: number; // quant/momentum score 0..100
-  masterScore: number | null; // 8-phase framework Master Score 0..100
-  frameworkVerdict: "STRONG_CANDIDATE" | "WATCH" | "PASS" | null;
-  directionProb7d: number | null;
-  stopLoss: number | null;
-  target: number | null;
-  maxLoss: number | null; // qty × (entry − stop), null when no plan
-  expected7dPct: number | null; // from the same quant predictions
-  expected30dPct: number | null;
-  whyChosen: string;
-  strategyFit: string; // one-liner: how this pick fits the chosen strategy
-  evidence: AllocationEvidence[]; // framework phase checks with real values
-  reasons: string[];
-  historicalOdds: string;
-  fees: number; // estimated round-trip fees for this leg
-}
-
-export interface AllocationOutcome {
-  horizonDays: Horizon;
-  expectedValue: number; // stocks at predicted prices + uninvested cash
-  lowValue: number;
-  highValue: number;
-  expectedProfit: number; // vs the full amount
-  expectedProfitPct: number;
-}
-
-export interface AllocationPlan {
-  amount: number;
-  strategy: PortfolioStrategy;
-  cashUsed: number;
-  cashLeft: number;
-  /** Regime-based deliberate cash reserve (risk-off keeps powder dry). */
-  cashReservePct: number; // % of amount intentionally NOT deployed
-  cashReserveReason: string;
-  stocks: AllocationStock[];
-  outcomes: AllocationOutcome[]; // 5 horizons, combined
-  /** Long-term only: staggered-entry execution plan (never all-in at once). */
-  tranchePlan: string[] | null;
-  totalFeesRoundTrip: number;
-  totalFeesPct: number; // % of cashUsed
-  correlationNote: string; // how the combined range was computed (honest assumption)
-  rationale: string[];
-  warnings: string[];
-  asOf: string;
-}
-
-export interface PortfolioSuggestResponse {
-  amount: number;
-  strategy: PortfolioStrategy;
-  allocation: AllocationPlan | null;
-  reason?: string; // set when allocation is null
-  disclaimer: string;
-}
-
-// ── Stock assistant (rule-based, answers stock questions ONLY) ─────────────
-
-export interface AssistantRequest {
-  message: string;
-}
-
-export interface AssistantResponse {
-  reply: string; // plain text with newlines; every number from live services
-  suggestions: string[]; // follow-up chips
-  offTopic: boolean; // true when the message was refused as non-stock
-}
+// NOTE: the multi-stock allocation builder (PortfolioService.suggest) and the
+// Sensei assistant were REMOVED from the product (upgrade-spec §2 rows 5/12);
+// their request/response types went with them.
 
 // ── Admin account settings (dynamic capital + target) ──────────────────────
 
@@ -390,38 +270,9 @@ export interface AdminSettingsRequest {
   confirmReset?: boolean;
 }
 
-export interface DailyPlanPick {
-  ticker: string;
-  name: string;
-  price: number;
-  qty: number;
-  invested: number;
-  score: number;
-  directionProb7d: number;
-  entry: number;
-  stopLoss: number;
-  target: number;
-  maxLoss: number;
-  potentialGain: number;
-  fees: number;
-  reasons: string[];
-  historicalOdds: string; // from ModelPerformance, e.g. "7d direction hit rate for this stock: 58% (45 samples)"
-}
-
-export interface DailyPlanResponse {
-  asOf: string;
-  cash: number;
-  marketRegime: MarketRegime | null;
-  pick: DailyPlanPick | null;
-  noPickReason?: string;
-  allocation: AllocationPlan | null; // multi-stock split of the available cash
-  allocationReason?: string; // set when allocation is null
-  exitAdvice: Array<{ ticker: string; action: PositionAdvice; reason: string }>;
-  goalTracker: GoalTracker;
-  /** Daily loss limit status — when halted, pick/allocation are withheld. */
-  lossGuard: LossGuard;
-  realityCheck: string; // REQUIRED honest string computed from live ModelPerformance numbers
-}
+// NOTE: GET /api/admin/daily-plan (pick + cash-split + goal tracker +
+// reality check) was REMOVED (upgrade-spec §2 rows 5/13). The loss-guard
+// remains, surfaced via the prediction audit.
 
 export interface TopPick {
   rank: number;
@@ -570,41 +421,6 @@ export interface CalibrationResponse {
   interpretation: string; // plain-language read computed from the real numbers
   methodology: string;
   updatedAt: string;
-  // ── V7 additions (optional-tolerant for older clients) ──
-  /**
-   * DESIGN DECISION (SPEC_V7 A5.1): the per-model aggregate is EMBEDDED here
-   * as `models` — one endpoint, no separate /api/models/performance route.
-   * Frontend mirrors these types.
-   */
-  models: CalibrationModels | null; // null until refreshBacktests stores model stats
-  modelDrift: ModelDrift | null; // null until updateEnsemble has run once
-}
-
-// ── V7 A2/A3: per-model aggregate + drift on /api/calibration ───────────────
-
-export interface ModelAggregateStat {
-  horizonDays: Horizon;
-  samples: number;
-  brier: number; // sample-weighted mean walk-forward brier across the universe
-  hitRatePct: number; // sample-weighted mean hit rate
-}
-
-export interface CalibrationModels {
-  /** One row per model, aggregated across all tickers with stored stats. */
-  perModel: Array<{ model: string; horizons: ModelAggregateStat[] }>;
-  /** Out-of-sample blended-ensemble aggregate (online inverse-Brier weights). */
-  blended: ModelAggregateStat[];
-  /** V6 quant-engine brier per horizon — the single-model baseline for the honest delta. */
-  engineBaseline: Array<{ horizonDays: Horizon; samples: number; brier: number }>;
-  /** Lowest-brier model per horizon (aggregate), for the UI highlight. */
-  bestByHorizon: Array<{ horizonDays: Horizon; model: string; brier: number }>;
-  note: string;
-}
-
-export interface ModelDrift {
-  updatedAt: string;
-  switches: number;
-  note: string;
 }
 
 // ── V6: Research brief (SPEC_CALIBRATION Module C3) ─────────────────────────
@@ -636,8 +452,6 @@ export interface ResearchBrief {
   newsContext: string; // NewsSummary.assessment or quiet-tape line
   risks: string[];
   accuracyContext: string; // this ticker's measured hit rates + honesty line
-  /** V7: "Prediction engine" line — best model, its measured brier, blend note. */
-  predictionEngine: string | null;
   disclaimer: string;
 }
 
@@ -854,116 +668,10 @@ export interface VolatilityForecastResponse {
   note: string;
 }
 
-// ── V8 R3: options skew radar (GET /api/options/skew/:ticker) ───────────────
-
-export interface OptionsSkewResponse {
-  ticker: string;
-  status: "ok" | "NOT_AVAILABLE";
-  pcr: number | null;
-  pcr5dAvg: number | null;
-  ivSkewPct: number | null;
-  signal: "HEDGING_SPIKE" | "NEUTRAL" | null;
-  expiry: string | null;
-  asOf: string;
-  note: string;
-  /** Measured evidence (HTTP codes, Akamai markers) when NOT_AVAILABLE. */
-  reason: string | null;
-  probedAt: string | null;
-}
-
-// ── V8 R4: Kelly position size (GET /api/position-size/:ticker) ─────────────
-
-/** V10 B3 — machine-readable provenance of a Kelly input. */
-export type KellyInputKind = "measured" | "dcf-implied" | "structural";
-
-export interface KellyInputStat {
-  value: number;
-  source: string; // where the measurement came from (or the stated fallback)
-  samples: number; // 0 when the value is a structural assumption / prior
-  /** V10 B3 — set on `payoff`: measured | dcf-implied | structural. */
-  kind?: KellyInputKind;
-}
-
-export interface PositionSizeResponse {
-  ticker: string;
-  capital: number;
-  winRate: KellyInputStat; // p — the V8 block, now the "model"-labeled source
-  payoff: KellyInputStat; // b — the V8 block, now the "model"-labeled source
-  kellyFraction: number; // f* clamped [0, 0.25] — recomputed from the APPLIED pair (V9)
-  halfKelly: number; // headline recommendation — APPLIED pair (V9)
-  recommendedAmount: number; // halfKelly × capital, ₹
-  sharesAtLivePrice: number | null;
-  livePrice: number | null;
-  warnings: string[];
-  note: string;
-  // ── V9 E2: adaptive Kelly from the desk's own closed trades ────────────────
-  measured: PositionSizeMeasuredBlock;
-  applied: KellyAppliedPairLabel;
-  comparison: string; // honest model-vs-measured sentence
-}
-
-// ── V9 E1/E2: execution feedback loop ────────────────────────────────────────
-
-/**
- * Which (p, b) sources the adaptive Kelly applied. SPEC_V9 lists the first
- * three; 'measured-p+structural-b' covers ≥30 closed trades with a no-loss
- * last-30 window (p measured, b still structural).
- */
-export type KellyAppliedPairLabel =
-  | "measured-p+measured-b"
-  | "model-p+measured-b"
-  | "model-p+structural-b"
-  | "measured-p+structural-b";
-
-export interface MeasuredKellyStat {
-  value: number | null; // null while unmeasurable
-  samples: number; // closed trades inside the last-30 window backing the value
-  usable: boolean; // whether the adaptive Kelly APPLIES this input
-}
-
-export interface PositionSizeMeasuredBlock {
-  closedTrades: number; // whole-history closed trades with realized P&L
-  winRate: MeasuredKellyStat; // p over the last-30 window
-  payoff: MeasuredKellyStat; // b over the last-30 window
-  kellyFraction: number | null; // from the fully-measured pair; null unless both usable
-  halfKelly: number | null; // from the fully-measured pair; null unless both usable
-}
-
-/** GET /api/execution/summary (V9 E1). */
-export interface ExecutionMeasuredBlock {
-  winRatePct: number | null; // measured p × 100 over the last-30 window
-  payoff: number | null; // measured b over the last-30 window
-  halfKellyPct: number | null; // ADAPTED half-Kelly % (applied pair)
-  usableP: boolean;
-  usableB: boolean;
-  reasons: string[]; // honest — why an input is NOT applied
-  applied: KellyAppliedPairLabel;
-  wins: number; // in-window counts backing the numbers
-  losses: number;
-  avgWin: number | null; // ₹
-  avgLoss: number | null; // ₹ positive
-}
-
-export interface KellyDriftPoint {
-  date: string; // YYYY-MM-DD (IST)
-  closedTrades: number;
-  measuredP: number | null;
-  measuredB: number | null;
-  halfKellyPct: number | null;
-  applied: string;
-}
-
-export interface ExecutionSummaryResponse {
-  closedTrades: number;
-  window: { size: number; used: number }; // the "last 30" measurement window
-  measured: ExecutionMeasuredBlock;
-  model: { winRatePct: number; source: string }; // V8 universe p (aggregate 7d hit rate)
-  expectancy: { value: number | null; note: string };
-  drift: KellyDriftPoint[]; // ascending by date, from the kelly_drift table
-  /** V10 B4 — win-rate splits by entry-context factor (or the unlock note). */
-  factorInsights: FactorInsightsBlock;
-  note: string; // honest: paper fills have zero slippage
-}
+// NOTE: the options-skew radar (permanently Akamai-blocked), consumer Kelly
+// position sizing, and the adaptive execution-feedback summary were REMOVED
+// (upgrade-spec §2 rows 6/9/11). kelly_drift rows are preserved as archived
+// experiment artifacts.
 
 // ── V10 B4: entry-context snapshot + factor insights ─────────────────────────
 

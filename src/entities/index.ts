@@ -42,3 +42,12 @@ export { FinancialFact } from "./FinancialFact";
 export { IntelligenceMetric } from "./IntelligenceMetric";
 export { IntelligenceEvidence } from "./IntelligenceEvidence";
 export { MacroObservation } from "./MacroObservation";
+
+// Phase B2 — accounts, canonical instruments, watchlist, immutable ledger
+export { Account } from "./Account";
+export { Instrument } from "./Instrument";
+export { InstrumentAlias } from "./InstrumentAlias";
+export { WatchlistItem } from "./WatchlistItem";
+export { LedgerTransaction } from "./LedgerTransaction";
+export type { LedgerTransactionType } from "./LedgerTransaction";
+export { LedgerLotAllocation } from "./LedgerLotAllocation";

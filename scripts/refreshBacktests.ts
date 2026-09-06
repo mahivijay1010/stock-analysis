@@ -1,13 +1,17 @@
 /**
  * refreshBacktests — re-backtest the whole NSE universe from DB-cached bars
  * (testDays 60), upsert ModelPerformance so every row carries the V6
- * calibration fields (brierScore + probBuckets) AND the V7 model-pool stats
- * (per-model + blended-ensemble walk-forward briers), then print:
- *   1. the V6 aggregate brier/calibration table,
- *   2. the V7 per-model aggregate brier table per horizon, including the
- *      out-of-sample BLENDED ensemble vs the V6 engine baseline (honest delta).
+ * calibration fields (brierScore + probBuckets), then print the aggregate
+ * brier/calibration table.
  *
  * Run: npx ts-node scripts/refreshBacktests.ts
+ *
+ * This SCRIPT is a legitimate official-stats writer (job path) — the HTTP
+ * GET /api/backtest/:ticker is read-only since the v2 upgrade
+ * (upgrade-audit §4 #1); ad-hoc runs go through POST /api/jobs/backtest.
+ * The V7 six-model pool merge was removed from production execution
+ * (upgrade-spec §2 row 6) — historical per-model jsonb keys on old
+ * ModelPerformance rows are preserved, no longer written.
  *
  * No seeding pass: bars are served from stock_history when fresh (a stale
  * ticker may trigger a single throttled Yahoo refresh — never a hammering).
@@ -21,9 +25,9 @@ dotenv.config();
 import { AppDataSource } from "../src/config/database";
 import { marketDataService } from "../src/services/market/MarketDataService";
 import { stockService } from "../src/services/StockService";
+import { backtestBars } from "../src/services/quant/backtest";
 import { NSE_UNIVERSE } from "../src/data/nseUniverse";
-import { Horizon, ModelHorizonStat } from "../src/types";
-import { MODEL_NAMES } from "../src/services/quant/models";
+import { Horizon } from "../src/types";
 
 const TEST_DAYS = 60;
 const HORIZONS: Horizon[] = [1, 3, 7, 15, 30];
@@ -39,21 +43,6 @@ interface Agg {
   band: number; // sample-weighted within-band count
   brier: number; // sample-weighted brier sum
   brierSamples: number; // samples that carried a brierScore
-}
-
-interface MAgg {
-  samples: number;
-  brierSum: number; // Σ brier × samples
-  hitSum: number; // Σ hitRate fraction × samples
-}
-
-function bump(map: Map<Horizon, MAgg>, h: Horizon, s: ModelHorizonStat | undefined): void {
-  if (!s || !(s.samples > 0)) return;
-  const a = map.get(h) ?? { samples: 0, brierSum: 0, hitSum: 0 };
-  a.samples += s.samples;
-  a.brierSum += s.brier * s.samples;
-  a.hitSum += (s.hitRatePct / 100) * s.samples;
-  map.set(h, a);
 }
 
 async function main(): Promise<void> {
@@ -72,11 +61,6 @@ async function main(): Promise<void> {
     agg.set(h, { samples: 0, hit: 0, band: 0, brier: 0, brierSamples: 0 });
   }
 
-  // V7: per-model + blended aggregates across the universe.
-  const modelAgg = new Map<string, Map<Horizon, MAgg>>();
-  for (const name of MODEL_NAMES) modelAgg.set(name, new Map());
-  const blendAgg = new Map<Horizon, MAgg>();
-
   const refreshed: string[] = [];
   const failed: string[] = [];
 
@@ -91,8 +75,7 @@ async function main(): Promise<void> {
         );
         continue;
       }
-      // V7: quant backtest + 6-model pool walk-forward, merged into one row.
-      const result = await stockService.backtestWithModelPool(ticker, bars, TEST_DAYS);
+      const result = backtestBars(ticker, bars, { testDays: TEST_DAYS });
       const totalSamples = result.horizons.reduce((s, h) => s + h.samples, 0);
       if (totalSamples === 0) {
         failed.push(ticker);
@@ -113,13 +96,6 @@ async function main(): Promise<void> {
           a.brier += h.brierScore * h.samples;
           a.brierSamples += h.samples;
         }
-        // V7 model-pool aggregates.
-        if (h.models) {
-          for (const name of MODEL_NAMES) {
-            bump(modelAgg.get(name)!, h.horizonDays, h.models[name]);
-          }
-        }
-        bump(blendAgg, h.horizonDays, h.ensemble);
       }
 
       const h7 = result.horizons.find((h) => h.horizonDays === 7);
@@ -165,65 +141,6 @@ async function main(): Promise<void> {
     );
   }
   console.log("══════════════════════════════════════════════════════════════════════════");
-
-  // ── V7: per-model aggregate brier table (+ blended vs V6 engine delta) ─────
-  console.log("\n══════════════════════════════════════════════════════════════════════════════════════════════════════");
-  console.log(
-    ` MODEL POOL AGGREGATE BRIER  (walk-forward, testDays=${TEST_DAYS}, ${refreshed.length} tickers, coin-flip = ${COIN_FLIP_BRIER})`
-  );
-  console.log("══════════════════════════════════════════════════════════════════════════════════════════════════════");
-  const cols = [...MODEL_NAMES.map((n) => n as string), "BLENDED", "V6 engine", "Δ(blend−V6)"];
-  console.log(
-    " Horizon |" + cols.map((c) => ` ${c.padStart(13)} |`).join("")
-  );
-  console.log(
-    " --------|" + cols.map(() => "---------------|").join("")
-  );
-  for (const h of HORIZONS) {
-    const cells: string[] = [];
-    for (const name of MODEL_NAMES) {
-      const a = modelAgg.get(name)!.get(h);
-      cells.push(a && a.samples > 0 ? (a.brierSum / a.samples).toFixed(4) : "-");
-    }
-    const b = blendAgg.get(h);
-    const blendBrier = b && b.samples > 0 ? b.brierSum / b.samples : null;
-    cells.push(blendBrier !== null ? blendBrier.toFixed(4) : "-");
-    const e = agg.get(h)!;
-    const engineBrier = e.brierSamples > 0 ? e.brier / e.brierSamples : null;
-    cells.push(engineBrier !== null ? engineBrier.toFixed(4) : "-");
-    cells.push(
-      blendBrier !== null && engineBrier !== null
-        ? (blendBrier - engineBrier >= 0 ? "+" : "") + (blendBrier - engineBrier).toFixed(4)
-        : "-"
-    );
-    console.log(
-      `  ${String(h).padStart(3)}d   |` + cells.map((c) => ` ${c.padStart(13)} |`).join("")
-    );
-  }
-  console.log("══════════════════════════════════════════════════════════════════════════════════════════════════════");
-  console.log(
-    " BLENDED = out-of-sample online inverse-Brier ensemble measured inside the same walk-forward.\n" +
-    " Δ(blend−V6): negative = the blended ensemble beat the V6 single model; reported honestly even when ≈ 0.\n" +
-    " Historical news/regime context is not archived, so sentiment/macro models ran on price/index terms only."
-  );
-
-  // ── V7: per-model hit-rate table (same aggregation) ───────────────────────
-  console.log("\n Horizon hit rates (%, sample-weighted):");
-  console.log(
-    " Horizon |" + [...MODEL_NAMES.map((n) => n as string), "BLENDED"].map((c) => ` ${c.padStart(13)} |`).join("")
-  );
-  for (const h of HORIZONS) {
-    const cells: string[] = [];
-    for (const name of MODEL_NAMES) {
-      const a = modelAgg.get(name)!.get(h);
-      cells.push(a && a.samples > 0 ? ((a.hitSum / a.samples) * 100).toFixed(2) : "-");
-    }
-    const b = blendAgg.get(h);
-    cells.push(b && b.samples > 0 ? ((b.hitSum / b.samples) * 100).toFixed(2) : "-");
-    console.log(
-      `  ${String(h).padStart(3)}d   |` + cells.map((c) => ` ${c.padStart(13)} |`).join("")
-    );
-  }
 
   console.log(`\nRefreshed + ModelPerformance upserted: ${refreshed.length}/${NSE_UNIVERSE.length}`);
   console.log(`Failures (${failed.length}): ${failed.length ? failed.join(", ") : "none"}`);

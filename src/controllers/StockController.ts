@@ -82,11 +82,39 @@ export class StockController {
     }
   };
 
-  /** GET /api/backtest/:ticker?days=60 */
+  /**
+   * GET /api/backtest/:ticker?days=60 — READ-ONLY: computes and returns
+   * walk-forward stats without touching ModelPerformance (upgrade-audit §4 #1).
+   * Official stats update only via POST /api/jobs/backtest.
+   */
   backtest = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const days = parseIntOr(req.query.days, 60);
       ok(res, await stockService.runBacktest(req.params.ticker, days));
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * POST /api/jobs/backtest  body { ticker, days? } — admin-key-guarded job
+   * submission; upserts the official ModelPerformance row and appends an
+   * immutable job record (cron_execution_logs).
+   */
+  backtestJob = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { ticker, days } = (req.body ?? {}) as { ticker?: unknown; days?: unknown };
+      if (!ticker || typeof ticker !== "string" || !ticker.trim()) {
+        throw new HttpError(400, '"ticker" is required, e.g. { "ticker": "TCS.NS", "days": 60 }');
+      }
+      if (ticker.trim().length > 60) {
+        throw new HttpError(400, '"ticker" is too long (max 60 characters).');
+      }
+      const parsedDays = days === undefined ? 60 : Number(days);
+      if (!Number.isFinite(parsedDays) || parsedDays < 10 || parsedDays > 250) {
+        throw new HttpError(400, '"days" must be a number between 10 and 250.');
+      }
+      ok(res, await stockService.runBacktestJob(ticker.trim(), Math.floor(parsedDays)));
     } catch (err) {
       next(err);
     }

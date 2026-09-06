@@ -116,9 +116,9 @@ export interface BacktestHorizonStats {
   brierScore?: number; // mean((directionProb − outcome)²), outcome = 1 if actual>0 else 0; 4dp
   probBuckets?: ProbBucket[]; // always the 5 fixed buckets when present
   // ── V7 model pool (optional, additive — absent on rows from older runs) ──
-  /** Per-model walk-forward stats, keyed by ModelName (see quant/models). */
+  /** HISTORICAL rows only: per-model V7 pool stats (feature removed; keys preserved as evidence). */
   models?: Record<string, ModelHorizonStat>;
-  /** Out-of-sample blended-ensemble stat (online inverse-Brier weights). */
+  /** HISTORICAL rows only: V7 blended-ensemble stat (feature removed; keys preserved as evidence). */
   ensemble?: ModelHorizonStat;
 }
 

@@ -4,45 +4,101 @@ import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { Header, type TabId } from '@/components/Header';
 import { TabPanel } from '@/components/motion';
-import { AnalyzeView } from '@/components/analyze/AnalyzeView';
-import { TopPicksView } from '@/components/TopPicksView';
-import { LeadersView } from '@/components/LeadersView';
-import { PortfolioView } from '@/components/PortfolioView';
-import { AccuracyView } from '@/components/AccuracyView';
-import { StocksView } from '@/components/StocksView';
-import { AdminView } from '@/components/admin/AdminView';
-import { ChatWidget } from '@/components/assistant/ChatWidget';
+import { WatchlistView } from '@/components/watchlist/WatchlistView';
+import { HoldingsView } from '@/components/holdings/HoldingsView';
+import { DiscoverView } from '@/components/DiscoverView';
+import { TrackRecordView } from '@/components/TrackRecordView';
+import { StockDetailView } from '@/components/analyze/AnalyzeView';
+import { SandboxView } from '@/components/admin/AdminView';
 
-const TAB_IDS: readonly TabId[] = ['analyze', 'top', 'leaders', 'portfolio', 'accuracy', 'stocks', 'desk'];
 const TICKER_KEY = 'stocksense.lastTicker';
+const PENDING_PURCHASE_KEY = 'stocksense.pendingPurchase';
 
-/** #desk → 'desk'; legacy #admin still lands on the desk; anything else → analyze. */
-function tabFromHash(): TabId {
+const CANONICAL_TABS: readonly TabId[] = [
+  'watchlist',
+  'holdings',
+  'discover',
+  'track-record',
+  'stock',
+  'sandbox',
+  'diagnostics',
+];
+
+/**
+ * Hash routing with the v2 redirect map (upgrade-audit §3.1):
+ *   #analyze            → #watchlist (or #stock/<ticker> when one is stored)
+ *   #top #leaders #stocks #portfolio → #discover
+ *   #accuracy           → #track-record
+ *   #desk #admin        → #sandbox
+ *   unknown             → #watchlist (the new default screen)
+ * Stock Detail is a drill-down at #stock/<ticker>.
+ */
+function routeFromHash(): { tab: TabId; ticker: string | null } {
   const raw = window.location.hash.replace(/^#/, '');
-  if (raw === 'admin') return 'desk';
-  return (TAB_IDS as readonly string[]).includes(raw) ? (raw as TabId) : 'analyze';
+  const [head, ...rest] = raw.split('/');
+
+  if (head === 'stock') {
+    const t = rest.join('/').trim();
+    if (t) return { tab: 'stock', ticker: decodeURIComponent(t).toUpperCase() };
+    return { tab: 'stock', ticker: null };
+  }
+  if ((CANONICAL_TABS as readonly string[]).includes(head)) return { tab: head as TabId, ticker: null };
+
+  // Legacy redirects.
+  if (head === 'analyze') {
+    let stored: string | null = null;
+    try {
+      stored =
+        new URLSearchParams(window.location.search).get('ticker') || window.sessionStorage.getItem(TICKER_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+    if (stored) return { tab: 'stock', ticker: stored.toUpperCase() };
+    return { tab: 'watchlist', ticker: null };
+  }
+  if (head === 'top' || head === 'leaders' || head === 'stocks' || head === 'portfolio')
+    return { tab: 'discover', ticker: null };
+  if (head === 'accuracy') return { tab: 'track-record', ticker: null };
+  if (head === 'desk' || head === 'admin') return { tab: 'sandbox', ticker: null };
+  return { tab: 'watchlist', ticker: null };
+}
+
+function hashFor(tab: TabId, ticker: string | null): string {
+  if (tab === 'stock' && ticker) return `#stock/${encodeURIComponent(ticker)}`;
+  return `#${tab}`;
 }
 
 export default function Home() {
-  // URL-hash routing (survives refresh; useSearchParams would force Suspense/prerender pain).
-  // First render matches the server (analyze, no ticker); the mount effect
-  // restores the real tab + last analyzed ticker before paint settles.
-  const [tab, setTab] = useState<TabId>('analyze');
+  // First render matches the server (watchlist); the mount effect restores the
+  // real route before paint settles. Hash routing survives refresh without
+  // useSearchParams' Suspense/prerender pain.
+  const [tab, setTab] = useState<TabId>('watchlist');
   const [ticker, setTicker] = useState<string | null>(null);
   const [amount, setAmount] = useState<number | null>(null);
+  const [pendingPurchase, setPendingPurchase] = useState<string | null>(null);
 
   useEffect(() => {
+    const applyRoute = (normalize: boolean) => {
+      const route = routeFromHash();
+      setTab(route.tab);
+      if (route.tab === 'stock') {
+        const t = route.ticker ?? window.sessionStorage.getItem(TICKER_KEY);
+        if (t) setTicker(t.toUpperCase());
+      }
+      if (normalize) {
+        window.history.replaceState(null, '', hashFor(route.tab, route.ticker));
+      }
+    };
     const restore = window.setTimeout(() => {
-      setTab(tabFromHash());
+      applyRoute(true);
       try {
-        const linkedTicker = new URLSearchParams(window.location.search).get('ticker');
-        const last = linkedTicker || window.sessionStorage.getItem(TICKER_KEY);
-        if (last) setTicker(last.toUpperCase());
+        const pending = window.sessionStorage.getItem(PENDING_PURCHASE_KEY);
+        if (pending) setPendingPurchase(pending.toUpperCase());
       } catch {
-        /* storage unavailable (private mode etc.) — start clean */
+        /* storage unavailable */
       }
     }, 0);
-    const onHashChange = () => setTab(tabFromHash());
+    const onHashChange = () => applyRoute(false);
     window.addEventListener('hashchange', onHashChange);
     return () => {
       window.clearTimeout(restore);
@@ -50,62 +106,100 @@ export default function Home() {
     };
   }, []);
 
-  const openTab = useCallback((t: TabId) => {
-    setTab(t);
-    window.history.replaceState(null, '', `#${t}`);
+  const openTab = useCallback(
+    (t: TabId) => {
+      setTab(t);
+      window.history.replaceState(null, '', hashFor(t, ticker));
+      window.scrollTo({ top: 0 });
+    },
+    [ticker],
+  );
+
+  /** Drill into Stock Detail from any list row or search result. */
+  const openStock = useCallback((t: string) => {
+    const up = t.toUpperCase();
+    setTicker(up);
+    try {
+      window.sessionStorage.setItem(TICKER_KEY, up);
+    } catch {
+      /* non-fatal */
+    }
+    setTab('stock');
+    window.history.replaceState(null, '', hashFor('stock', up));
     window.scrollTo({ top: 0 });
   }, []);
 
-  const openAnalyze = useCallback(
+  /** Watchlist "Add purchase" → Holdings form, prefilled. */
+  const addPurchase = useCallback(
     (t: string) => {
-      setTicker(t);
+      const up = t.toUpperCase();
+      setPendingPurchase(up);
       try {
-        window.sessionStorage.setItem(TICKER_KEY, t);
+        window.sessionStorage.setItem(PENDING_PURCHASE_KEY, up);
       } catch {
         /* non-fatal */
       }
-      openTab('analyze');
+      openTab('holdings');
     },
     [openTab],
   );
 
+  const consumePendingPurchase = useCallback(() => {
+    setPendingPurchase(null);
+    try {
+      window.sessionStorage.removeItem(PENDING_PURCHASE_KEY);
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
+
+  // Cmd/Ctrl-K focuses the stock search.
   useEffect(() => {
     const onCommand = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        openTab('analyze');
         window.setTimeout(() => {
-          const input = window.innerWidth >= 1024
-            ? document.getElementById('stock-command-input-desktop')
-            : document.getElementById('stock-command-input-mobile') ?? document.getElementById('stock-command-input-launchpad');
+          const input =
+            window.innerWidth >= 1024
+              ? document.getElementById('stock-command-input-desktop')
+              : (document.getElementById('stock-command-input-mobile-sheet') ??
+                document.getElementById('stock-command-input-launchpad'));
           input?.focus();
         }, 80);
       }
     };
     window.addEventListener('keydown', onCommand);
     return () => window.removeEventListener('keydown', onCommand);
-  }, [openTab]);
+  }, []);
 
   return (
     <div className="min-h-screen">
-      <Header tab={tab} onTabChange={openTab} onAnalyze={openAnalyze} onAmountChange={setAmount} />
+      <Header tab={tab} stockLabel={ticker} onTabChange={openTab} onOpenStock={openStock} onAmountChange={setAmount} />
       <main className="w-full px-4 pt-24 pb-28 sm:px-6 lg:ml-[84px] lg:w-[calc(100%-84px)] lg:px-8 lg:pt-[88px] lg:pb-14">
         <AnimatePresence mode="wait" initial={false}>
           <TabPanel key={tab} className="mx-auto w-full max-w-[1480px]">
-            {tab === 'analyze' && (
-              <AnalyzeView ticker={ticker} amount={amount} onAnalyze={openAnalyze} onAmountChange={setAmount} onGoToAccuracy={() => openTab('accuracy')} />
+            {tab === 'watchlist' && (
+              <WatchlistView onOpenStock={openStock} onAddPurchase={addPurchase} />
             )}
-            {tab === 'top' && <TopPicksView onAnalyze={openAnalyze} />}
-            {tab === 'leaders' && <LeadersView onAnalyze={openAnalyze} />}
-            {tab === 'portfolio' && <PortfolioView onAnalyze={openAnalyze} />}
-            {tab === 'accuracy' && <AccuracyView />}
-            {tab === 'stocks' && <StocksView onAnalyze={openAnalyze} />}
-            {tab === 'desk' && <AdminView onAnalyze={openAnalyze} />}
+            {tab === 'holdings' && (
+              <HoldingsView pendingPurchaseTicker={pendingPurchase} onPendingPurchaseConsumed={consumePendingPurchase} onOpenStock={openStock} />
+            )}
+            {tab === 'discover' && <DiscoverView onOpenStock={openStock} />}
+            {tab === 'track-record' && <TrackRecordView />}
+            {tab === 'diagnostics' && <TrackRecordView diagnosticsOpen />}
+            {tab === 'stock' && (
+              <StockDetailView
+                ticker={ticker}
+                amount={amount}
+                onOpenStock={openStock}
+                onAmountChange={setAmount}
+                onGoToTrackRecord={() => openTab('track-record')}
+              />
+            )}
+            {tab === 'sandbox' && <SandboxView onOpenStock={openStock} />}
           </TabPanel>
         </AnimatePresence>
       </main>
-      {/* Sensei — global stocks-only chat assistant (all tabs) */}
-      <ChatWidget />
     </div>
   );
 }

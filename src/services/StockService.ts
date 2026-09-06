@@ -35,10 +35,7 @@ import {
 import { simulateBootstrap } from "./quant/montecarlo";
 import { backtestBars, isDirectionHit, PROB_BUCKET_EDGES } from "./quant/backtest";
 import { dailyReturns, smaSeries } from "./quant/indicators";
-import { predictAll, MODEL_NAMES, ModelName } from "./quant/models";
-import { evaluateModelPool, mergeModelStats } from "./quant/models/evaluate";
-import { selectEnsemble, blendProb, EnsembleSelection } from "./quant/models/selector";
-import { ensembleService } from "./ensemble/EnsembleService";
+import { CronExecutionLog } from "../entities/CronExecutionLog";
 import {
   AccuracyPerStock,
   AccuracyResponse,
@@ -48,12 +45,7 @@ import {
   Bar,
   CalibrationHorizon,
   CalibrationLiveHorizon,
-  CalibrationModels,
   CalibrationResponse,
-  EnsembleBlock,
-  EnsembleWeightEntry,
-  ModelAggregateStat,
-  ModelHorizonStat,
   ProbBucket,
   ResearchBrief,
   ChartPayload,
@@ -191,7 +183,17 @@ export class StockService {
 
   // ── Analyze ────────────────────────────────────────────────────────────────
 
-  async analyze(tickerOrName: string, amount?: number): Promise<AnalyzeResponse> {
+  /**
+   * @param opts.persist Default true (POST /api/analyze records its analysis
+   * and same-day predictions append-only-if-absent). Read-shaped callers
+   * (GET /api/research) MUST pass false — reads never mutate canon.
+   */
+  async analyze(
+    tickerOrName: string,
+    amount?: number,
+    opts?: { persist?: boolean }
+  ): Promise<AnalyzeResponse> {
+    const persist = opts?.persist !== false;
     const resolved = await marketDataService.resolve(tickerOrName);
     if (!resolved) {
       throw new HttpError(
@@ -296,23 +298,12 @@ export class StockService {
       newsP,
     ]);
 
-    // V7 A2: 6-model ensemble — pure pool prediction on the SAME bars, blended
-    // by measured per-model skill (stored walk-forward briers / live weights).
-    const ensemble = await this.buildEnsembleBlock({
-      ticker,
-      bars,
-      niftyBars: niftyBars ?? null,
-      newsSentimentScore: news?.sentimentScore ?? null,
-      regimeScore: macro?.score ?? null,
-      accuracy,
-    });
-
-    // V5: news-aware entry timing — pop7d from the Monte Carlo forecast;
-    // V7: when the ensemble is available, pop7d = 0.5×MC + 0.5×blendedProb7d.
+    // V5: news-aware entry timing — pop7d from the Monte Carlo forecast.
+    // (The V7 six-model ensemble blend was removed from production execution
+    // per upgrade-spec §2 — historical ensemble_weights rows are preserved as
+    // experiment artifacts; nothing here consumes them anymore.)
     const mcPop7 = monteCarlo.horizons.find((h) => h.horizonDays === 7)?.pop ?? null;
-    const blended7 = ensemble ? ensemble.blendedProbUp[7] : null;
-    const pop7dInput =
-      mcPop7 !== null && blended7 !== null ? 0.5 * mcPop7 + 0.5 * blended7 : mcPop7;
+    const pop7dInput = mcPop7;
     const entryTiming = computeEntryTiming({
       quantScore: analysis.score,
       recommendation: analysis.recommendation,
@@ -331,12 +322,6 @@ export class StockService {
         : null,
       bollingerLower: analysis.technicals.bollinger?.lower ?? null,
     });
-    if (mcPop7 !== null && blended7 !== null && pop7dInput !== null) {
-      entryTiming.reasons.push(
-        `7-day PoP input is a 50/50 blend of Monte Carlo (${(mcPop7 * 100).toFixed(1)}%) ` +
-          `and the 6-model ensemble (${(blended7 * 100).toFixed(1)}%) → ${(pop7dInput * 100).toFixed(1)}%`
-      );
-    }
 
     const tradePlan: TradePlan | null = buildTradePlan({
       entry: quote.price,
@@ -372,12 +357,17 @@ export class StockService {
         : null;
 
     // Persist Analysis + PredictionLog rows (best-effort: a storage hiccup
-    // must not turn a completed analysis into a 500).
-    try {
-      await this.persistAnalysis(ticker, quote, analysis);
-      await this.persistPredictionLogs(ticker, bars, analysis);
-    } catch (err) {
-      console.error(`⚠️ Failed to persist analysis rows for ${ticker}:`, err);
+    // must not turn a completed analysis into a 500). Read-shaped callers
+    // (GET /api/research) pass persist:false — a read must not mutate
+    // canonical records (upgrade-audit §4 #2). PredictionLog writes are
+    // append-only-if-absent: a same-day row is NEVER deleted or rewritten.
+    if (persist) {
+      try {
+        await this.persistAnalysis(ticker, quote, analysis);
+        await this.persistPredictionLogs(ticker, bars, analysis);
+      } catch (err) {
+        console.error(`⚠️ Failed to persist analysis rows for ${ticker}:`, err);
+      }
     }
 
     return {
@@ -401,82 +391,7 @@ export class StockService {
       monteCarlo,
       entryTiming,
       beta1y,
-      ensemble,
     };
-  }
-
-  /**
-   * V7 A2: build the AnalyzeResponse ensemble block. Pure model-pool
-   * probabilities on the given bars, weighted per horizon by (in preference
-   * order) live regret weights fresher than the backtest, stored inverse-Brier
-   * backtest weights, or equal weights when nothing is stored yet. Never
-   * throws — a failure yields null (the analyze response degrades honestly).
-   */
-  private async buildEnsembleBlock(args: {
-    ticker: string;
-    bars: Bar[];
-    niftyBars: Bar[] | null;
-    newsSentimentScore: number | null;
-    regimeScore: number | null;
-    accuracy: AccuracySummary | null;
-  }): Promise<EnsembleBlock | null> {
-    try {
-      const probs = predictAll({
-        bars: args.bars,
-        niftyBars: args.niftyBars,
-        newsSentimentScore: args.newsSentimentScore,
-        regimeScore: args.regimeScore,
-      });
-      const liveByHorizon = await ensembleService
-        .getLiveWeights(args.ticker)
-        .catch(() => new Map<Horizon, { weights: Record<string, number>; updatedAt: Date }>());
-      const ranAt = args.accuracy?.ranAt ?? null;
-
-      const blendedProbUp = {} as Record<Horizon, number>;
-      let headline: EnsembleSelection | null = null;
-      for (const h of HORIZONS) {
-        const stats: Record<string, ModelHorizonStat> | null =
-          args.accuracy?.horizons.find((x) => x.horizonDays === h)?.models ?? null;
-        const sel = selectEnsemble({
-          backtestStats: stats,
-          backtestRanAt: ranAt,
-          liveWeights: liveByHorizon.get(h) ?? null,
-        });
-        const perModelProbs: Partial<Record<ModelName, number>> = {};
-        for (const name of MODEL_NAMES) perModelProbs[name] = probs[name][h];
-        blendedProbUp[h] = Number(blendProb(sel.weights, perModelProbs).toFixed(4));
-        if (h === 7) headline = sel;
-      }
-      if (!headline) return null;
-
-      const stats7 =
-        args.accuracy?.horizons.find((x) => x.horizonDays === 7)?.models ?? null;
-      const weights: EnsembleWeightEntry[] = MODEL_NAMES.map((name) => ({
-        model: name,
-        weightPct: Number((headline!.weights[name] * 100).toFixed(2)),
-        brier: stats7?.[name]?.brier ?? null,
-      }));
-
-      const note =
-        headline.source === "live"
-          ? "Weights: live regret-updated (FTRL-style, refreshed after each evening verification). " +
-            "The 7d weights are shown; each horizon is blended with its own weights. " +
-            "Model skill is measured, not promised — near-equal weights mean no model has a real edge."
-          : headline.source === "backtest"
-            ? "Weights: inverse-Brier from this stock's 60-day walk-forward backtest (w ∝ 0.25 − brier). " +
-              "The 7d weights are shown; each horizon is blended with its own weights. " +
-              "Model skill is measured, not promised — near-equal weights mean no model has a real edge."
-            : "Weights: equal — no stored per-model backtest stats for this stock yet " +
-              "(run scripts/refreshBacktests.ts). The blend is an honest average, not a skill claim.";
-
-      return { blendedProbUp, bestModel: headline.bestModel, weights, note };
-    } catch (err) {
-      console.warn(
-        `⚠️ ensemble block unavailable for ${args.ticker}:`,
-        (err as Error).message
-      );
-      return null;
-    }
   }
 
   /**
@@ -596,8 +511,13 @@ export class StockService {
 
   /**
    * One PredictionLog row per horizon, keyed to the date of the last bar the
-   * prediction was computed from. Re-analyzing the same day replaces that
-   * day's rows (latest analysis wins) so verification never double-counts.
+   * prediction was computed from.
+   *
+   * APPEND-ONLY-IF-ABSENT (Phase B1 fix, upgrade-audit §4 #2/#5): if ANY row
+   * already exists for (ticker, modelVersion, predictionDate) the write is
+   * skipped entirely — the first record of the day stands. Rows are NEVER
+   * deleted or rewritten here; prediction history is an immutable record
+   * (spec §5 — a re-analysis must not move a previously logged prediction).
    */
   private async persistPredictionLogs(
     ticker: string,
@@ -608,11 +528,14 @@ export class StockService {
     const predictionDate = lastBar.date;
     const repo = AppDataSource.getRepository(PredictionLog);
 
-    await repo.delete({
-      ticker,
-      modelVersion: MODEL_VERSION,
-      predictionDate: predictionDate as unknown as Date,
+    const existing = await repo.count({
+      where: {
+        ticker,
+        modelVersion: MODEL_VERSION,
+        predictionDate: predictionDate as unknown as Date,
+      },
     });
+    if (existing > 0) return; // same-day rows exist — never delete, never rewrite
 
     const rows = analysis.predictions.map((p) =>
       repo.create({
@@ -833,6 +756,16 @@ export class StockService {
 
   // ── Backtest & accuracy ────────────────────────────────────────────────────
 
+  /**
+   * PURE walk-forward backtest — computes and RETURNS the stats without
+   * touching ModelPerformance (Phase B1 fix, upgrade-audit §4 #1: a GET must
+   * never overwrite official statistics). Official stats change only via the
+   * job path (runBacktestJob) or the evening verification cron.
+   *
+   * The V7 six-model pool merge was removed from production execution
+   * (upgrade-spec §2); historical ModelPerformance rows keep their stored
+   * per-model jsonb keys untouched as experiment evidence.
+   */
   async runBacktest(tickerOrName: string, testDays: number): Promise<BacktestResult> {
     const resolved = await marketDataService.resolve(tickerOrName);
     if (!resolved) {
@@ -849,31 +782,59 @@ export class StockService {
         `Not enough price history for ${resolved.ticker} to backtest: need at least 122 daily bars, have ${bars.length}.`
       );
     }
-    const result = await this.backtestWithModelPool(resolved.ticker, bars, days);
-    await this.upsertModelPerformance(resolved.ticker, result, bars);
-    return result;
+    return backtestBars(resolved.ticker, bars, { testDays: days });
   }
 
   /**
-   * V7 A2: walk-forward backtest of the quant engine PLUS the 6-model pool on
-   * the same bars — the pool's per-model stats (and the out-of-sample blended
-   * stat) are merged into result.horizons so ONE ModelPerformance row carries
-   * everything. Pool failure never sinks the backtest (stats simply absent).
+   * POST /api/jobs/backtest — the ONLY request path that may update the
+   * official ModelPerformance row for a ticker. Every run appends an
+   * immutable job record to cron_execution_logs (insert-only; the table is
+   * the existing safe JobRun-style mechanism until the Phase C durable
+   * queue lands — plan §2 JobRun).
    */
-  async backtestWithModelPool(
-    ticker: string,
-    bars: Bar[],
+  async runBacktestJob(
+    tickerOrName: string,
     testDays: number
-  ): Promise<BacktestResult> {
-    const result = backtestBars(ticker, bars, { testDays });
+  ): Promise<{ jobRunId: string; ticker: string; testDays: number; result: BacktestResult }> {
+    const startedAt = new Date();
+    const jobRepo = AppDataSource.getRepository(CronExecutionLog);
     try {
-      const niftyBars = await marketDataService.getNiftyBars("1y").catch(() => null);
-      const pool = evaluateModelPool(bars, { testDays, niftyBars });
-      mergeModelStats(result.horizons, pool);
+      const result = await this.runBacktest(tickerOrName, testDays);
+      const bars = await marketDataService.getDailyBars(result.ticker, "2y");
+      await this.upsertModelPerformance(result.ticker, result, bars);
+      const record = await jobRepo.save(
+        jobRepo.create({
+          jobName: "job:backtest",
+          executionStart: startedAt,
+          executionEnd: new Date(),
+          executionDurationMs: Date.now() - startedAt.getTime(),
+          status: "completed",
+          stocksProcessed: 1,
+          stocksFailed: 0,
+          apiCallsMade: 0,
+          errorSummary: `ticker=${result.ticker} testDays=${result.testDays} ranAt=${result.ranAt}`,
+        })
+      );
+      return { jobRunId: record.id, ticker: result.ticker, testDays: result.testDays, result };
     } catch (err) {
-      console.warn(`⚠️ model-pool eval failed for ${ticker}:`, (err as Error).message);
+      // Failure is recorded too (append-only) — then surfaced to the caller.
+      await jobRepo
+        .save(
+          jobRepo.create({
+            jobName: "job:backtest",
+            executionStart: startedAt,
+            executionEnd: new Date(),
+            executionDurationMs: Date.now() - startedAt.getTime(),
+            status: "failed",
+            stocksProcessed: 0,
+            stocksFailed: 1,
+            apiCallsMade: 0,
+            errorSummary: `ticker=${tickerOrName}: ${(err as Error).message}`,
+          })
+        )
+        .catch(() => undefined);
+      throw err;
     }
-    return result;
   }
 
   async upsertModelPerformance(
@@ -1048,38 +1009,12 @@ export class StockService {
     }
     const agg = new Map<Horizon, HAgg>();
 
-    // V7: per-model + blended-ensemble aggregation (same sample weighting).
-    interface MAgg {
-      samples: number;
-      brierSum: number;
-      hitSum: number; // Σ hitRate fraction × samples
-    }
-    const modelAgg = new Map<string, Map<Horizon, MAgg>>();
-    const blendAgg = new Map<Horizon, MAgg>();
-    const bumpM = (map: Map<Horizon, MAgg>, h: Horizon, s: ModelHorizonStat): void => {
-      if (!(s.samples > 0) || !Number.isFinite(s.brier)) return;
-      const a = map.get(h) ?? { samples: 0, brierSum: 0, hitSum: 0 };
-      a.samples += s.samples;
-      a.brierSum += s.brier * s.samples;
-      a.hitSum += (s.hitRatePct / 100) * s.samples;
-      map.set(h, a);
-    };
-
+    // NOTE: the V7 per-model/blended-ensemble aggregation was removed from
+    // production execution (upgrade-spec §2 row 6). Historical
+    // ModelPerformance rows still carry their stored per-model jsonb keys —
+    // preserved as experiment evidence, no longer aggregated here.
     for (const row of latestByTicker.values()) {
       for (const h of row.horizons ?? []) {
-        // V7 model stats aggregate even when V6 calibration fields are absent.
-        const hKey = h.horizonDays as Horizon;
-        if (h.models) {
-          for (const name of MODEL_NAMES) {
-            const s = h.models[name];
-            if (!s) continue;
-            const byH = modelAgg.get(name) ?? new Map<Horizon, MAgg>();
-            bumpM(byH, hKey, s);
-            modelAgg.set(name, byH);
-          }
-        }
-        if (h.ensemble) bumpM(blendAgg, hKey, h.ensemble);
-
         if (
           h.samples <= 0 ||
           typeof h.brierScore !== "number" ||
@@ -1218,68 +1153,10 @@ export class StockService {
       ? new Date(rows[0].ranAt).toISOString()
       : new Date(0).toISOString();
 
-    // ── V7: per-model aggregate (DESIGN DECISION: embedded here as `models`
-    // rather than a separate /api/models/performance endpoint — one endpoint,
-    // one set of mirrored types) ─────────────────────────────────────────────
-    const statsOf = (map: Map<Horizon, MAgg>): ModelAggregateStat[] =>
-      ([1, 3, 7, 15, 30] as Horizon[])
-        .filter((h) => (map.get(h)?.samples ?? 0) > 0)
-        .map((h) => {
-          const a = map.get(h)!;
-          return {
-            horizonDays: h,
-            samples: a.samples,
-            brier: Number((a.brierSum / a.samples).toFixed(4)),
-            hitRatePct: Number(((a.hitSum / a.samples) * 100).toFixed(2)),
-          };
-        });
-
-    let models: CalibrationModels | null = null;
-    const perModel = MODEL_NAMES.map((name) => ({
-      model: name as string,
-      horizons: statsOf(modelAgg.get(name) ?? new Map()),
-    })).filter((m) => m.horizons.length > 0);
-    if (perModel.length > 0) {
-      const bestByHorizon = ([1, 3, 7, 15, 30] as Horizon[])
-        .map((h) => {
-          let best: { horizonDays: Horizon; model: string; brier: number } | null = null;
-          for (const m of perModel) {
-            const s = m.horizons.find((x) => x.horizonDays === h);
-            if (!s) continue;
-            if (best === null || s.brier < best.brier) {
-              best = { horizonDays: h, model: m.model, brier: s.brier };
-            }
-          }
-          return best;
-        })
-        .filter((x): x is { horizonDays: Horizon; model: string; brier: number } => x !== null);
-      models = {
-        perModel,
-        blended: statsOf(blendAgg),
-        engineBaseline: backtest.map((b) => ({
-          horizonDays: b.horizonDays,
-          samples: b.samples,
-          brier: b.brierScore,
-        })),
-        bestByHorizon,
-        note:
-          "Sample-weighted aggregate of each model's walk-forward brier across the universe's latest " +
-          "backtests (60 test days, zero lookahead). 'blended' is the OUT-OF-SAMPLE online inverse-Brier " +
-          "ensemble measured inside the same walk-forward; compare it against engineBaseline (the V6 " +
-          "single-model brier) — the honest delta is reported even when it is ≈ 0. Historical news/regime " +
-          "context is not archived, so the sentiment and macro models run on their price/index terms only " +
-          "in the backtest.",
-      };
-    }
-
-    const modelDrift = await ensembleService.getModelDrift().catch(() => null);
-
     return {
       backtest,
       live,
       interpretation,
-      models,
-      modelDrift,
       methodology:
         "Calibration is measured on the walk-forward backtest: for each of the last 60 trading days " +
         "the model stated a probability that the stock would be UP after each horizon, using only data " +
@@ -1301,9 +1178,13 @@ export class StockService {
    * GET /api/research/:ticker — a deterministic analyst-style brief composed
    * from ONE analyze() call. Every figure is a real value from that analysis;
    * every nullable is guarded so the text never reads "null" or "undefined".
+   *
+   * READ-ONLY (Phase B1 fix, upgrade-audit §4 #2): the underlying analyze()
+   * runs with persist:false — no Analysis row is written and no PredictionLog
+   * row is touched by this GET.
    */
   async getResearchBrief(tickerOrName: string): Promise<ResearchBrief> {
-    const a = await this.analyze(tickerOrName);
+    const a = await this.analyze(tickerOrName, undefined, { persist: false });
     const sector = NSE_UNIVERSE.find((u) => u.ticker === a.ticker)?.sector ?? null;
 
     const fmtInr = (x: number): string =>
@@ -1509,20 +1390,6 @@ export class StockService {
         `treat every direction call here as an unproven lean and rely on the ranges and stops.`;
     }
 
-    // ── V7: "Prediction engine" line (best model + measured brier + blend) ──
-    let predictionEngine: string | null = null;
-    if (a.ensemble) {
-      const b7 = a.ensemble.blendedProbUp[7];
-      predictionEngine = a.ensemble.bestModel
-        ? `Prediction engine: 6-model ensemble — best model for this stock is '${a.ensemble.bestModel.name}' ` +
-          `(7d Brier ${a.ensemble.bestModel.brier.toFixed(4)} vs 0.25 coin-flip over ` +
-          `${a.ensemble.bestModel.samples} walk-forward samples, 60-day window). Today's blended P(up, 7d) ` +
-          `is ${(b7 * 100).toFixed(1)}%, with every model weighted by its measured skill — no single model ` +
-          `is trusted blindly.`
-        : `Prediction engine: 6-model ensemble at equal weights (no stored per-model backtest for this ` +
-          `stock yet). Today's blended P(up, 7d) is ${(b7 * 100).toFixed(1)}% — treat it as an unproven lean.`;
-    }
-
     return {
       ticker: a.ticker,
       name: a.name,
@@ -1540,7 +1407,6 @@ export class StockService {
           `analysis is driven by price action and fundamentals rather than headlines.`,
       risks,
       accuracyContext,
-      predictionEngine,
       disclaimer: DISCLAIMER,
     };
   }
@@ -1768,12 +1634,11 @@ export class StockService {
         try {
           const fullBars = await marketDataService.getDailyBars(ticker, "2y");
           if (fullBars.length >= 122) {
-            // V7: pool-merged so nightly refreshes keep the per-model stats.
-            const result = await this.backtestWithModelPool(
-              ticker,
-              fullBars,
-              DEFAULT_BACKTEST_DAYS
-            );
+            // Single-engine backtest only — the V7 model-pool merge was
+            // removed from production execution (upgrade-spec §2 row 6).
+            const result = backtestBars(ticker, fullBars, {
+              testDays: DEFAULT_BACKTEST_DAYS,
+            });
             await this.upsertModelPerformance(ticker, result, fullBars);
             refreshed.push(ticker);
           }

@@ -18,7 +18,7 @@ import {
 } from 'recharts';
 import clsx from 'clsx';
 import { getStockChart } from '@/lib/api';
-import type { ChartRange } from '@/lib/types';
+import type { ChartRange, ChartResponse } from '@/lib/types';
 import { CHART_RANGES } from '@/lib/types';
 import { CHART } from '@/lib/palette';
 import { compactCount, fmtDate, fmtDateShort, inr } from '@/lib/format';
@@ -116,7 +116,7 @@ export function PriceChartCard({ ticker }: { ticker: string }) {
 
   const rows = useMemo<Row[]>(() => {
     if (!data) return [];
-    return data.bars.map((b, i) => ({
+    return data.bars.map((b: ChartResponse['bars'][number], i: number) => ({
       date: b.date,
       close: b.close,
       volume: b.volume,

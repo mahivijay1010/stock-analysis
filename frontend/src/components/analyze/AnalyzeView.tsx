@@ -25,13 +25,10 @@ import { SearchBox } from './SearchBox';
 import { AmountInput } from './AmountInput';
 import { StockHero } from './StockHero';
 import { DecisionSummary } from './DecisionSummary';
-import { EnsembleCard } from './EnsembleCard';
 import { InvestmentBriefCard } from './InvestmentBriefCard';
 import { NewsPanel } from './NewsPanel';
 import { MonteCarloCard } from './MonteCarloCard';
 import { VolForecastCard } from './VolForecastCard';
-import { OptionsSkewCard } from './OptionsSkewCard';
-import { KellySizingCard } from './KellySizingCard';
 import { ForecastChart } from './ForecastChart';
 import { ProjectionsTable } from './ProjectionsTable';
 import { TechnicalsGrid } from './TechnicalsGrid';
@@ -40,7 +37,6 @@ import { PriceChartCard } from './PriceChartCard';
 import { FrameworkPanel } from './FrameworkPanel';
 import { TradePlanCard } from './TradePlanCard';
 import { RecentWindowsPanel } from './RecentWindowsPanel';
-import { HoldingCalculator } from '@/components/HoldingCalculator';
 
 const EXAMPLES = [
   { ticker: 'RELIANCE.NS', label: 'Reliance' },
@@ -246,17 +242,13 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
                     {data.monteCarlo && <MonteCarloCard forecast={data.monteCarlo} />}
                   </div>
                   <ProjectionsTable predictions={data.analysis.predictions} investmentPlanRow={investmentPlan?.projections ?? null} highlightAmount={investmentPlan?.amount ?? null} />
-                  <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
-                    <VolForecastCard ticker={data.ticker} />
-                    <OptionsSkewCard ticker={data.ticker} />
-                  </div>
+                  <VolForecastCard ticker={data.ticker} />
                 </div>
               )}
 
               {section === 'research' && (
                 <div className="space-y-4">
                   {data.news !== undefined && <NewsPanel news={data.news} />}
-                  {data.ensemble && <EnsembleCard ensemble={data.ensemble} />}
                   {data.framework && <FrameworkPanel framework={data.framework} />}
                   <InvestmentBriefCard key={`brief-${data.ticker}`} ticker={data.ticker} />
                   <AccuracyStrip accuracy={data.accuracy} onGoToAccuracy={onGoToAccuracy} />
@@ -266,8 +258,6 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
               {section === 'technicals' && (
                 <div className="space-y-4">
                   <TechnicalsGrid technicals={data.analysis.technicals} quote={data.quote} />
-                  <HoldingCalculator key={`holdings-${data.ticker}`} defaultTicker={data.ticker} lockTicker />
-                  <KellySizingCard ticker={data.ticker} />
                 </div>
               )}
             </TabPanel>
@@ -279,5 +269,34 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Stock Detail (v2 upgrade) — the drill-down destination. Wraps the
+ * consolidated analysis view; navigation-level names map onto the legacy
+ * AnalyzeView props (onOpenStock → onAnalyze, onGoToTrackRecord → onGoToAccuracy).
+ */
+export function StockDetailView({
+  ticker,
+  amount,
+  onOpenStock,
+  onAmountChange,
+  onGoToTrackRecord,
+}: {
+  ticker: string | null;
+  amount: number | null;
+  onOpenStock: (ticker: string) => void;
+  onAmountChange: (amount: number | null) => void;
+  onGoToTrackRecord: () => void;
+}) {
+  return (
+    <AnalyzeView
+      ticker={ticker}
+      amount={amount}
+      onAnalyze={onOpenStock}
+      onAmountChange={onAmountChange}
+      onGoToAccuracy={onGoToTrackRecord}
+    />
   );
 }

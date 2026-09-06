@@ -1,20 +1,23 @@
 /**
- * AdminService (Module V2-D) — paper-trading desk + daily guidance for the
- * single "admin" account (seeded idempotently on boot: start = cash = ₹1,000).
+ * AdminService (Module V2-D) — the paper-trading desk SANDBOX for the single
+ * "admin" account (seeded idempotently on boot). Out of primary navigation in
+ * the v2 upgrade; records preserved (upgrade-spec §2 row 6).
  *
  *  - recordTrade(): BUY opens a lot (cash − cost − fees, cash-sufficiency
  *    enforced); SELL closes/reduces the oldest OPEN lots FIFO (owned-qty
  *    enforced) and books realizedPnl NET of fees.
  *  - getAccount(): open positions with live P&L + advice, realized P&L,
- *    DERIVED equity curve (never stored), goal tracker.
- *  - getDailyPlan(): best affordable candidate from the SAME cached universe
- *    scan the top-picks endpoint uses (no extra scanning), honest
- *    noPickReason when nothing qualifies, exit advice, goal tracker, and a
- *    REQUIRED realityCheck computed from LIVE ModelPerformance numbers.
+ *    DERIVED equity curve (never stored).
+ *  - getPredictionAudit(): verified predictions vs reality + loss guard.
+ *  - getForecastLocks(): purchase-day forecasts, frozen and graded.
  *
- * Advice engine (shared by /account and /daily-plan):
- *   live ≤ stop → SELL_NOW_STOP_HIT; live ≥ target → BOOK_PROFIT_TARGET_HIT;
- *   quant score < 45 (re-analyzed from DB bars) → EXIT_MOMENTUM_LOST; else HOLD.
+ * REMOVED in the v2 upgrade: getDailyPlan (pick + cash-split + goal tracker +
+ * reality check), the goal/milestone machinery, and the destructive
+ * confirmReset path (disabled pending rework). PaperAccount goal COLUMNS and
+ * values are preserved as user state.
+ *
+ * Advice engine: live ≤ stop → SELL_NOW_STOP_HIT; live ≥ target →
+ * BOOK_PROFIT_TARGET_HIT; quant score < 45 → EXIT_MOMENTUM_LOST; else HOLD.
  *
  * NEVER fabricates data: every price is a real quote/bar, every accuracy
  * number comes from measured ModelPerformance rows.
@@ -28,30 +31,21 @@ import { ModelPerformance } from "../../entities/ModelPerformance";
 import { PredictionLog } from "../../entities/PredictionLog";
 import { marketDataService } from "../market/MarketDataService";
 import { macroService } from "../market/MacroService";
-import { computeTradeBreakdown } from "./executionStats";
+import { computeTradeBreakdown } from "./tradeBreakdown";
 import { analyzeBars } from "../quant/engine";
 import { stockService } from "../StockService";
 import { buildTradePlan } from "../framework/plan";
 import { IntelligenceRepository } from "../intelligence/IntelligenceRepository";
 import { intelligenceQualityScore } from "../quant/intelligenceQuality";
-import {
-  estimateBuyFees,
-  estimateSellFees,
-  estimateRoundTripFees,
-} from "../framework/fees";
-import { portfolioService } from "../portfolio/PortfolioService";
+import { estimateBuyFees, estimateSellFees } from "../framework/fees";
 import {
   AdminAccountResponse,
   AdminSettingsRequest,
   Bar,
-  DailyPlanPick,
-  DailyPlanResponse,
   ForecastLock,
   ForecastLockRow,
   ForecastLocksResponse,
   ForecastLockVerdict,
-  GoalMilestone,
-  GoalTracker,
   HttpError,
   LockedForecastHorizon,
   LivePredictionStats,
@@ -72,39 +66,12 @@ const ADMIN_ACCOUNT_NAME = "admin";
 const ADMIN_START_CAPITAL = 1000;
 const MODEL_VERSION = "quant-v1";
 const MOMENTUM_EXIT_SCORE = 45;
-const MIN_DIRECTION_PROB_7D = 0.55;
-const AFFORDABILITY_FACTOR = 0.98; // price must be ≤ cash × 0.98
 
-// Dynamic goal defaults (the original ₹1,000 → ₹1,00,000-in-30-days reference).
-const DEFAULT_TARGET_AMOUNT = 100000;
-const DEFAULT_TARGET_DAYS = 30;
-const SETTINGS_CAPITAL_MIN = 100;
-const SETTINGS_CAPITAL_MAX = 100_000_000; // ₹10 crore
-const SETTINGS_TARGET_MAX = 1_000_000_000;
-const SETTINGS_DAYS_MIN = 1;
-const SETTINGS_DAYS_MAX = 365;
-
-/**
- * Milestones along the geometric equity path from start → target over `days`:
- * checkpoints at 25/50/75/100% of the timeline (deduped), each at
- * start × (target/start)^(day/days). Fully dynamic — no hardcoded amounts.
- */
-function milestonesFor(start: number, target: number, days: number): GoalMilestone[] {
-  if (!(start > 0) || !(target > 0) || !(days >= 1) || target <= start) {
-    return [{ day: Math.max(1, Math.round(days)), target: Math.round(target * 100) / 100 }];
-  }
-  const fractions = [0.25, 0.5, 0.75, 1];
-  const milestones: GoalMilestone[] = [];
-  const seen = new Set<number>();
-  for (const f of fractions) {
-    const day = Math.max(1, Math.round(days * f));
-    if (seen.has(day)) continue;
-    seen.add(day);
-    const t = f === 1 ? target : start * Math.pow(target / start, day / days);
-    milestones.push({ day, target: Math.round(t * 100) / 100 });
-  }
-  return milestones;
-}
+// REMOVED in the v2 upgrade (upgrade-spec §2 row 13): the goal/milestone/
+// reality-check machinery (milestonesFor, goalParams, buildGoalTracker,
+// buildRealityCheck) and GET /api/admin/daily-plan. The PaperAccount's
+// target_amount/target_days/challenge_started_at COLUMNS and stored values
+// are preserved as user state — no computation reads them anymore.
 
 function round2(x: number): number {
   const r = Math.round(x * 100) / 100;
@@ -639,7 +606,6 @@ export class AdminService {
       allTrades.reduce((s, t) => s + (t.realizedPnl ?? 0), 0)
     );
     const equityCurve = await this.deriveEquityCurve(account, allTrades, openPositions);
-    const goals = this.buildGoalTracker(account, equity);
 
     return {
       account: {
@@ -651,7 +617,6 @@ export class AdminService {
       openPositions,
       realizedPnl,
       equityCurve,
-      goals,
       history: allTrades.map(tradeToView),
     };
   }
@@ -857,304 +822,23 @@ export class AdminService {
     return account.challengeStartedAt ?? account.createdAt;
   }
 
-  /** Effective dynamic goal parameters (user-configurable, with the original defaults). */
-  private goalParams(account: PaperAccount): { start: number; target: number; days: number } {
-    return {
-      start: account.startCapital > 0 ? account.startCapital : ADMIN_START_CAPITAL,
-      target: account.targetAmount ?? DEFAULT_TARGET_AMOUNT,
-      days: account.targetDays ?? DEFAULT_TARGET_DAYS,
-    };
-  }
-
-  private buildGoalTracker(account: PaperAccount, currentEquity: number): GoalTracker {
-    const { start, target, days } = this.goalParams(account);
-    const milestones = milestonesFor(start, target, days);
-    const startedAt = this.challengeStart(account);
-    const msElapsed = Date.now() - startedAt.getTime();
-    const currentDay = Math.max(1, Math.floor(msElapsed / 86_400_000) + 1);
-
-    const next = milestones.find((m) => m.day >= currentDay) ?? milestones[milestones.length - 1];
-    const daysRemaining = Math.max(1, next.day - currentDay + 1);
-
-    const requiredDaily =
-      currentEquity > 0 && next.target > currentEquity
-        ? (Math.pow(next.target / currentEquity, 1 / daysRemaining) - 1) * 100
-        : 0;
-    const achievedDaily =
-      currentEquity > 0 ? (Math.pow(currentEquity / start, 1 / currentDay) - 1) * 100 : -100;
-
-    // On track = at or above the geometric path from start to the final target.
-    const pathEquity =
-      target > start
-        ? start * Math.pow(target / start, Math.min(currentDay, days) / days)
-        : start;
-    const onTrack = currentEquity >= pathEquity;
-
-    return {
-      milestones,
-      startedAt: startedAt.toISOString(),
-      currentEquity: round2(currentEquity),
-      currentDay,
-      onTrack,
-      requiredDailyReturnPctToNextMilestone: round2(requiredDaily),
-      achievedAvgDailyReturnPct: round2(achievedDaily),
-    };
-  }
-
   // ── Settings (dynamic capital + target) ───────────────────────────────────
 
   /**
-   * Update the goal (targetAmount/targetDays) in place; changing startCapital
-   * (or passing confirmReset) RESETS the challenge: deletes all paper trades,
-   * sets cash = startCapital and restarts the day counter. Destructive resets
-   * require confirmReset: true — the UI double-confirms before sending it.
+   * DISABLED in the v2 upgrade. The goal/challenge fields were removed from
+   * active execution (upgrade-spec §2 row 13) and the destructive
+   * confirmReset path — which hard-DELETEd every paper trade via an
+   * unauthenticated POST (upgrade-audit R4) — is disabled pending a reworked,
+   * authorized, ledger-preserving archive flow. Stored account values are
+   * preserved untouched.
    */
-  async updateSettings(req: AdminSettingsRequest): Promise<AdminAccountResponse> {
-    const account = await this.getAccountRow();
-
-    let targetAmount: number | undefined;
-    if (req.targetAmount !== undefined) {
-      const t = Number(req.targetAmount);
-      if (!Number.isFinite(t) || t < SETTINGS_CAPITAL_MIN || t > SETTINGS_TARGET_MAX) {
-        throw new HttpError(
-          400,
-          `"targetAmount" must be between ₹${SETTINGS_CAPITAL_MIN.toLocaleString("en-IN")} and ₹${SETTINGS_TARGET_MAX.toLocaleString("en-IN")}.`
-        );
-      }
-      targetAmount = round2(t);
-    }
-    let targetDays: number | undefined;
-    if (req.targetDays !== undefined) {
-      const d = Math.floor(Number(req.targetDays));
-      if (!Number.isFinite(d) || d < SETTINGS_DAYS_MIN || d > SETTINGS_DAYS_MAX) {
-        throw new HttpError(400, `"targetDays" must be an integer between ${SETTINGS_DAYS_MIN} and ${SETTINGS_DAYS_MAX}.`);
-      }
-      targetDays = d;
-    }
-    let startCapital: number | undefined;
-    if (req.startCapital !== undefined) {
-      const s = Number(req.startCapital);
-      if (!Number.isFinite(s) || s < SETTINGS_CAPITAL_MIN || s > SETTINGS_CAPITAL_MAX) {
-        throw new HttpError(
-          400,
-          `"startCapital" must be between ₹${SETTINGS_CAPITAL_MIN.toLocaleString("en-IN")} and ₹${SETTINGS_CAPITAL_MAX.toLocaleString("en-IN")}.`
-        );
-      }
-      startCapital = round2(s);
-    }
-    if (targetAmount === undefined && targetDays === undefined && startCapital === undefined && !req.confirmReset) {
-      throw new HttpError(400, "Provide at least one of startCapital, targetAmount, targetDays (or confirmReset to restart).");
-    }
-
-    const wantsReset = startCapital !== undefined || req.confirmReset === true;
-    if (startCapital !== undefined && req.confirmReset !== true) {
-      throw new HttpError(
-        400,
-        "Changing startCapital resets the challenge and erases the paper trade history — send confirmReset: true to proceed."
-      );
-    }
-
-    const effectiveTarget = targetAmount ?? account.targetAmount ?? DEFAULT_TARGET_AMOUNT;
-    const effectiveStart = startCapital ?? account.startCapital;
-    if (effectiveTarget <= effectiveStart) {
-      throw new HttpError(
-        400,
-        `"targetAmount" (${inr(effectiveTarget)}) must be greater than the start capital (${inr(effectiveStart)}).`
-      );
-    }
-
-    await AppDataSource.transaction(async (em) => {
-      if (wantsReset) {
-        await em.getRepository(PaperTrade).delete({ accountId: account.id });
-        account.startCapital = effectiveStart;
-        account.cash = effectiveStart;
-        account.challengeStartedAt = new Date();
-      }
-      if (targetAmount !== undefined) account.targetAmount = targetAmount;
-      if (targetDays !== undefined) account.targetDays = targetDays;
-      await em.getRepository(PaperAccount).save(account);
-    });
-
-    return this.getAccount();
-  }
-
-  // ── Reality check (computed from LIVE ModelPerformance — never hardcoded) ──
-
-  private async buildRealityCheck(start: number, target: number, days: number): Promise<string> {
-    const impliedDailyPct = target > start ? (Math.pow(target / start, 1 / days) - 1) * 100 : 0;
-    const totalPct = start > 0 ? (target / start - 1) * 100 : 0;
-
-    let measured = "";
-    let band = "";
-    try {
-      const accuracy = await stockService.getAccuracy();
-      const h1 = accuracy.overall.find((h) => h.horizonDays === 1);
-      if (h1 && h1.samples > 0) {
-        const hit = h1.directionHitRatePct;
-        const typicalMove = h1.avgAbsErrorPct; // ≈ typical 1-day move (mean abs error vs near-zero predictions)
-        measured =
-          `Measured 1-day direction accuracy across the universe is currently ${hit.toFixed(1)}% ` +
-          `over ${h1.samples.toLocaleString("en-IN")} backtest samples, with a typical 1-day move of ~${typicalMove.toFixed(2)}%.`;
-        // Realistic month band from the measured numbers: daily edge ± 1.65σ√21.
-        const edgePerDay = ((2 * hit) / 100 - 1) * typicalMove;
-        const monthEdge = edgePerDay * 21;
-        const monthSigma = typicalMove * Math.sqrt(21);
-        const lo = Math.round(monthEdge - 1.65 * monthSigma);
-        const hi = Math.round(monthEdge + 1.65 * monthSigma);
-        band =
-          ` At those measured odds, a disciplined month realistically lands around ` +
-          `${lo}%..${hi >= 0 ? "+" : ""}${hi}% — not +${totalPct.toFixed(0)}%.`;
-      } else {
-        measured =
-          "No measured backtest accuracy is available yet (ModelPerformance is empty) — run the seed/backtest script for honest odds.";
-      }
-    } catch (err) {
-      measured = `Measured accuracy could not be loaded right now (${(err as Error).message}).`;
-    }
-
-    return (
-      `Reality check: turning ${inr(start)} into ${inr(target)} in ${days} day${days === 1 ? "" : "s"} ` +
-      `is a total of +${totalPct.toFixed(0)}% and implies ~${impliedDailyPct.toFixed(1)}%/day compounded. ` +
-      measured +
-      ` These milestones are aspirational targets, not promises — no honest statistical model supports ` +
-      `~${impliedDailyPct.toFixed(1)}%/day compounded returns${impliedDailyPct > 1 ? "" : " being guaranteed"}.` +
-      band
+  async updateSettings(_req: AdminSettingsRequest): Promise<AdminAccountResponse> {
+    throw new HttpError(
+      400,
+      "Desk settings are disabled during the v2 upgrade: the goal/challenge computation was " +
+        "removed from the product, and the destructive reset path is disabled pending rework. " +
+        "The paper account's stored values (start capital, cash, trade history) are preserved."
     );
-  }
-
-  // ── Daily plan ────────────────────────────────────────────────────────────
-
-  async getDailyPlan(): Promise<DailyPlanResponse> {
-    const account = await this.getAccountRow();
-    const cash = round2(account.cash);
-
-    const marketRegime = await macroService.getMarketRegime().catch(() => null);
-
-    // Candidate scan — REUSES the cached top-picks scan (no extra fetching).
-    let pick: DailyPlanPick | null = null;
-    let noPickReason: string | undefined;
-    try {
-      const scan = await stockService.getScanSnapshot();
-      const budget = cash * AFFORDABILITY_FACTOR;
-      const buys = scan.entries.filter((e) => e.recommendation === "BUY");
-      const affordable = buys.filter((e) => e.price <= budget);
-      const withPlans = affordable
-        .map((e) => ({
-          e,
-          plan: buildTradePlan({
-            entry: e.price,
-            atr14: e.atr14,
-            annualVolatilityPct: e.annualVolatilityPct,
-            recommendation: e.recommendation,
-          }),
-        }))
-        .filter((c) => c.plan !== null);
-      const meetingRR = withPlans.filter((c) => c.plan!.meetsRewardRisk);
-      const confident = meetingRR.filter(
-        (c) => (c.e.directionProb7d ?? 0) >= MIN_DIRECTION_PROB_7D
-      );
-      confident.sort((a, b) => b.e.score - a.e.score);
-
-      const best = confident[0];
-      if (best && best.plan) {
-        const e = best.e;
-        const plan = best.plan;
-        let qty = Math.floor(budget / e.price);
-        while (qty > 0 && qty * e.price + estimateBuyFees(qty * e.price) > cash) qty -= 1;
-        if (qty > 0) {
-          const invested = round2(qty * e.price);
-          const fees = estimateRoundTripFees(invested);
-          const perf = await this.historicalOddsFor(e.ticker);
-          pick = {
-            ticker: e.ticker,
-            name: e.name,
-            price: round2(e.price),
-            qty,
-            invested,
-            score: e.score,
-            directionProb7d: e.directionProb7d ?? 0,
-            entry: plan.entry,
-            stopLoss: plan.stopLoss,
-            target: plan.target,
-            maxLoss: round2(qty * (plan.entry - plan.stopLoss)),
-            potentialGain: round2(qty * (plan.target - plan.entry)),
-            fees: fees.roundTrip,
-            reasons: e.topReasons,
-            historicalOdds: perf,
-          };
-        }
-      }
-      if (!pick) {
-        noPickReason =
-          `No affordable BUY setup today: of ${scan.scannedCount} stocks scanned, ` +
-          `${buys.length} are BUY-rated, ${affordable.length} trade at or under your ` +
-          `${inr(budget)} budget (cash ${inr(cash)} × 0.98), ${meetingRR.length} of those pass the ` +
-          `3:1 reward-risk plausibility check, and ${confident.length} also have a 7-day up-probability ≥ 55%. ` +
-          `Holding cash is the right move — forcing a trade that fails these filters is how small accounts die.`;
-      }
-    } catch (err) {
-      noPickReason = `Universe scan unavailable right now (${(err as Error).message}) — no pick can be made honestly today.`;
-    }
-
-    // Exit advice for open positions (same advice engine as /account).
-    const repo = AppDataSource.getRepository(PaperTrade);
-    const openLots = await repo.find({
-      where: { accountId: account.id, status: "OPEN", side: "BUY" },
-      order: { executedAt: "ASC" },
-    });
-    const positions = await this.buildOpenPositions(openLots);
-    const exitAdvice = positions.map((p) => ({
-      ticker: p.trade.ticker,
-      action: p.advice,
-      reason: p.adviceReason,
-    }));
-
-    // Prop-desk daily loss limit: when hit, withhold ALL new-trade suggestions.
-    const lossGuard = await this.computeLossGuard(account, positions);
-    if (lossGuard.halted) {
-      pick = null;
-      noPickReason = lossGuard.message;
-    }
-
-    const equity = round2(
-      cash + positions.reduce((s, p) => s + p.livePrice * p.trade.qty, 0)
-    );
-    const goalTracker = this.buildGoalTracker(account, equity);
-    const { start, target, days } = this.goalParams(account);
-    const realityCheck = await this.buildRealityCheck(start, target, days);
-
-    // Multi-stock split of the available cash (same filters as the pick).
-    let allocation: DailyPlanResponse["allocation"] = null;
-    let allocationReason: string | undefined;
-    if (lossGuard.halted) {
-      allocationReason = lossGuard.message;
-    } else if (cash >= 100) {
-      try {
-        // The daily desk is a swing desk — short-term strategy by design.
-        const suggested = await portfolioService.suggest(cash, "short-term");
-        allocation = suggested.allocation;
-        allocationReason = suggested.reason;
-      } catch (err) {
-        allocationReason = `Allocation could not be computed right now (${(err as Error).message}).`;
-      }
-    } else {
-      allocationReason = `Available cash ${inr(cash)} is below the ₹100 minimum for a new position.`;
-    }
-
-    const response: DailyPlanResponse = {
-      asOf: new Date().toISOString(),
-      cash,
-      marketRegime,
-      pick,
-      allocation,
-      exitAdvice,
-      goalTracker,
-      lossGuard,
-      realityCheck,
-    };
-    if (noPickReason) response.noPickReason = noPickReason;
-    if (allocationReason) response.allocationReason = allocationReason;
-    return response;
   }
 
   // ── Daily loss guard (prop-desk rule: cap the damage a single day can do) ──
@@ -1348,8 +1032,8 @@ export class AdminService {
     });
 
     const pnls = closed.map((t) => t.realizedPnl).filter((p): p is number => p != null);
-    // V9: the win/loss/expectancy math is shared with ExecutionAnalyticsService
-    // via executionStats.computeTradeBreakdown — one formula, never duplicated.
+    // The win/loss/expectancy math lives in tradeBreakdown.computeTradeBreakdown
+    // (extracted from the archived execution-analytics feature) — one formula.
     const breakdown = computeTradeBreakdown(pnls);
     let tradeStats: TradeStats;
     if (!breakdown) {
@@ -1403,22 +1087,6 @@ export class AdminService {
     };
   }
 
-  /** Per-ticker measured 7d odds from ModelPerformance (live, never hardcoded). */
-  private async historicalOddsFor(ticker: string): Promise<string> {
-    try {
-      const row = await AppDataSource.getRepository(ModelPerformance).findOne({
-        where: { ticker, modelVersion: MODEL_VERSION },
-        order: { ranAt: "DESC" },
-      });
-      const h7 = row?.horizons?.find((h) => h.horizonDays === 7);
-      if (h7 && h7.samples > 0) {
-        return `7d direction hit rate for this stock: ${h7.directionHitRatePct.toFixed(1)}% (${h7.samples} samples)`;
-      }
-      return "No measured 7d backtest accuracy for this stock yet.";
-    } catch {
-      return "Historical accuracy could not be loaded right now.";
-    }
-  }
 }
 
 /** Singleton export. */

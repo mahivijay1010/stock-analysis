@@ -1,6 +1,16 @@
 # StockSense India — Architecture, Progress & Measured Truth (single source)
 
-**This is the only doc.** Old specs (REBUILD_SPEC*, SPEC_V*) are merged here and deleted. Every claim below was measured live, not promised.
+**Primary doc for the running system.** The v2 production upgrade is underway on branch `upgrade/product-v2` — its binding contract is `docs/upgrade-spec.md`, its evidence `docs/upgrade-audit.md`, its plan `docs/implementation-plan.md`, and its resumable state `docs/next-session.md`. Every claim below was measured live, not promised.
+
+## v2 upgrade state (Phase B complete, 2026-09-06)
+- **Migrations**: `synchronize:false` unconditionally; BaselineSchema + CreateAccountsInstrumentsWatchlistLedger applied; all schema change via reviewed migrations with tested down(). Scratch-DB build verified.
+- **Money**: decimal.js policy (internal scale 4, display 2, ROUND_HALF_EVEN, largest-remainder allocation) in `src/services/money/`; spec §4 fixtures are unit + live-API verified (basis 1010 → realized +70.00 / 606.00 over 6 sh — exact).
+- **Auth**: single seeded `owner` account (bcrypt, creds via .env OWNER_USER/OWNER_PASS), httpOnly SameSite=Strict session cookie + X-Requested-With CSRF header on mutations; all private routes scoped server-side; multi-account-ready schema.
+- **Ledger/watchlist**: `accounts, instruments(+aliases, effective-dated), watchlist_items, ledger_transactions(immutable, corrections via corrects_id), lot_allocations(FIFO)`; watch ≠ own; oversell atomically rejected; positions derived, never editable.
+- **Mutating reads FIXED**: GET /api/backtest is pure compute (upsert moved to POST /api/jobs/backtest w/ job log); GET /api/research no longer touches PredictionLog/Analysis (append-only-if-absent logging elsewhere).
+- **REMOVED from product** (archive/ keeps code; DB records preserved): Sensei, portfolio allocation builder + daily plan, consumer Kelly (+drift, execution feedback), 6-model ensemble + FTRL from production, options skew, goal/milestone paths, standalone holdings calculator. Removed routes 404: /api/assistant, /api/position-size, /api/execution/summary, /api/admin/daily-plan, /api/portfolio/suggest, /api/holdings/calculate, /api/options/skew. Cron now: morning scan+rank-snapshot+intelligence rotation; evening verify; midnight cleanup.
+- **Navigation**: Watchlist (default) / Holdings / Discover / Track Record + #stock/<t> drill-down + secondary Sandbox (old desk, records intact) & Diagnostics. Legacy hashes redirect.
+- **Historical measurements** (direction ≈ coin flip, ~85% band coverage, Brier ≈ 0.2525) are HISTORICAL walk-forward results, not current production constants — see Track Record.
 
 ## Ground rules (bind every change)
 Free data only (no paid keys). NEVER fabricate a number — missing = NOT_AVAILABLE, never 0. INR everywhere (en-IN). Vocabulary BUY/HOLD/AVOID. Every prediction carries an 80% range + measured accuracy. Honest degradation (`dataStatus`, reasons, caveats). Out-of-sample/walk-forward only — zero lookahead, never backfill a metric (e.g., rank IC). Provenance on computed metrics: formula + inputs + source + status + confidence.

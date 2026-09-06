@@ -28,6 +28,12 @@ import {
   IntelligenceMetric,
   IntelligenceEvidence,
   MacroObservation,
+  Account,
+  Instrument,
+  InstrumentAlias,
+  WatchlistItem,
+  LedgerTransaction,
+  LedgerLotAllocation,
 } from "../entities";
 import * as dotenv from "dotenv";
 
@@ -45,7 +51,11 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USERNAME || "postgres",
   password: process.env.DB_PASSWORD,
   database: process.env.DB_DATABASE || process.env.DB_NAME || "stock_analysis",
-  synchronize: process.env.NODE_ENV === "development", // Auto-create tables in dev (disable in production)
+  // Schema changes ONLY via reviewed migrations (docs/implementation-plan.md §1).
+  // synchronize must stay false unconditionally — the live DB holds user state
+  // and historical records that auto-DDL previously resurrected/dropped.
+  synchronize: false,
+  migrationsTableName: "migrations",
   logging: process.env.NODE_ENV === "development",
   entities: [
     Stock,
@@ -76,6 +86,12 @@ export const AppDataSource = new DataSource({
     IntelligenceMetric,
     IntelligenceEvidence,
     MacroObservation,
+    Account,
+    Instrument,
+    InstrumentAlias,
+    WatchlistItem,
+    LedgerTransaction,
+    LedgerLotAllocation,
   ],
   migrations: [__dirname + "/../migrations/*.{js,ts}"],
   subscribers: [],

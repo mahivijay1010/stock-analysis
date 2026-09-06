@@ -1,45 +1,83 @@
 import { Router } from "express";
 import {
   StockController,
-  HoldingsController,
   PortfolioController,
-  AssistantController,
   IntelligenceController,
   QuantController,
+  AuthController,
+  LedgerController,
 } from "../controllers";
-import { AdminController } from "../controllers/AdminController";
 import { createAdminRoutes } from "./admin";
+import { requireAuth, requireAuthOrAdminKey, requireCsrfHeader } from "../middleware/auth";
 
 /**
  * API routes (mounted at /api). Route order matters:
  * - /admin/* is mounted FIRST so nothing ever captures "admin" as a param.
  * - /stocks/popular MUST be registered before /stocks/:ticker/* so "popular"
  *   is never captured as a ticker parameter.
+ *
+ * REMOVED in the v2 upgrade (upgrade-audit §3 matrix; plan §3.2) — routes,
+ * handlers, services, deps and feature-specific tests went together:
+ *   POST /api/holdings/calculate   (absorbed into the real Holdings ledger, B2)
+ *   POST /api/portfolio/suggest    (allocation builder removed from product)
+ *   POST /api/assistant            (Sensei chatbot removed)
+ *   GET  /api/options/skew/:t      (permanently Akamai-blocked provider)
+ *   GET  /api/position-size/:t     (consumer Kelly advice removed)
+ *   GET  /api/execution/summary    (adaptive execution feedback removed)
+ *   GET  /api/admin/daily-plan     (cash-split + goal path removed)
+ *
+ * READ/WRITE CONTRACT (upgrade-audit §4, fixed in Phase B1): no GET mutates
+ * canonical records. The two offenders were fixed — GET /api/backtest/:t no
+ * longer upserts ModelPerformance (job path only), and GET /api/research/:t
+ * runs a non-persisting analysis. What REMAINS on read paths, by design:
+ *  - the internal daily-bar CACHE fill (MarketDataService.persistBars
+ *    refreshing stale stock_history coverage) plus registry stock-row
+ *    creation on resolve/search — cache semantics, not canonical records;
+ *  - the idempotent one-time paper-account seed on /api/admin/*.
  */
 export const createStockRoutes = (): Router => {
   const router = Router();
   const controller = new StockController();
-  const holdingsController = new HoldingsController();
   const portfolioController = new PortfolioController();
   const intelligenceController = new IntelligenceController();
   const quantController = new QuantController();
+  const authController = new AuthController();
+  const ledgerController = new LedgerController();
 
-  // Admin trading desk (V2-D) — before any param routes.
+  // ── Auth (Phase B2, spec §12) ─────────────────────────────────────────────
+  // Session cookie: httpOnly + SameSite=Strict; CSRF = custom X-Requested-With
+  // header required on all mutations (see src/middleware/auth.ts for the
+  // documented choice). Registration disabled — single seeded owner account.
+  router.post("/auth/login", requireCsrfHeader, authController.login); //   POST /api/auth/login { username, password }
+  router.post("/auth/logout", requireAuth, authController.logout); //       POST /api/auth/logout
+  router.get("/auth/me", requireAuth, authController.me); //                GET  /api/auth/me
+
+  // ── Watchlist (spec §3: follow ≠ own; removing never touches holdings) ───
+  router.get("/watchlist", requireAuth, ledgerController.listWatchlist); //         GET    /api/watchlist
+  router.post("/watchlist", requireAuth, ledgerController.addWatchlist); //         POST   /api/watchlist { ticker, notes?, horizon? }
+  router.delete("/watchlist/:id", requireAuth, ledgerController.removeWatchlist); //DELETE /api/watchlist/:id
+
+  // ── Holdings + immutable transaction ledger (spec §3/§4) ─────────────────
+  // NOTE: /transactions/export.csv and /transactions/import are registered
+  // before /transactions/:id/correct so neither is captured as an :id.
+  router.get("/holdings", requireAuth, ledgerController.holdings); //                    GET  /api/holdings (derived positions + P&L)
+  router.get("/transactions", requireAuth, ledgerController.listTransactions); //        GET  /api/transactions?ticker=&limit=&offset=
+  router.get("/transactions/export.csv", requireAuth, ledgerController.exportCsv); //    GET  /api/transactions/export.csv
+  router.post("/transactions", requireAuth, ledgerController.recordTransaction); //      POST /api/transactions
+  router.post("/transactions/import", requireAuth, ledgerController.importTransactions); // POST /api/transactions/import { rows, dryRun? }
+  router.post("/transactions/:id/correct", requireAuth, ledgerController.correctTransaction); // POST /api/transactions/:id/correct { note? }
+
+  // Admin trading desk (V2-D) — before any param routes. Now requires a real
+  // session (or x-admin-key when ADMIN_KEY is configured) — see routes/admin.ts.
   router.use("/admin", createAdminRoutes());
 
-  // Holdings P&L calculator — stateless, usable from Analyze and Admin.
-  router.post("/holdings/calculate", holdingsController.calculate); //  POST /api/holdings/calculate
+  // Protected job submissions — the ONLY request path that may mutate official
+  // stats (upgrade-audit §4 #1). Session auth (or configured admin key).
+  router.post("/jobs/backtest", requireAuthOrAdminKey, controller.backtestJob); //  POST /api/jobs/backtest { ticker, days? }
 
-  // Multi-stock allocation suggestion for any ₹ amount (public).
-  router.post("/portfolio/suggest", portfolioController.suggest); //  POST /api/portfolio/suggest
-
-  // V7 A4: portfolio stress + portfolio calibration (query tickers/weights,
-  // or the admin desk's open positions when none given).
+  // V7 A4: portfolio stress + portfolio calibration (explicit query tickers).
   router.get("/portfolio/stress", portfolioController.stress); //  GET /api/portfolio/stress?tickers=A,B
   router.get("/portfolio/calibration", portfolioController.calibration); //  GET /api/portfolio/calibration?tickers=A,B
-
-  // Stock-only assistant (rule-based over live app data).
-  router.post("/assistant", new AssistantController().ask); //  POST /api/assistant
 
   // Provenance-first company fundamentals, macro observations and portfolio risk.
   router.post("/intelligence/macro/refresh", intelligenceController.refreshMacro);
@@ -49,22 +87,17 @@ export const createStockRoutes = (): Router => {
   router.post("/intelligence/:ticker/refresh", intelligenceController.refresh);
   router.get("/intelligence/:ticker", intelligenceController.get);
 
-  // V8 R1–R4: relative rank, vol forecast, options radar, Kelly sizing.
+  // V8: relative rank + vol forecast (labeled diagnostics/evaluation keepers).
   router.get("/rank/universe", quantController.rankUniverse); //  GET /api/rank/universe
   router.get("/volatility/forecast/:ticker", quantController.volatilityForecast); //  GET /api/volatility/forecast/RELIANCE.NS
-  router.get("/options/skew/:ticker", quantController.optionsSkew); //  GET /api/options/skew/RELIANCE.NS
-  router.get("/position-size/:ticker", quantController.positionSize); //  GET /api/position-size/TCS.NS?capital=100000
-
-  // V9 E1: execution feedback loop over the PaperTrade ledger.
-  router.get("/execution/summary", new AdminController().executionSummary); //  GET /api/execution/summary
 
   router.get("/search", controller.search); //  GET /api/search?q=tata
   router.post("/analyze", controller.analyze); //  POST /api/analyze { ticker, amount? }
   router.get("/top-picks", controller.topPicks); //  GET /api/top-picks?count=5
-  router.get("/backtest/:ticker", controller.backtest); //  GET /api/backtest/RELIANCE.NS?days=60
+  router.get("/backtest/:ticker", controller.backtest); //  GET /api/backtest/RELIANCE.NS?days=60 (read-only)
   router.get("/accuracy", controller.accuracy); //  GET /api/accuracy
   router.get("/calibration", controller.calibration); //  GET /api/calibration (V6)
-  router.get("/research/:ticker", controller.research); //  GET /api/research/RELIANCE.NS (V6)
+  router.get("/research/:ticker", controller.research); //  GET /api/research/RELIANCE.NS (V6, read-only)
 
   // Legacy alias — MUST come before /stocks/:ticker/* routes.
   router.get("/stocks/popular", controller.popular); //  GET /api/stocks/popular

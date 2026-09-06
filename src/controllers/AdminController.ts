@@ -6,7 +6,6 @@
 
 import { Request, Response, NextFunction } from "express";
 import { adminService } from "../services/admin/AdminService";
-import { executionAnalyticsService } from "../services/admin/ExecutionAnalyticsService";
 import { AdminSettingsRequest, HttpError, RecordTradeRequest } from "../types";
 
 function ok(res: Response, data: unknown): void {
@@ -40,14 +39,8 @@ export class AdminController {
     }
   };
 
-  /** GET /api/admin/daily-plan */
-  dailyPlan = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      ok(res, await adminService.getDailyPlan());
-    } catch (err) {
-      next(err);
-    }
-  };
+  // GET /api/admin/daily-plan REMOVED (upgrade-spec §2 rows 5/13): the daily
+  // pick, cash-split allocation and goal tracker are out of the product.
 
   /** GET /api/admin/prediction-audit — the validation loop: predicted vs real */
   predictionAudit = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -58,14 +51,8 @@ export class AdminController {
     }
   };
 
-  /** GET /api/execution/summary — V9 E1 execution feedback loop (measured p/b, drift) */
-  executionSummary = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      ok(res, await executionAnalyticsService.getSummary());
-    } catch (err) {
-      next(err);
-    }
-  };
+  // GET /api/execution/summary REMOVED (upgrade-spec §2 row 6: adaptive
+  // execution feedback / Kelly drift are out of active execution).
 
   /** GET /api/admin/forecast-locks — purchase-day forecasts, frozen and graded vs reality */
   forecastLocks = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {

@@ -1,42 +1,55 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { AnimatePresence, motion } from 'framer-motion';
+import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
   BarChart3,
-  BriefcaseBusiness,
-  ChartNoAxesColumnIncreasing,
+  ChartCandlestick,
   ChevronRight,
+  Compass,
+  Eye,
+  FlaskConical,
   Gauge,
-  Layers3,
   Menu,
-  Sparkles,
-  Trophy,
+  Settings,
   WalletCards,
   X,
   type LucideIcon,
 } from 'lucide-react';
+import { getHealth } from '@/lib/api';
 import { SearchBox } from '@/components/analyze/SearchBox';
 import { AmountInput } from '@/components/analyze/AmountInput';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
-export type TabId = 'analyze' | 'top' | 'leaders' | 'portfolio' | 'accuracy' | 'stocks' | 'desk';
+export type TabId =
+  | 'watchlist'
+  | 'holdings'
+  | 'discover'
+  | 'track-record'
+  | 'stock'
+  | 'sandbox'
+  | 'diagnostics';
 
 type NavItem = { id: TabId; label: string; short: string; description: string; icon: LucideIcon };
 
-const NAV: NavItem[] = [
-  { id: 'analyze', label: 'Analyze stock', short: 'Analyze', description: 'Full decision workspace', icon: Sparkles },
-  { id: 'top', label: 'Top opportunities', short: 'Picks', description: 'Today’s ranked setups', icon: Trophy },
-  { id: 'leaders', label: 'Market leaders', short: 'Leaders', description: 'Relative strength board', icon: ChartNoAxesColumnIncreasing },
-  { id: 'portfolio', label: 'Portfolio builder', short: 'Portfolio', description: 'Allocate with risk controls', icon: WalletCards },
-  { id: 'accuracy', label: 'Model accuracy', short: 'Accuracy', description: 'Measured, not marketed', icon: Gauge },
-  { id: 'stocks', label: 'Stock universe', short: 'Universe', description: 'Explore every covered name', icon: Layers3 },
-  { id: 'desk', label: 'Trading desk', short: 'Desk', description: 'Plan and review execution', icon: BriefcaseBusiness },
+/** The four primary destinations (spec §2/§10). */
+const PRIMARY: NavItem[] = [
+  { id: 'watchlist', label: 'Watchlist', short: 'Watch', description: 'Stocks you follow — evidence-gated entry status', icon: Eye },
+  { id: 'holdings', label: 'Holdings', short: 'Holdings', description: 'Your ledger — basis, value, realized & unrealized P&L', icon: WalletCards },
+  { id: 'discover', label: 'Discover', short: 'Discover', description: 'Search & rank the covered NSE universe', icon: Compass },
+  { id: 'track-record', label: 'Track Record', short: 'Record', description: 'Measured forecast performance — not marketing', icon: Gauge },
 ];
 
-const PRIMARY_MOBILE = NAV.slice(0, 4);
+/** Secondary destinations (gear menu): the sandbox desk + protected diagnostics. */
+const SECONDARY: NavItem[] = [
+  { id: 'sandbox', label: 'Sandbox', short: 'Sandbox', description: 'Paper trading desk — practice records, isolated', icon: FlaskConical },
+  { id: 'diagnostics', label: 'Diagnostics', short: 'Diag', description: 'Advanced model diagnostics', icon: Settings },
+];
+
+const ALL_NAV = [...PRIMARY, ...SECONDARY];
 
 function Brand() {
   return (
@@ -46,7 +59,7 @@ function Brand() {
       </div>
       <div className="leading-none">
         <p className="font-display text-[15px] font-semibold tracking-[-0.02em] text-white">StockSense</p>
-        <p className="mt-1 text-[9px] font-semibold tracking-[0.2em] text-slate-500 uppercase">India intelligence</p>
+        <p className="mt-1 text-[9px] font-semibold tracking-[0.2em] text-slate-500 uppercase">India research</p>
       </div>
     </div>
   );
@@ -81,9 +94,110 @@ function DesktopNavButton({ item, active, onClick }: { item: NavItem; active: bo
   );
 }
 
-export function Header({ tab, onTabChange, onAnalyze, onAmountChange }: { tab: TabId; onTabChange: (tab: TabId) => void; onAnalyze: (ticker: string) => void; onAmountChange: (amount: number | null) => void }) {
+/** Honest backend status — wired to GET /health, never hardcoded. */
+function HealthStatus() {
+  const q = useQuery({ queryKey: ['health'], queryFn: getHealth, staleTime: 60_000, retry: false });
+  if (q.isPending) return null;
+  const ok = q.isSuccess && q.data?.status === 'ok';
+  return (
+    <div
+      className="flex items-center gap-2 border-l border-white/[0.07] pl-3 text-[10px] text-slate-500"
+      title={ok ? 'Backend /health responded ok' : 'Backend /health failed — data may be missing or stale'}
+    >
+      <Activity className={clsx('h-3.5 w-3.5', ok ? 'text-emerald-400' : 'text-amber-400')} aria-hidden />
+      {ok ? 'Backend: ok' : 'Backend unreachable'}
+    </div>
+  );
+}
+
+/** Small gear popover with the secondary destinations. */
+function SecondaryMenu({ tab, onChoose }: { tab: TabId; onChoose: (id: TabId) => void }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDocMouseDown(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, []);
+
+  const secondaryActive = SECONDARY.some((s) => s.id === tab);
+
+  return (
+    <div ref={rootRef} className="relative w-full">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="More destinations (Sandbox, Diagnostics)"
+        title="Sandbox & Diagnostics"
+        className={clsx('sidebar-nav-item group', secondaryActive && 'sidebar-nav-item-active')}
+      >
+        <span className={clsx('sidebar-nav-icon relative z-10', secondaryActive && 'sidebar-nav-icon-active')}>
+          <Settings className="h-[17px] w-[17px]" aria-hidden />
+        </span>
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            role="menu"
+            aria-label="Secondary destinations"
+            className="overlay-panel absolute bottom-0 left-[64px] z-[70] w-56 py-1"
+            initial={{ opacity: 0, x: -6 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -6 }}
+            transition={{ duration: 0.15 }}
+          >
+            {SECONDARY.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setOpen(false);
+                    onChoose(item.id);
+                  }}
+                  className={clsx(
+                    'flex w-full items-start gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-white/5',
+                    tab === item.id && 'bg-cyan-400/10',
+                  )}
+                >
+                  <Icon className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                  <span className="min-w-0">
+                    <span className="block text-xs font-medium text-slate-200">{item.label}</span>
+                    <span className="mt-0.5 block text-[10px] leading-relaxed text-slate-500">{item.description}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+export function Header({
+  tab,
+  stockLabel,
+  onTabChange,
+  onOpenStock,
+  onAmountChange,
+}: {
+  tab: TabId;
+  /** Ticker shown in the breadcrumb when the Stock Detail drill-down is open. */
+  stockLabel?: string | null;
+  onTabChange: (tab: TabId) => void;
+  onOpenStock: (ticker: string) => void;
+  onAmountChange: (amount: number | null) => void;
+}) {
   const [moreOpen, setMoreOpen] = useState(false);
-  const active = NAV.find((item) => item.id === tab) ?? NAV[0];
+  const active = ALL_NAV.find((item) => item.id === tab) ?? null;
 
   const choose = (id: TabId) => {
     setMoreOpen(false);
@@ -97,32 +211,40 @@ export function Header({ tab, onTabChange, onAnalyze, onAmountChange }: { tab: T
           <div className="brand-mark" aria-label="StockSense" title="StockSense"><BarChart3 className="h-[19px] w-[19px]" /></div>
         </div>
 
-        <nav className="flex flex-1 flex-col items-center gap-2 overflow-visible px-3 pt-5" aria-label="Workspace navigation">
-          {NAV.map((item, index) => (
-            <div key={item.id} className={clsx('w-full', index === 4 && 'mt-4 border-t border-white/[0.07] pt-6')}>
+        <nav className="flex flex-1 flex-col items-center gap-2 overflow-visible px-3 pt-5" aria-label="Primary navigation">
+          {PRIMARY.map((item) => (
+            <div key={item.id} className="w-full">
               <DesktopNavButton item={item} active={tab === item.id} onClick={() => choose(item.id)} />
             </div>
           ))}
         </nav>
 
-        <div className="mb-5 flex justify-center" aria-label="NSE intelligence online" title="NSE intelligence online">
-          <span className="rail-market-status"><Activity className="h-4 w-4" aria-hidden /><i /></span>
+        {/* Secondary destinations live behind the small gear menu. */}
+        <div className="mb-5 flex flex-col items-center gap-2 px-3" aria-label="Secondary navigation">
+          <div className="w-full border-t border-white/[0.07] pt-4">
+            <SecondaryMenu tab={tab} onChoose={choose} />
+          </div>
         </div>
       </aside>
 
       <header className="workspace-topbar fixed top-0 right-0 left-[84px] z-40 hidden h-[64px] items-center justify-between px-7 lg:flex">
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-slate-600">Intelligence workspace</span>
+          <span className="text-slate-600">StockSense</span>
           <ChevronRight className="h-3 w-3 text-slate-700" aria-hidden />
-          <span className="font-medium text-slate-300">{active.label}</span>
+          {tab === 'stock' ? (
+            <span className="flex items-center gap-1.5 font-medium text-slate-300">
+              <ChartCandlestick className="h-3.5 w-3.5 text-slate-500" aria-hidden />
+              {stockLabel ? `Stock detail · ${stockLabel}` : 'Stock detail'}
+            </span>
+          ) : (
+            <span className="font-medium text-slate-300">{active?.label ?? 'Watchlist'}</span>
+          )}
         </div>
         <div className="flex items-center gap-3">
-          <div className="topbar-stock-search"><SearchBox onSelect={onAnalyze} inputId="stock-command-input-desktop" className="max-w-none" /></div>
-          {tab === 'analyze' && <div className="topbar-capital hidden xl:block"><AmountInput onAmountChange={onAmountChange} /></div>}
+          <div className="topbar-stock-search"><SearchBox onSelect={onOpenStock} inputId="stock-command-input-desktop" className="max-w-none" /></div>
+          {tab === 'stock' && <div className="topbar-capital hidden xl:block"><AmountInput onAmountChange={onAmountChange} /></div>}
           <ThemeToggle />
-          <div className="flex items-center gap-2 border-l border-white/[0.07] pl-3 text-[10px] text-slate-500">
-            <Activity className="h-3.5 w-3.5 text-emerald-400" aria-hidden />Systems normal
-          </div>
+          <HealthStatus />
         </div>
       </header>
 
@@ -137,7 +259,7 @@ export function Header({ tab, onTabChange, onAnalyze, onAmountChange }: { tab: T
       </header>
 
       <nav className="mobile-bottom-nav fixed inset-x-3 bottom-3 z-50 flex items-center justify-around rounded-2xl p-1.5 lg:hidden" aria-label="Primary navigation">
-        {PRIMARY_MOBILE.map((item) => {
+        {PRIMARY.map((item) => {
           const Icon = item.icon;
           const selected = tab === item.id;
           return (
@@ -146,7 +268,7 @@ export function Header({ tab, onTabChange, onAnalyze, onAmountChange }: { tab: T
             </button>
           );
         })}
-        <button type="button" onClick={() => setMoreOpen(true)} className={clsx('mobile-nav-item', ['accuracy', 'stocks', 'desk'].includes(tab) && 'mobile-nav-item-active')}>
+        <button type="button" onClick={() => setMoreOpen(true)} className={clsx('mobile-nav-item', ['sandbox', 'diagnostics', 'stock'].includes(tab) && 'mobile-nav-item-active')}>
           <Menu className="h-[18px] w-[18px]" aria-hidden /><span>More</span>
         </button>
       </nav>
@@ -160,11 +282,14 @@ export function Header({ tab, onTabChange, onAnalyze, onAmountChange }: { tab: T
               transition={{ type: 'spring', stiffness: 420, damping: 36 }}
             >
               <div className="mb-3 flex items-center justify-between px-1">
-                <div><p className="font-display text-sm font-semibold text-white">Everything in one workspace</p><p className="mt-1 text-[10px] text-slate-500">Choose where you want to go next</p></div>
+                <div><p className="font-display text-sm font-semibold text-white">Where next?</p><p className="mt-1 text-[10px] text-slate-500">Watchlist · Holdings · Discover · Track Record — plus the sandbox desk</p></div>
                 <button type="button" onClick={() => setMoreOpen(false)} className="icon-button" aria-label="Close navigation"><X className="h-4 w-4" aria-hidden /></button>
               </div>
+              <div className="mb-3 px-1">
+                <SearchBox onSelect={(t) => { setMoreOpen(false); onOpenStock(t); }} inputId="stock-command-input-mobile-sheet" className="max-w-none" />
+              </div>
               <div className="grid grid-cols-2 gap-2">
-                {NAV.map((item) => {
+                {ALL_NAV.map((item) => {
                   const Icon = item.icon;
                   const selected = tab === item.id;
                   return (

@@ -145,12 +145,23 @@ export class IntelligenceService {
   }
 
   async refreshMacro(): Promise<Record<string, unknown>> {
-    const results = await Promise.allSettled([this.rbi.fetchCurrent(), this.mospi.fetchCurrent()]);
+    // MoSPI is CONFIG-GATED (upgrade-audit R15): without MOSPI_API_TOKEN the
+    // adapter can only return an empty payload, so the network probe is
+    // skipped entirely and reported honestly instead of silently fetched.
+    const mospiEnabled = Boolean(process.env.MOSPI_API_TOKEN);
+    const providers = [
+      { name: "RBI", run: () => this.rbi.fetchCurrent() },
+      ...(mospiEnabled ? [{ name: "MOSPI", run: () => this.mospi.fetchCurrent() }] : []),
+    ];
+    const results = await Promise.allSettled(providers.map((p) => p.run()));
     const values = results.flatMap((result) => result.status === "fulfilled" ? result.value : []);
     if (AppDataSource.isInitialized) await this.repository.saveMacro(values);
-    return { values, errors: results.flatMap((result, index) => result.status === "rejected"
-      ? [{ provider: index === 0 ? "RBI" : "MOSPI", error: result.reason instanceof Error ? result.reason.message : String(result.reason) }] : []),
-      refreshedAt: new Date().toISOString() };
+    const errors = results.flatMap((result, index) => result.status === "rejected"
+      ? [{ provider: providers[index].name, error: result.reason instanceof Error ? result.reason.message : String(result.reason) }] : []);
+    if (!mospiEnabled) {
+      errors.push({ provider: "MOSPI", error: "skipped — MOSPI_API_TOKEN not configured (adapter latent; no request made)" });
+    }
+    return { values, errors, refreshedAt: new Date().toISOString() };
   }
 
   async portfolio(positions: PortfolioAnalyticsPosition[], windows: CorrelationWindow[] = ["30D", "90D", "1Y"]): Promise<Record<string, unknown>> {

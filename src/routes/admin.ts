@@ -12,6 +12,26 @@ import { adminService } from "../services/admin/AdminService";
  * 'admin' paper account (start = cash = ₹1,000) — createApp() runs after
  * the DB is initialized, so this is safe on boot.
  */
+/**
+ * Shared admin-key guard — also protects POST /api/jobs/* submissions until
+ * real account auth lands (plan §3.3).
+ */
+export const adminKeyGuard = (req: Request, res: Response, next: NextFunction): void => {
+  const requiredKey = process.env.ADMIN_KEY;
+  if (!requiredKey) {
+    next(); // no key configured — local use, no auth
+    return;
+  }
+  if (req.header("x-admin-key") === requiredKey) {
+    next();
+    return;
+  }
+  res.status(401).json({
+    success: false,
+    error: { message: "Invalid or missing x-admin-key header." },
+  });
+};
+
 export const createAdminRoutes = (): Router => {
   const router = Router();
   const controller = new AdminController();
@@ -21,27 +41,11 @@ export const createAdminRoutes = (): Router => {
     console.error("⚠️ Admin paper-account seed failed (will retry on first request):", err);
   });
 
-  const adminKeyGuard = (req: Request, res: Response, next: NextFunction): void => {
-    const requiredKey = process.env.ADMIN_KEY;
-    if (!requiredKey) {
-      next(); // no key configured — local use, no auth
-      return;
-    }
-    if (req.header("x-admin-key") === requiredKey) {
-      next();
-      return;
-    }
-    res.status(401).json({
-      success: false,
-      error: { message: "Invalid or missing x-admin-key header." },
-    });
-  };
-
   router.use(adminKeyGuard);
   router.get("/account", controller.account); //  GET  /api/admin/account
-  router.post("/account/settings", controller.updateSettings); //  POST /api/admin/account/settings
+  router.post("/account/settings", controller.updateSettings); //  POST /api/admin/account/settings (disabled — honest 400)
   router.post("/trades", controller.recordTrade); //  POST /api/admin/trades
-  router.get("/daily-plan", controller.dailyPlan); //  GET  /api/admin/daily-plan
+  // GET /api/admin/daily-plan REMOVED (upgrade-spec §2 rows 5/13).
   router.get("/prediction-audit", controller.predictionAudit); //  GET  /api/admin/prediction-audit
   router.get("/forecast-locks", controller.forecastLocks); //  GET  /api/admin/forecast-locks
 
