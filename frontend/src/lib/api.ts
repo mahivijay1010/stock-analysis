@@ -289,14 +289,20 @@ export async function listTransactions(): Promise<TransactionRecord[]> {
   return readItems<TransactionRecord>(raw, 'transactions');
 }
 
+/** Maps the UI's field names onto the ledger API's RecordTransactionInput shape. */
+function toTransactionBody(req: NewTransactionRequest): Record<string, unknown> {
+  const { executedAt, priceEstimated, ...rest } = req;
+  return { ...rest, tradeDate: executedAt, useClosingPriceEstimate: priceEstimated };
+}
+
 /** POST /api/transactions — idempotency key makes retries and CSV re-imports safe. */
 export function createTransaction(req: NewTransactionRequest): Promise<unknown> {
-  return post<unknown>('/api/transactions', req);
+  return post<unknown>('/api/transactions', toTransactionBody(req));
 }
 
 /** POST /api/transactions/:id/correct — supersedes the original; never edits it in place. */
 export function correctTransaction(id: number | string, req: NewTransactionRequest): Promise<unknown> {
-  return post<unknown>(`/api/transactions/${encodeURIComponent(String(id))}/correct`, req);
+  return post<unknown>(`/api/transactions/${encodeURIComponent(String(id))}/correct`, toTransactionBody(req));
 }
 
 /* ------------------------------------------------------------------ */
