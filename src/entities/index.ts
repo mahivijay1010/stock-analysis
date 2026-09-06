@@ -59,3 +59,6 @@ export { ForecastPoint } from "./ForecastPoint";
 export { ForecastOutcome } from "./ForecastOutcome";
 
 export { DecisionSnapshot } from "./DecisionSnapshot";
+
+// Phase D — experiment registry (spec §8)
+export { ExperimentRun } from "./ExperimentRun";

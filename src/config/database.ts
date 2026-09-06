@@ -39,6 +39,7 @@ import {
   ForecastPoint,
   ForecastOutcome,
   DecisionSnapshot,
+  ExperimentRun,
 } from "../entities";
 import * as dotenv from "dotenv";
 
@@ -102,6 +103,7 @@ export const AppDataSource = new DataSource({
     ForecastPoint,
     ForecastOutcome,
     DecisionSnapshot,
+    ExperimentRun,
   ],
   migrations: [__dirname + "/../migrations/*.{js,ts}"],
   subscribers: [],
