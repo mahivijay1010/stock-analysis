@@ -57,3 +57,5 @@ export { TradingSession } from "./TradingSession";
 export { ForecastRun } from "./ForecastRun";
 export { ForecastPoint } from "./ForecastPoint";
 export { ForecastOutcome } from "./ForecastOutcome";
+
+export { DecisionSnapshot } from "./DecisionSnapshot";

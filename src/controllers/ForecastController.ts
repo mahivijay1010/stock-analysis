@@ -6,6 +6,7 @@
  */
 import { NextFunction, Request, Response } from "express";
 import { forecastService } from "../services/forecast/ForecastService";
+import { decisionService } from "../services/decision/DecisionService";
 import { LedgerService } from "../services/ledger/LedgerService";
 import { HttpError } from "../types";
 
@@ -88,6 +89,30 @@ export class ForecastController {
         .filter((p) => p.status === "OPEN" && p.qty > 0)
         .map((p) => ({ ticker: p.ticker, qty: p.qty, costBasis: Number(p.costBasisExact) }));
       ok(res, await forecastService.holdingsProjection(open));
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/decision/:ticker — latest published snapshot (honest empty when none). */
+  decision = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { snapshot, expired } = await decisionService.latest(req.params.ticker);
+      ok(res, snapshot ? { available: true, expired, snapshot } : {
+        available: false,
+        reason:
+          "No decision has been published for this instrument yet. Decisions publish nightly for " +
+          "followed/held instruments, or on demand via POST /api/decision/:ticker/publish.",
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** POST /api/decision/:ticker/publish — compute policy v1 over stored evidence (auth). */
+  publishDecision = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      ok(res, { snapshot: await decisionService.publish(req.params.ticker) }, 201);
     } catch (err) {
       next(err);
     }

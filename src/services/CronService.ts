@@ -31,6 +31,7 @@ import { NSE_UNIVERSE } from "../data/nseUniverse";
 import { rankService } from "./RankService";
 import { sessionCalendarService } from "./forecast/SessionCalendarService";
 import { forecastService } from "./forecast/ForecastService";
+import { decisionService } from "./decision/DecisionService";
 
 const TZ = "Asia/Kolkata";
 
@@ -232,6 +233,11 @@ export class CronService {
       console.log(
         `📅 [CRON] Monthly snapshots (${renewal.period}): ${renewal.issued.length} issued, ` +
           `${renewal.skipped.length} already present, ${renewal.failed.length} failed`
+      );
+      const decisions = await decisionService.publishForAll();
+      console.log(
+        `⚖️ [CRON] Decision snapshots: ${decisions.published} published, ` +
+          `${decisions.failed.length} failed`
       );
     } catch (err) {
       console.error("📅 [CRON] Forecast maintenance failed:", err);

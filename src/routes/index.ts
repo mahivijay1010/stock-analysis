@@ -81,6 +81,11 @@ export const createStockRoutes = (): Router => {
     forecastController.refreshMonth
   ); //                                                                               POST /api/forecast/:t/month/:p/refresh
   router.get("/holdings/projection", requireAuth, forecastController.holdingsProjection); // GET /api/holdings/projection
+  // Canonical evidence-gated decisions (spec §9) — ONE service, every surface
+  // reads the same published snapshot. BUY_CANDIDATE requires a VALIDATED
+  // directional edge; today's measured record has none, stated honestly.
+  router.get("/decision/:ticker", forecastController.decision); //                     GET  /api/decision/:t
+  router.post("/decision/:ticker/publish", requireAuth, forecastController.publishDecision); // POST /api/decision/:t/publish
   router.post("/jobs/forecast-maintenance", requireAuthOrAdminKey, forecastController.maintenance); // POST /api/jobs/forecast-maintenance
 
   // Admin trading desk (V2-D) — before any param routes. Now requires a real

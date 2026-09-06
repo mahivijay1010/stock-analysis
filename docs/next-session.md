@@ -17,6 +17,12 @@ VERIFIED (live evidence in session log):
 
 NOTE: the RELIANCE.NS runs in forecast_runs are GENUINE issuances (real data, real engine, real API) — kept per immutability; the evening job will grade them from 2026-09-07.
 
+ALSO COMPLETE — DecisionService (spec §9, plan-§5 item; acceptance 13.13):
+- `decision_snapshots` migration applied; append-only publications; GET /api/decision/:t (stored only) + POST /api/decision/:t/publish (auth) + nightly publishForAll in evening cron.
+- Policy v1 (`src/services/decision/policy.ts`, PURE, 12 unit tests): BUY_CANDIDATE requires fresh issuance + VALIDATED directional edge (one-sided 95% > 50%) + calibration + non-extreme vol → honestly unreachable today ("No validated directional edge"). INSUFFICIENT_EVIDENCE on missing/stale/thin evidence; AVOID_NEW_ENTRY on coverage <60% / Brier >0.30 / vol >60%; else WAIT. Separate holdings-review note (never a sell instruction). After-close ⇒ "candidate for NEXT session"; validUntil = next session close.
+- LIVE VERIFIED: RELIANCE.NS → WAIT / PARTIAL / low risk, reasons include "43.6% over 39 matured predictions ≈ coin flip", validUntil 2026-09-07 15:30 IST. jest 11 suites / 146 tests green.
+- NOT YET: UI surfaces don't render decision snapshots yet (13.14 e2e is Phase E; wire Stock Detail/Watchlist/Discover to GET /api/decision/:t during D/E).
+
 DEFERRED (do in D/E):
 - Outcome-grading live check after 2026-09-07 close (first maturation) — verify `verified` rows + band hits appear.
 - Month-view UI (original vs latest outlook vs actuals chart) — backend done, no dedicated frontend view yet (spec §5 monthly history display).
