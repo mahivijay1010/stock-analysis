@@ -319,10 +319,10 @@ export function TransactionsPanel({ onEdit }: { onEdit: (tx: TransactionRecord) 
               <tbody>
                 {rows.map((t) => {
                   const superseded = t.correctedBy != null;
-                  // A reversal row (correctionOf set) is an inert audit artifact —
+                  // A reversal row (correctsId set) is an inert audit artifact —
                   // the backend refuses to correct it again ("Reversal rows cannot
                   // themselves be corrected"), so it gets no action buttons either.
-                  const isReversal = t.correctionOf != null;
+                  const isReversal = t.correctsId != null;
                   return (
                     <tr key={String(t.id)} className={clsx(superseded && 'opacity-50')}>
                       <td className="whitespace-nowrap text-slate-300">{fmtDate(t.executedAt)}</td>
@@ -340,7 +340,7 @@ export function TransactionsPanel({ onEdit }: { onEdit: (tx: TransactionRecord) 
                         <span className="flex flex-wrap gap-1">
                           {t.priceEstimated ? <Chip tone="wait" className="px-1.5 py-0.5 text-[9px]">ESTIMATED PRICE</Chip> : null}
                           {superseded ? <Chip tone="zinc" className="px-1.5 py-0.5 text-[9px]">SUPERSEDED</Chip> : null}
-                          {t.correctionOf != null ? <Chip tone="cyan" className="px-1.5 py-0.5 text-[9px]">CORRECTION</Chip> : null}
+                          {t.correctsId != null ? <Chip tone="cyan" className="px-1.5 py-0.5 text-[9px]">CORRECTION</Chip> : null}
                         </span>
                       </td>
                       <td className="text-right">

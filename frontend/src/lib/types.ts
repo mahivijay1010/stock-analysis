@@ -788,7 +788,7 @@ export interface TransactionRecord {
   /** True when the execution price was estimated (e.g. day's close) — labeled in the UI. */
   priceEstimated?: boolean | null;
   /** Correction linkage — a corrected transaction is superseded, not edited. */
-  correctionOf?: number | string | null;
+  correctsId?: number | string | null;
   correctedBy?: number | string | null;
   note?: string | null;
   createdAt?: string | null;

@@ -155,7 +155,12 @@ function HeldBlock({ row }: { row: PortfolioOverviewRow }) {
   );
 }
 
-/** This ticker's own transactions, with Edit/Remove one click away — no need to scroll to the bottom history. */
+/**
+ * This ticker's own OPEN transactions (never reversal artifacts or superseded
+ * originals — those are inert bookkeeping, not something to act on), with
+ * Edit/Remove right here. No need to open the full transaction history for
+ * the common case of fixing or undoing a purchase on this stock.
+ */
 function RecentActivity({ ticker, onEdit }: { ticker: string; onEdit: (tx: TransactionRecord) => void }) {
   const qc = useQueryClient();
   const q = useQuery({
@@ -167,7 +172,7 @@ function RecentActivity({ ticker, onEdit }: { ticker: string; onEdit: (tx: Trans
   const rows = useMemo(
     () =>
       (q.data ?? [])
-        .filter((t) => t.ticker === ticker && t.correctedBy == null && t.correctionOf == null)
+        .filter((t) => t.ticker === ticker && t.correctedBy == null && t.correctsId == null)
         .sort((a, b) => String(b.executedAt).localeCompare(String(a.executedAt)))
         .slice(0, 5),
     [q.data, ticker],
@@ -183,7 +188,9 @@ function RecentActivity({ ticker, onEdit }: { ticker: string; onEdit: (tx: Trans
 
   return (
     <div className="rounded-xl border border-white/8 bg-white/3 px-3.5 py-2.5">
-      <p className="text-[11px] font-medium text-slate-500">Recent activity — mistakenly added something? Edit or remove it here.</p>
+      <p className="text-[11px] font-medium text-slate-500">
+        {rows.length === 1 ? 'Your purchase' : 'Your purchases'} — edit the values or remove it if this was added by mistake.
+      </p>
       <div className="mt-2 space-y-1.5">
         {rows.map((t) => (
           <div key={String(t.id)} className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -313,6 +320,15 @@ function PortfolioRow({
         </p>
       )}
 
+      {/* Always visible for a held stock — mistakenly added a purchase, or need
+          to fix its qty/price? Right here, no need to open Forecast or dig
+          through the full transaction history. */}
+      {row.held && (
+        <div className="mt-3 border-t border-white/[0.06] pt-3">
+          <RecentActivity ticker={row.ticker} onEdit={onEditTransaction} />
+        </div>
+      )}
+
       {/* Expanded detail — heavy content mounts ONLY here (charts stay closed until asked). */}
       {expanded && (
         <div className="mt-4 space-y-4 border-t border-white/[0.06] pt-4">
@@ -329,8 +345,6 @@ function PortfolioRow({
               </p>
             </div>
           )}
-
-          {row.held && <RecentActivity ticker={row.ticker} onEdit={onEditTransaction} />}
 
           {row.decision && (
             <div className="rounded-xl border border-white/8 bg-white/3 px-3.5 py-2.5">
