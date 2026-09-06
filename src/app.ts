@@ -11,7 +11,24 @@ import { AppDataSource } from "./config/database";
 export const createApp = (): Application => {
   const app = express();
 
-  app.use(cors());
+  // Cookie-credentialed CORS (Phase B auth): a wildcard origin is rejected by
+  // browsers when credentials are included, so allow the frontend origin(s)
+  // explicitly. Additional origins via FRONTEND_ORIGINS (comma-separated).
+  const allowedOrigins = new Set(
+    [
+      "http://localhost:3001",
+      "http://127.0.0.1:3001",
+      ...(process.env.FRONTEND_ORIGINS ?? "").split(",").map((o) => o.trim()),
+    ].filter(Boolean)
+  );
+  app.use(
+    cors({
+      origin: (origin, cb) => cb(null, !origin || allowedOrigins.has(origin)),
+      credentials: true,
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "X-Requested-With", "x-admin-key"],
+    })
+  );
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
   app.use(requestLogger);
