@@ -18,16 +18,16 @@ import {
   getPortfolioOverview,
   isNotFound,
   isUnauthorized,
+  listTransactions,
   removeWatchlistItem,
 } from '@/lib/api';
 import type { PortfolioOverviewRow, TransactionRecord } from '@/lib/types';
-import { fmtDate, fmtDateShort, fmtDateTime, inr, inrSmart, signedInr, signedPct } from '@/lib/format';
+import { fmtDate, fmtDateShort, fmtDateTime, inr, inrSmart, plain, signedInr, signedPct } from '@/lib/format';
 import {
   Button,
   Card,
   CardSkeleton,
   Chip,
-  Collapsible,
   EmptyState,
   ErrorState,
   StatTile,
@@ -39,6 +39,7 @@ import { LoginPanel } from '@/components/auth/LoginPanel';
 import { useAuth } from '@/components/auth/useAuth';
 import { AddPurchaseForm } from '@/components/holdings/AddPurchaseForm';
 import { TransactionsPanel } from '@/components/holdings/TransactionsPanel';
+import { TransactionRowActions } from '@/components/holdings/TransactionRowActions';
 import { DailyForecastCard } from '@/components/analyze/DailyForecastCard';
 import { signTone } from '@/components/analyze/tone';
 
@@ -154,14 +155,64 @@ function HeldBlock({ row }: { row: PortfolioOverviewRow }) {
   );
 }
 
+/** This ticker's own transactions, with Edit/Remove one click away — no need to scroll to the bottom history. */
+function RecentActivity({ ticker, onEdit }: { ticker: string; onEdit: (tx: TransactionRecord) => void }) {
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: ['transactions'],
+    queryFn: listTransactions,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const rows = useMemo(
+    () =>
+      (q.data ?? [])
+        .filter((t) => t.ticker === ticker && t.correctedBy == null && t.correctionOf == null)
+        .sort((a, b) => String(b.executedAt).localeCompare(String(a.executedAt)))
+        .slice(0, 5),
+    [q.data, ticker],
+  );
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['transactions'] });
+    qc.invalidateQueries({ queryKey: ['holdings'] });
+    qc.invalidateQueries({ queryKey: ['portfolio-overview'] });
+  };
+
+  if (q.isPending) return null;
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-white/8 bg-white/3 px-3.5 py-2.5">
+      <p className="text-[11px] font-medium text-slate-500">Recent activity — mistakenly added something? Edit or remove it here.</p>
+      <div className="mt-2 space-y-1.5">
+        {rows.map((t) => (
+          <div key={String(t.id)} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <span className="text-slate-400">
+              <span className="whitespace-nowrap text-slate-300">{fmtDate(t.executedAt)}</span>{' '}
+              <span className={t.type === 'BUY' ? 'font-semibold text-buy' : t.type === 'SELL' ? 'font-semibold text-sell' : 'font-semibold text-slate-300'}>
+                {t.type}
+              </span>{' '}
+              {t.qty != null ? `${plain(t.qty, 0)} sh` : ''}
+              {t.price != null ? ` @ ${inr(t.price)}` : t.grossAmount != null ? ` (${inr(t.grossAmount)} gross)` : ''}
+            </span>
+            <TransactionRowActions tx={t} onEdit={onEdit} onDone={refresh} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PortfolioRow({
   row,
   onOpenStock,
   onRecordPurchase,
+  onEditTransaction,
 }: {
   row: PortfolioOverviewRow;
   onOpenStock: (ticker: string) => void;
   onRecordPurchase: (ticker: string) => void;
+  onEditTransaction: (tx: TransactionRecord) => void;
 }) {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(false);
@@ -278,6 +329,8 @@ function PortfolioRow({
               </p>
             </div>
           )}
+
+          {row.held && <RecentActivity ticker={row.ticker} onEdit={onEditTransaction} />}
 
           {row.decision && (
             <div className="rounded-xl border border-white/8 bg-white/3 px-3.5 py-2.5">
@@ -526,6 +579,11 @@ export function PortfolioView({
                 setPurchaseOpen(true);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
+              onEditTransaction={(tx) => {
+                setCorrecting(tx);
+                setPurchaseOpen(true);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
             />
           ))}
           {data?.notes && (
@@ -534,20 +592,14 @@ export function PortfolioView({
         </div>
       )}
 
-      {/* Transaction history — the immutable ledger, collapsed by default. */}
-      <Collapsible
-        id="portfolio-transactions"
-        title="Transaction history"
-        subtitle="Every recorded BUY/SELL/dividend — corrections are linked records, nothing is edited in place."
-      >
-        <TransactionsPanel
-          onCorrect={(tx) => {
-            setCorrecting(tx);
-            setPurchaseOpen(true);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }}
-        />
-      </Collapsible>
+      {/* Transaction history — TransactionsPanel manages its own disclosure. */}
+      <TransactionsPanel
+        onEdit={(tx) => {
+          setCorrecting(tx);
+          setPurchaseOpen(true);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+      />
     </div>
   );
 }

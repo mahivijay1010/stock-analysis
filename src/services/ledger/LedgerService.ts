@@ -600,7 +600,26 @@ export class LedgerService {
 
   // ── Corrections (reversal rows; originals immutable) ────────────────────
 
-  async correctTransaction(accountId: string, txnId: string, note?: string): Promise<{ original: TxnView; reversal: TxnView }> {
+  /**
+   * Void a transaction (reversal row, net-zero in replay), optionally
+   * followed — atomically, same DB transaction — by a freshly-validated
+   * replacement with edited values ("update the record"). The replacement is
+   * a normal, independent transaction (own FIFO/oversell checks against the
+   * POST-void ledger, own idempotency key); it is linked to the original only
+   * via the note text, since it is not itself a reversal.
+   *
+   * Guards: reversal rows cannot be corrected again; a transaction already
+   * corrected cannot be corrected twice; a BUY consumed by a sell's stored
+   * FIFO allocation cannot be voided (correct the dependent sell first) — the
+   * same guard applies whether this is a pure removal or an edit, because
+   * editing IS a void underneath.
+   */
+  async correctTransaction(
+    accountId: string,
+    txnId: string,
+    opts?: { note?: string; replacement?: RecordTransactionInput }
+  ): Promise<{ original: TxnView; reversal: TxnView; replacement?: TxnView }> {
+    const note = opts?.note;
     const runner = this.ds.createQueryRunner();
     await runner.connect();
     await runner.startTransaction();
@@ -618,6 +637,14 @@ export class LedgerService {
       if (original.correctsId) throw new HttpError(400, "Reversal rows cannot themselves be corrected.");
       const already = await repo.findOne({ where: { correctsId: original.id } });
       if (already) throw new HttpError(400, `Transaction was already corrected by ${already.id}.`);
+
+      if (opts?.replacement && opts.replacement.type !== original.type) {
+        throw new HttpError(
+          400,
+          `Editing cannot change the transaction type (${original.type} → ${opts.replacement.type}). ` +
+            `Remove this entry and record a fresh ${opts.replacement.type} instead.`
+        );
+      }
 
       // Serialize with sells/CAs on the same instrument.
       await runner.query(
@@ -650,7 +677,11 @@ export class LedgerService {
       reversal.grossAmount = original.grossAmount;
       reversal.charges = original.charges;
       reversal.isEstimatedPrice = original.isEstimatedPrice;
-      reversal.note = note ? String(note).slice(0, 2000) : `Reversal of ${original.id}`;
+      reversal.note = opts?.replacement
+        ? `Reversal of ${original.id} (superseded by an edited entry)`
+        : note
+        ? String(note).slice(0, 2000)
+        : `Reversal of ${original.id}`;
       reversal.correctsId = original.id;
       reversal.idempotencyKey = null;
       const savedReversal = await runner.manager.getRepository(LedgerTransaction).save(reversal);
@@ -659,11 +690,27 @@ export class LedgerService {
       // replay skips it; voiding a SPLIT under later activity is caught here).
       this.validateReplay([...txns, savedReversal], allocations);
 
+      let replacementResult: RecordResult | null = null;
+      if (opts?.replacement) {
+        const instrument = (await this.ds.getRepository(Instrument).findOne({ where: { id: original.instrumentId } }))!;
+        const normalized = await this.normalize(opts.replacement, instrument);
+        if (!normalized.note) {
+          normalized.note = `Edited replacement for ${original.id}`;
+        } else {
+          normalized.note = `${normalized.note} [edited replacement for ${original.id}]`.slice(0, 2000);
+        }
+        // recordWithRunner re-reads the ledger fresh from THIS runner, so it
+        // sees the just-saved reversal — oversell/FIFO checks run as if the
+        // original never happened, plus the new values, all-or-nothing.
+        replacementResult = await this.recordWithRunner(runner, accountId, instrument, normalized);
+      }
+
       await runner.commitTransaction();
       const inst = await this.ds.getRepository(Instrument).findOne({ where: { id: original.instrumentId } });
       return {
         original: await this.toView(original, inst?.yahooTicker ?? null, savedReversal.id),
         reversal: await this.toView(savedReversal, inst?.yahooTicker ?? null, null),
+        ...(replacementResult ? { replacement: replacementResult.transaction } : {}),
       };
     } catch (err) {
       await runner.rollbackTransaction();

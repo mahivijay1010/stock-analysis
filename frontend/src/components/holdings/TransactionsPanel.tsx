@@ -8,6 +8,7 @@ import { createTransaction, isNotFound, listTransactions } from '@/lib/api';
 import type { NewTransactionRequest, TransactionRecord } from '@/lib/types';
 import { fmtDate, inr, plain } from '@/lib/format';
 import { Button, Card, Chip, Collapsible, EmptyState, TableSkeleton } from '@/components/ui';
+import { TransactionRowActions } from './TransactionRowActions';
 
 /* ------------------------------------------------------------------ */
 /* CSV — formula-injection-safe export, previewed idempotent import    */
@@ -244,7 +245,7 @@ function typeTone(t: string): string {
   return 'text-slate-300';
 }
 
-export function TransactionsPanel({ onCorrect }: { onCorrect: (tx: TransactionRecord) => void }) {
+export function TransactionsPanel({ onEdit }: { onEdit: (tx: TransactionRecord) => void }) {
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ['transactions'],
@@ -252,6 +253,11 @@ export function TransactionsPanel({ onCorrect }: { onCorrect: (tx: TransactionRe
     staleTime: 60_000,
     retry: false,
   });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['transactions'] });
+    qc.invalidateQueries({ queryKey: ['holdings'] });
+    qc.invalidateQueries({ queryKey: ['portfolio-overview'] });
+  };
 
   const rows = useMemo(
     () => (q.data ?? []).slice().sort((a, b) => String(b.executedAt).localeCompare(String(a.executedAt))),
@@ -271,7 +277,7 @@ export function TransactionsPanel({ onCorrect }: { onCorrect: (tx: TransactionRe
             Transactions
           </span>
         }
-        subtitle="The immutable ledger behind your holdings — corrections supersede, never overwrite."
+        subtitle="Edit fixes the values (a linked correction); Remove voids the entry entirely. The original row is never overwritten."
         right={
           rows.length > 0 ? (
             <Button variant="ghost" size="sm" onClick={() => exportCsv(rows)}>
@@ -313,6 +319,10 @@ export function TransactionsPanel({ onCorrect }: { onCorrect: (tx: TransactionRe
               <tbody>
                 {rows.map((t) => {
                   const superseded = t.correctedBy != null;
+                  // A reversal row (correctionOf set) is an inert audit artifact —
+                  // the backend refuses to correct it again ("Reversal rows cannot
+                  // themselves be corrected"), so it gets no action buttons either.
+                  const isReversal = t.correctionOf != null;
                   return (
                     <tr key={String(t.id)} className={clsx(superseded && 'opacity-50')}>
                       <td className="whitespace-nowrap text-slate-300">{fmtDate(t.executedAt)}</td>
@@ -334,9 +344,7 @@ export function TransactionsPanel({ onCorrect }: { onCorrect: (tx: TransactionRe
                         </span>
                       </td>
                       <td className="text-right">
-                        {!superseded && (
-                          <Button variant="ghost" size="sm" onClick={() => onCorrect(t)}>Correct</Button>
-                        )}
+                        {!superseded && !isReversal && <TransactionRowActions tx={t} onEdit={onEdit} onDone={refresh} />}
                       </td>
                     </tr>
                   );
@@ -353,7 +361,7 @@ export function TransactionsPanel({ onCorrect }: { onCorrect: (tx: TransactionRe
           title={<span className="text-xs font-medium text-slate-300">Import transactions from CSV</span>}
           subtitle="Preview first; rows import one by one with idempotency keys and per-row results."
         >
-          <ImportPanel onImported={() => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['holdings'] }); }} />
+          <ImportPanel onImported={refresh} />
         </Collapsible>
       </Collapsible>
     </Card>

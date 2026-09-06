@@ -115,11 +115,27 @@ export class LedgerController {
     }
   };
 
-  /** POST /api/transactions/:id/correct { note? } — reversal entry; original stays immutable. */
+  /**
+   * POST /api/transactions/:id/correct { note? } → void only (a "remove").
+   * POST .../correct { note?, type, tradeDate, qty|grossAmount, price?, ... }
+   *   → void AND atomically record a fresh replacement with the edited
+   *   values (an "update") — presence of tradeDate is the signal, since every
+   *   real transaction requires one. Original stays immutable either way.
+   */
   correctTransaction = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { note } = (req.body ?? {}) as { note?: string };
-      ok(res, await this.ledger.correctTransaction(req.account!.accountId, String(req.params.id), note), 201);
+      const body = (req.body ?? {}) as Partial<RecordTransactionInput> & { note?: string };
+      const hasReplacement = typeof body.tradeDate === "string" && body.tradeDate.trim().length > 0;
+      ok(
+        res,
+        await this.ledger.correctTransaction(req.account!.accountId, String(req.params.id), {
+          // When editing, the user's note belongs on the surviving replacement
+          // (carried inside it below), not the discarded reversal.
+          note: hasReplacement ? undefined : body.note,
+          replacement: hasReplacement ? (body as RecordTransactionInput) : undefined,
+        }),
+        201
+      );
     } catch (err) {
       next(err);
     }

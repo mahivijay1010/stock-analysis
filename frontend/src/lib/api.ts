@@ -302,9 +302,18 @@ export function createTransaction(req: NewTransactionRequest): Promise<unknown> 
   return post<unknown>('/api/transactions', toTransactionBody(req));
 }
 
-/** POST /api/transactions/:id/correct — supersedes the original; never edits it in place. */
+/** POST /api/transactions/:id/correct with edited values — supersedes the original; never edits it in place. */
 export function correctTransaction(id: number | string, req: NewTransactionRequest): Promise<unknown> {
   return post<unknown>(`/api/transactions/${encodeURIComponent(String(id))}/correct`, toTransactionBody(req));
+}
+
+/**
+ * POST /api/transactions/:id/correct with a note only — a pure void ("remove
+ * this mistaken entry"). No replacement is recorded; the position simply
+ * nets back to what it would be if the entry never happened.
+ */
+export function removeTransaction(id: number | string, note?: string): Promise<unknown> {
+  return post<unknown>(`/api/transactions/${encodeURIComponent(String(id))}/correct`, note ? { note } : {});
 }
 
 /* ------------------------------------------------------------------ */

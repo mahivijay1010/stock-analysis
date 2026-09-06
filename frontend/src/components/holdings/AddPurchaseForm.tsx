@@ -60,7 +60,10 @@ export function AddPurchaseForm({
   const [date, setDate] = useState(correcting?.executedAt?.slice(0, 10) ?? todayIso());
   const [qty, setQty] = useState(correcting?.qty != null ? String(correcting.qty) : '');
   const [price, setPrice] = useState(correcting?.price != null ? String(correcting.price) : '');
-  const [gross, setGross] = useState(correcting?.grossAmount != null ? String(correcting.grossAmount) : '');
+  // Gross is left BLANK even when correcting: qty × price already determines
+  // it, and pre-filling the original gross would go stale (and falsely read
+  // as "contradictory inputs") the moment either qty or price is edited.
+  const [gross, setGross] = useState('');
   const [charges, setCharges] = useState(correcting?.charges != null ? String(correcting.charges) : '');
   const [note, setNote] = useState(correcting?.note ?? '');
   const [useEstimatedClose, setUseEstimatedClose] = useState(false);
