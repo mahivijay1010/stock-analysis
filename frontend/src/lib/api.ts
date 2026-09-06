@@ -219,9 +219,9 @@ export async function getAuthStatus(): Promise<AuthStatus> {
   }
 }
 
-/** POST /api/auth/login */
+/** POST /api/auth/login — the backend's single-owner auth takes { username, password }. */
 export async function login(req: LoginRequest): Promise<AuthAccount> {
-  const data = await post<unknown>('/api/auth/login', req);
+  const data = await post<unknown>('/api/auth/login', { username: req.email, password: req.password });
   return readAccount(data);
 }
 
