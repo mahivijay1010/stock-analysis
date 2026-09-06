@@ -764,11 +764,6 @@ export interface NewWatchlistItemRequest {
   horizon?: HorizonBucket;
 }
 
-export interface UpdateWatchlistItemRequest {
-  note?: string | null;
-  horizon?: HorizonBucket | null;
-}
-
 /* ---- Transactions / holdings (immutable ledger; corrections link, never edit) ---- */
 
 export type TransactionType = 'BUY' | 'SELL' | 'DIVIDEND' | 'SPLIT' | 'CORRECTION';

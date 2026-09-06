@@ -38,7 +38,6 @@ import { SearchBox } from '@/components/analyze/SearchBox';
 import { LoginPanel } from '@/components/auth/LoginPanel';
 import { useAuth } from '@/components/auth/useAuth';
 import { AddPurchaseForm } from '@/components/holdings/AddPurchaseForm';
-import { TransactionsPanel } from '@/components/holdings/TransactionsPanel';
 import { TransactionRowActions } from '@/components/holdings/TransactionRowActions';
 import { DailyForecastCard } from '@/components/analyze/DailyForecastCard';
 import { signTone } from '@/components/analyze/tone';
@@ -606,14 +605,6 @@ export function PortfolioView({
         </div>
       )}
 
-      {/* Transaction history — TransactionsPanel manages its own disclosure. */}
-      <TransactionsPanel
-        onEdit={(tx) => {
-          setCorrecting(tx);
-          setPurchaseOpen(true);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
-      />
     </div>
   );
 }

@@ -27,7 +27,6 @@ import type {
   SearchResult,
   TransactionRecord,
   UniverseStockRow,
-  UpdateWatchlistItemRequest,
   VolForecastResponse,
   WatchlistItem,
 } from './types';
@@ -103,15 +102,6 @@ async function get<T>(url: string, params?: Record<string, string | number>): Pr
 async function post<T>(url: string, body: unknown): Promise<T> {
   try {
     const res = await http.post<ApiEnvelope<T>>(url, body);
-    return unwrap(res.data, res.status);
-  } catch (err) {
-    throw normalizeError(err);
-  }
-}
-
-async function patch<T>(url: string, body: unknown): Promise<T> {
-  try {
-    const res = await http.patch<ApiEnvelope<T>>(url, body);
     return unwrap(res.data, res.status);
   } catch (err) {
     throw normalizeError(err);
@@ -257,14 +247,9 @@ export function addWatchlistItem(req: NewWatchlistItemRequest): Promise<unknown>
   return post<unknown>('/api/watchlist', req);
 }
 
-/** PATCH /api/watchlist/items/:id */
-export function updateWatchlistItem(id: number | string, req: UpdateWatchlistItemRequest): Promise<unknown> {
-  return patch<unknown>(`/api/watchlist/items/${encodeURIComponent(String(id))}`, req);
-}
-
-/** DELETE /api/watchlist/items/:id — never deletes holdings or their history. */
+/** DELETE /api/watchlist/:id — never deletes holdings or their history. */
 export function removeWatchlistItem(id: number | string): Promise<unknown> {
-  return del<unknown>(`/api/watchlist/items/${encodeURIComponent(String(id))}`);
+  return del<unknown>(`/api/watchlist/${encodeURIComponent(String(id))}`);
 }
 
 /* ------------------------------------------------------------------ */
