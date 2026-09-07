@@ -52,6 +52,9 @@ export interface OverviewRow {
     validUntil: string;
     expired: boolean;
     topReason: string | null;
+    /** Rule 14: the SEPARATE existing-position decision — shown on held rows. */
+    existingHolderAction: string | null;
+    holderReason: string | null;
     horizon: {
       label: string | null;
       reasons: string[];
@@ -254,11 +257,13 @@ export class PortfolioOverviewService {
         reasons?: string[];
         evidenceStatus?: string;
       } | null;
+      existing_holder_action: string | null;
+      holder_reasons: string[] | null;
     }> = await AppDataSource.query(
       `SELECT DISTINCT ON (instrument_id)
               instrument_id, decision_status, evidence_status, risk_level,
               as_of::text AS as_of, valid_until::text AS valid_until,
-              reasons, horizon_suitability
+              reasons, horizon_suitability, existing_holder_action, holder_reasons
          FROM decision_snapshots
         WHERE instrument_id = ANY($1::uuid[])
         ORDER BY instrument_id, as_of DESC`,
@@ -275,6 +280,9 @@ export class PortfolioOverviewService {
         validUntil: r.valid_until,
         expired: new Date(r.valid_until).getTime() < now,
         topReason: Array.isArray(r.reasons) && r.reasons.length > 0 ? String(r.reasons[0]) : null,
+        existingHolderAction: r.existing_holder_action ?? null,
+        holderReason:
+          Array.isArray(r.holder_reasons) && r.holder_reasons.length > 0 ? String(r.holder_reasons[0]) : null,
         horizon: r.horizon_suitability
           ? {
               label: (r.horizon_suitability.label as string | null) ?? null,

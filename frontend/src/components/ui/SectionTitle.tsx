@@ -14,7 +14,7 @@ export function SectionTitle({ children, className }: { children: ReactNode; cla
     >
       <span
         aria-hidden
-        className="h-3.5 w-0.5 shrink-0 rounded-full bg-[#78a6ff]"
+        className="h-3.5 w-0.5 shrink-0 rounded-full bg-[var(--accent-cyan)]"
       />
       <span className="min-w-0">{children}</span>
     </h3>

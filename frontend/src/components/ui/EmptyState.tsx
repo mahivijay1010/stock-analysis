@@ -16,15 +16,15 @@ export function EmptyGlyph({ kind = 'slash', className }: { kind?: 'slash' | 'ra
         <circle cx="24" cy="24" r="4" fill="none" stroke="rgba(148,163,184,0.18)" strokeWidth="1" />
         <g className="radar-beam">
           <path d="M 24 24 L 24 4 A 20 20 0 0 1 38 10 Z" fill="url(#radar-fade)" opacity="0.6" />
-          <line x1="24" y1="24" x2="24" y2="4" stroke="#22d3ee" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1="24" y1="24" x2="24" y2="4" stroke="var(--accent-cyan)" strokeWidth="1.5" strokeLinecap="round" />
         </g>
         <defs>
           <linearGradient id="radar-fade" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.5" />
-            <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
+            <stop offset="0%" stopColor="var(--accent-cyan)" stopOpacity="0.5" />
+            <stop offset="100%" stopColor="var(--accent-cyan)" stopOpacity="0" />
           </linearGradient>
         </defs>
-        <circle cx="24" cy="24" r="1.6" fill="#22d3ee" />
+        <circle cx="24" cy="24" r="1.6" fill="var(--accent-cyan)" />
       </svg>
     );
   }

@@ -13,6 +13,11 @@ export function Backdrop() {
       <div className="aurora-blob aurora-b" />
       <div className="aurora-blob aurora-c" />
       <div className="aurora-blob aurora-d" />
+      <div className="prism-field">
+        <span className="prism-ribbon prism-ribbon-a" />
+        <span className="prism-ribbon prism-ribbon-b" />
+        <span className="prism-ribbon prism-ribbon-c" />
+      </div>
       <div className="depth-grid" />
       <div className="aurora-grid" />
       <div className="aurora-noise" />

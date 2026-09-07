@@ -9,43 +9,43 @@
 
 export const COLOR = {
   /** Obsidian page base (`--bg-base`). */
-  bgBase: '#0A0A0F',
+  bgBase: '#0D0B10',
   /** Opaque inner surface for medallions / donut holes (`--surface-solid`). */
-  surfaceSolid: '#10141F',
+  surfaceSolid: '#19141E',
   /** Popover/modal/dropdown surface (`--surface-overlay`). */
-  surfaceOverlay: 'rgba(13, 17, 28, 0.94)',
+  surfaceOverlay: 'rgba(22, 17, 27, 0.96)',
 
   ink: {
     /** `--ink-primary` — headings, values. */
-    primary: '#F8FAFC',
+    primary: '#F7F3ED',
     /** `--ink-secondary` — body copy, captions. */
-    secondary: '#94A3B8',
+    secondary: '#B5ACBA',
     /** `--ink-tertiary` — hints, deemphasis. */
-    tertiary: '#64748B',
+    tertiary: '#746B7B',
   },
 
   accent: {
     /** BUY / gain / live (`--accent-buy`). Tailwind: text-buy, bg-buy/10, border-buy/30. */
-    buy: '#00D4AA',
+    buy: '#46CE9E',
     /** SELL / AVOID / loss (`--accent-sell`). Tailwind: text-sell, bg-sell/10, border-sell/30. */
-    sell: '#FF4D6D',
+    sell: '#F07187',
     /** HOLD / WAIT / caution (`--accent-amber`) — same as Tailwind amber-400. */
-    amber: '#FBBF24',
+    amber: '#E4B364',
     /** Info pair A — interactive/selected (`--accent-cyan`) — cyan-400. */
-    cyan: '#22D3EE',
+    cyan: '#D9A85F',
     /** Info pair B — highlights (`--accent-violet`) — violet-400. */
-    violet: '#A78BFA',
+    violet: '#A98BE8',
   },
 
   /** Cyan→violet CTA gradient (`--gradient-info`). */
-  gradientInfo: 'linear-gradient(135deg, #06B6D4, #7C3AED)',
+  gradientInfo: 'linear-gradient(135deg, #D9A85F, #A98BE8)',
 } as const;
 
 /* ------------------------------- glass ------------------------------- */
 
 export const GLASS = {
   /** `--glass-bg` */
-  bg: 'rgba(255, 255, 255, 0.05)',
+  bg: 'rgba(24, 19, 28, 0.78)',
   /** `--glass-border` */
   border: 'rgba(255, 255, 255, 0.08)',
   /** `--glass-highlight` — inset top edge */

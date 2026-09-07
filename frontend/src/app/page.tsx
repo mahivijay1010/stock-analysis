@@ -73,6 +73,7 @@ export default function Home() {
   // real route before paint settles. Hash routing survives refresh without
   // useSearchParams' Suspense/prerender pain.
   const [tab, setTab] = useState<TabId>('watchlist');
+  const [routeReady, setRouteReady] = useState(false);
   const [ticker, setTicker] = useState<string | null>(null);
   const [amount, setAmount] = useState<number | null>(null);
   const [pendingPurchase, setPendingPurchase] = useState<string | null>(null);
@@ -97,6 +98,7 @@ export default function Home() {
       } catch {
         /* storage unavailable */
       }
+      setRouteReady(true);
     }, 0);
     const onHashChange = () => applyRoute(false);
     window.addEventListener('hashchange', onHashChange);
@@ -129,21 +131,6 @@ export default function Home() {
     window.scrollTo({ top: 0 });
   }, []);
 
-  /** "Add purchase" from any screen → the unified Watchlist's form, prefilled. */
-  const addPurchase = useCallback(
-    (t: string) => {
-      const up = t.toUpperCase();
-      setPendingPurchase(up);
-      try {
-        window.sessionStorage.setItem(PENDING_PURCHASE_KEY, up);
-      } catch {
-        /* non-fatal */
-      }
-      openTab('watchlist');
-    },
-    [openTab],
-  );
-
   const consumePendingPurchase = useCallback(() => {
     setPendingPurchase(null);
     try {
@@ -175,31 +162,33 @@ export default function Home() {
   return (
     <div className="min-h-screen">
       <Header tab={tab} stockLabel={ticker} onTabChange={openTab} onOpenStock={openStock} onAmountChange={setAmount} />
-      <main className="w-full px-4 pt-24 pb-28 sm:px-6 lg:ml-[84px] lg:w-[calc(100%-84px)] lg:px-8 lg:pt-[88px] lg:pb-14">
-        <AnimatePresence mode="wait" initial={false}>
-          <TabPanel key={tab} className="mx-auto w-full max-w-[1480px]">
-            {tab === 'watchlist' && (
-              <PortfolioView
-                pendingPurchaseTicker={pendingPurchase}
-                onPendingPurchaseConsumed={consumePendingPurchase}
-                onOpenStock={openStock}
-              />
-            )}
-            {tab === 'discover' && <DiscoverView onOpenStock={openStock} />}
-            {tab === 'track-record' && <TrackRecordView />}
-            {tab === 'diagnostics' && <TrackRecordView diagnosticsOpen />}
-            {tab === 'stock' && (
-              <StockDetailView
-                ticker={ticker}
-                amount={amount}
-                onOpenStock={openStock}
-                onAmountChange={setAmount}
-                onGoToTrackRecord={() => openTab('track-record')}
-              />
-            )}
-            {tab === 'sandbox' && <SandboxView onOpenStock={openStock} />}
-          </TabPanel>
-        </AnimatePresence>
+      <main className="w-full px-4 pt-24 pb-28 sm:px-6 lg:ml-[216px] lg:w-[calc(100%-216px)] lg:px-8 lg:pt-[88px] lg:pb-14">
+        {routeReady && (
+          <AnimatePresence mode="wait" initial={false}>
+            <TabPanel key={tab} className="mx-auto w-full max-w-[1480px]">
+              {tab === 'watchlist' && (
+                <PortfolioView
+                  pendingPurchaseTicker={pendingPurchase}
+                  onPendingPurchaseConsumed={consumePendingPurchase}
+                  onOpenStock={openStock}
+                />
+              )}
+              {tab === 'discover' && <DiscoverView onOpenStock={openStock} />}
+              {tab === 'track-record' && <TrackRecordView />}
+              {tab === 'diagnostics' && <TrackRecordView diagnosticsOpen />}
+              {tab === 'stock' && (
+                <StockDetailView
+                  ticker={ticker}
+                  amount={amount}
+                  onOpenStock={openStock}
+                  onAmountChange={setAmount}
+                  onGoToTrackRecord={() => openTab('track-record')}
+                />
+              )}
+              {tab === 'sandbox' && <SandboxView onOpenStock={openStock} />}
+            </TabPanel>
+          </AnimatePresence>
+        )}
       </main>
     </div>
   );

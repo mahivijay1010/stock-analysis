@@ -19,22 +19,31 @@ export function ViewHero({
   className?: string;
 }) {
   return (
-    <div className={clsx('relative flex flex-wrap items-end justify-between gap-x-8 gap-y-4 border-b border-white/[0.055] pb-5', className)}>
-      <div className="min-w-0">
+    <section className={clsx('view-hero', className)}>
+      <div className="view-hero-sheen" aria-hidden />
+      <div className="view-hero-copy min-w-0">
         {eyebrow != null && (
-          <p className="font-display mb-2 text-[9px] font-semibold tracking-[0.2em] text-cyan-300/65 uppercase">
+          <p className="view-hero-eyebrow font-display">
             {eyebrow}
           </p>
         )}
-        <h2 className="font-display text-3xl font-semibold tracking-[-0.035em] text-slate-100 sm:text-[2.35rem]">
+        <h2 className="view-hero-title font-display">
           {title}
         </h2>
-        {subtitle != null && <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-slate-500">{subtitle}</p>}
+        {subtitle != null && <p className="view-hero-subtitle">{subtitle}</p>}
       </div>
-      {/* min-w-0 (not shrink-0): the chip row must be allowed to shrink and
-          wrap on phones — shrink-0 forced its max-content width and pushed
-          the page into horizontal overflow at 375px (measured 479px). */}
-      {right != null && <div className="flex min-w-0 flex-wrap items-center gap-2 pb-1.5">{right}</div>}
-    </div>
+      <div className="view-hero-aside">
+        <div className="view-hero-object" aria-hidden>
+          <span className="view-hero-core" />
+          <span className="view-hero-orbit view-hero-orbit-a" />
+          <span className="view-hero-orbit view-hero-orbit-b" />
+          <span className="view-hero-satellite" />
+        </div>
+        {/* min-w-0 (not shrink-0): the chip row must be allowed to shrink and
+            wrap on phones — shrink-0 forced its max-content width and pushed
+            the page into horizontal overflow at 375px. */}
+        {right != null && <div className="view-hero-meta">{right}</div>}
+      </div>
+    </section>
   );
 }

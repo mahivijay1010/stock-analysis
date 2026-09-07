@@ -24,7 +24,7 @@ export type Tone =
 const BUY_CLASSES = 'border-buy/30 bg-buy/10 text-buy';
 const SELL_CLASSES = 'border-sell/30 bg-sell/10 text-sell';
 const WAIT_CLASSES = 'border-amber-400/30 bg-amber-400/10 text-amber-400';
-const CYAN_CLASSES = 'border-[#78a6ff]/25 bg-[#78a6ff]/10 text-[#a9c3ff]';
+const CYAN_CLASSES = 'chip-info';
 
 export const TONE_CLASSES: Record<Tone, string> = {
   buy: BUY_CLASSES,
@@ -35,14 +35,14 @@ export const TONE_CLASSES: Record<Tone, string> = {
   amber: WAIT_CLASSES,
   sky: CYAN_CLASSES,
   cyan: CYAN_CLASSES,
-  violet: 'border-[#9c8cff]/25 bg-[#9c8cff]/10 text-[#bdb4ff]',
+  violet: 'chip-violet',
   zinc: 'border-white/10 bg-white/5 text-slate-300',
 };
 
 const BUY_GLOW = 'shadow-[0_0_12px_rgba(54,201,155,0.12)]';
 const SELL_GLOW = 'shadow-[0_0_12px_rgba(239,106,130,0.12)]';
 const WAIT_GLOW = 'shadow-[0_0_12px_rgba(232,180,90,0.11)]';
-const CYAN_GLOW = 'shadow-[0_0_12px_rgba(120,166,255,0.11)]';
+const CYAN_GLOW = 'chip-info-glow';
 
 export const TONE_GLOW: Record<Tone, string> = {
   buy: BUY_GLOW,
@@ -53,7 +53,7 @@ export const TONE_GLOW: Record<Tone, string> = {
   amber: WAIT_GLOW,
   sky: CYAN_GLOW,
   cyan: CYAN_GLOW,
-  violet: 'shadow-[0_0_12px_rgba(156,140,255,0.11)]',
+  violet: 'chip-violet-glow',
   zinc: '',
 };
 

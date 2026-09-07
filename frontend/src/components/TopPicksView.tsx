@@ -375,6 +375,7 @@ export function TopPicksView({ onAnalyze }: { onAnalyze: (ticker: string) => voi
   return (
     <div className="space-y-5">
       <ViewHero
+        className="view-hero-subsection"
         eyebrow="Daily full-universe scan"
         title="Top 5 Today"
         subtitle="The highest-scoring stocks from today's full-universe scan — measured signals, 80% confidence ranges, and the reasons in plain words."

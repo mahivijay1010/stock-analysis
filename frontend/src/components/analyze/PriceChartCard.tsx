@@ -160,7 +160,7 @@ export function PriceChartCard({ ticker }: { ticker: string }) {
               onClick={() => setRange(r)}
               className={clsx(
                 'rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
-                r === range ? 'bg-[#78a6ff]/15 text-[#b0c7ff]' : 'text-slate-400 hover:text-slate-200',
+                r === range ? 'chart-range-active' : 'text-slate-400 hover:text-slate-200',
               )}
             >
               {r}

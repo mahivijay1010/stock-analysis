@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Loader2, ShoppingCart } from 'lucide-react';
 import { createTransaction, correctTransaction } from '@/lib/api';
@@ -68,10 +68,6 @@ export function AddPurchaseForm({
   const [note, setNote] = useState(correcting?.note ?? '');
   const [useEstimatedClose, setUseEstimatedClose] = useState(false);
   const [confirmEstimated, setConfirmEstimated] = useState(false);
-
-  useEffect(() => {
-    if (initialTicker && !correcting) setTicker(initialTicker);
-  }, [initialTicker, correcting]);
 
   const qtyN = parseQty(qty);
   const priceN = parseMoney(price);

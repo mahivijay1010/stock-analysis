@@ -63,6 +63,28 @@ export class DecisionSnapshot {
   @Column({ name: "horizon_suitability", type: "jsonb", nullable: true })
   horizonSuitability?: Record<string, unknown> | null;
 
+  /**
+   * Risk-spec Rule 1 (T1): the separated ScoreCard (setup/entry/risk/data
+   * quality/forecast confidence …). Null on pre-T1 snapshots.
+   */
+  @Column({ name: "score_card", type: "jsonb", nullable: true })
+  scoreCard?: Record<string, unknown> | null;
+
+  /** Rule 8: expected value after costs from the stored issuance. Null pre-T1. */
+  @Column({ name: "expected_value", type: "jsonb", nullable: true })
+  expectedValue?: Record<string, unknown> | null;
+
+  /** Rule 14: the SEPARATE existing-position decision (HOLD/REVIEW/INSUFFICIENT_DATA). */
+  @Column({ name: "existing_holder_action", type: "varchar", length: 20, nullable: true })
+  existingHolderAction?: "HOLD" | "REVIEW" | "INSUFFICIENT_DATA" | null;
+
+  @Column({ name: "holder_reasons", type: "jsonb", nullable: true })
+  holderReasons?: string[] | null;
+
+  /** Rule 17 "What would change the decision?": unmet gates with thresholds. */
+  @Column({ name: "unmet_gates", type: "jsonb", nullable: true })
+  unmetGates?: Array<{ gate: string; current: string; required: string }> | null;
+
   /** Inputs the policy saw: issuance ref, measured stats, freshness. Audit trail. */
   @Column({ type: "jsonb" })
   inputs: Record<string, unknown>;

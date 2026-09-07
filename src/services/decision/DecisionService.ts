@@ -16,6 +16,7 @@ import { calendarDaysBetween, istDateString } from "../forecast/dates";
 import {
   DECISION_POLICY_VERSION,
   evaluateEntryPolicy,
+  evaluateHolderPolicy,
   PolicyInputs,
 } from "./policy";
 import {
@@ -23,9 +24,16 @@ import {
   assessHorizonSuitability,
   maxDrawdownPct,
 } from "./horizonPolicy";
+import { buildScoreCard, ScoreCard } from "./scorecard";
+import { computeExpectedValue, ExpectedValueReport } from "./expectedValue";
+import { assessEntryQuality } from "../framework/entryQuality";
+import { analyzeBars } from "../quant/engine";
 import { marketDataService } from "../market/MarketDataService";
+import { fundamentalsService } from "../market/FundamentalsService";
+import { newsService } from "../market/NewsService";
 import { IntelligenceRepository } from "../intelligence/IntelligenceRepository";
 import { intelligenceQualityScore } from "../quant/intelligenceQuality";
+import { calendarDaysBetween as daysBetween } from "../forecast/dates";
 
 export class DecisionService {
   /** Latest published snapshot (may be expired — expiry is reported, not hidden). */
@@ -116,25 +124,29 @@ export class DecisionService {
     }).format(now);
     const afterMarketClose = istNow >= "15:30" || lastObserved !== today;
 
-    const decision = evaluateEntryPolicy({
-      ticker: instrument.yahooTicker,
-      issuance: issuanceInputs,
-      measured,
-      afterMarketClose,
-    });
-
-    // Risk-character holding-horizon assessment (owner request; spec §9's
-    // separate horizon evidence). Measured inputs only: a year of real bars
-    // for vol/drawdown + the stored filings quality score when one exists.
-    // A failure here never blocks the entry decision — horizon stays null.
+    // ── T1 (risk-spec Rules 1/7/8): assemble the ScoreCard, entry quality and
+    //    after-cost EV from bars + fundamentals + the stored issuance. Every
+    //    sub-assembly degrades to null on failure (null can only make the
+    //    gate MORE conservative, never less). ──────────────────────────────
     let horizonSuitability: Record<string, unknown> | null = null;
+    let scoreCard: ScoreCard | null = null;
+    let evReport: ExpectedValueReport | null = null;
     try {
-      const bars = await marketDataService.getDailyBars(instrument.yahooTicker, "1y");
+      const barsResult = await marketDataService.getDailyBarsWithSource(instrument.yahooTicker, "1y");
+      const bars = barsResult.bars;
       const closes = bars.map((b) => b.close);
       const rets: number[] = [];
+      let suspectedCorporateActionBreak = false;
       for (let i = 1; i < closes.length; i++) {
-        if (closes[i - 1] > 0) rets.push(closes[i] / closes[i - 1] - 1);
+        if (closes[i - 1] > 0) {
+          const r = closes[i] / closes[i - 1] - 1;
+          rets.push(r);
+          if (Math.abs(r) > 0.25) suspectedCorporateActionBreak = true; // unadjusted split/demerger heuristic (audit §9.1)
+        }
       }
+      const vol1y = annualizedVolPct(rets);
+      const maxDd = maxDrawdownPct(closes);
+
       let qualityScore: number | null = null;
       try {
         const stored = await new IntelligenceRepository().latestStoredMetrics([instrument.yahooTicker]);
@@ -153,30 +165,150 @@ export class DecisionService {
       } catch {
         qualityScore = null; // stored-metrics read failure = no evidence, stated
       }
+
       horizonSuitability = assessHorizonSuitability({
         ticker: instrument.yahooTicker,
         barCount: bars.length,
-        annualizedVolPct: annualizedVolPct(rets),
-        maxDrawdownPct: maxDrawdownPct(closes),
+        annualizedVolPct: vol1y,
+        maxDrawdownPct: maxDd,
         qualityScore,
       }) as unknown as Record<string, unknown>;
+
+      // Setup score + technicals from the same pure engine the heuristic UI
+      // uses — consumed here as a DESCRIPTION, never as an action source.
+      const analysis = bars.length >= 60 ? analyzeBars(bars) : null;
+
+      // Fundamentals: 24h-cached Yahoo call; failure ⇒ null (penalized, not neutral).
+      const fundamentals = await fundamentalsService.getFundamentals(instrument.yahooTicker).catch(() => null);
+      const FUND_KEY_FIELDS = [
+        fundamentals?.trailingPE,
+        fundamentals?.pegRatio,
+        fundamentals?.priceToBook,
+        fundamentals?.enterpriseToEbitda,
+        fundamentals?.operatingMarginPct,
+        fundamentals?.revenueGrowthPct,
+        fundamentals?.earningsGrowthPct,
+        fundamentals?.returnOnEquityPct,
+        fundamentals?.freeCashflow,
+        fundamentals?.currentRatio,
+      ];
+      const fundCompleteness = fundamentals
+        ? FUND_KEY_FIELDS.filter((v) => v != null).length / FUND_KEY_FIELDS.length
+        : null;
+
+      // Terminal-horizon EV + interval width from the STORED issuance (never a
+      // fresh simulation — one distribution everywhere, upgrade-spec §5).
+      let intervalWidthPct30: number | null = null;
+      let rewardRiskRatio: number | null = null;
+      if (run) {
+        const view = await forecastService.toView(run);
+        const sessions = view.days.filter((d) => d.prices != null);
+        const last = sessions[sessions.length - 1];
+        if (last?.prices) {
+          intervalWidthPct30 = ((last.prices.p90 - last.prices.p10) / view.anchorPrice) * 100;
+          evReport = computeExpectedValue({
+            anchorPrice: view.anchorPrice,
+            p05: last.prices.p05,
+            p10: last.prices.p10,
+            p50: last.prices.p50,
+            p90: last.prices.p90,
+            p95: last.prices.p95,
+            meanPrice: last.prices.mean ?? null,
+            pop: last.pop,
+            horizonDays: 30,
+          });
+          rewardRiskRatio = evReport.rewardRiskRatio;
+        }
+      }
+
+      const entryQuality = analysis
+        ? assessEntryQuality({
+            baseTimingScore: null, // nightly path has no news/regime context — base 50, penalties only
+            price: closes[closes.length - 1],
+            technicals: analysis.technicals,
+            fundamentals,
+            intervalWidthPct30,
+            rewardRiskRatio,
+          })
+        : null;
+
+      const lastBarDate = bars.length > 0 ? bars[bars.length - 1].date : null;
+      scoreCard = buildScoreCard({
+        setupScore: analysis?.score ?? null,
+        momentumScore: null, // exposed via analyze-path ScoreCard (T2); not re-derived here
+        valuationScore: null, // framework phases are analyze-path only (heavy); null ≠ neutral
+        fundamentalScore: null,
+        businessQualityScore: qualityScore,
+        entryTimingScore: entryQuality?.score ?? null,
+        risk: {
+          annualVolPct: vol1y,
+          maxDrawdownPct1y: maxDd,
+        },
+        dataQuality: {
+          barCount: bars.length,
+          barsSource: barsResult.source,
+          barStalenessDays:
+            lastBarDate && lastObserved ? Math.max(0, daysBetween(lastBarDate, lastObserved)) : null,
+          suspectedCorporateActionBreak,
+          fundamentalsAvailable: fundamentals != null,
+          fundamentalsCompleteness: fundCompleteness,
+          filingsMetricsAvailable: qualityScore != null,
+          newsAvailable: newsService.getCachedNews(instrument.yahooTicker) != null,
+        },
+        forecastConfidence: {
+          brier: measured?.brierScore ?? null,
+          rawSamples: measured?.samples ?? null,
+          overlapDays: 30,
+          bandCoveragePct: measured?.withinBandPct ?? null,
+          stabilityDelta: null, // needs two evaluation windows — Stage FOURTH
+        },
+      });
     } catch {
-      horizonSuitability = null;
+      horizonSuitability = horizonSuitability ?? null;
+      scoreCard = null;
+      evReport = null;
     }
+
+    // Re-evaluate the gate WITH the v3 inputs (the first evaluation above only
+    // covered v2 evidence; scorecard fields can only cap further).
+    const decisionV3 = evaluateEntryPolicy({
+      ticker: instrument.yahooTicker,
+      issuance: issuanceInputs,
+      measured,
+      afterMarketClose,
+      riskScore: scoreCard?.risk.score ?? null,
+      dataQualityScore: scoreCard?.dataQuality.score ?? null,
+      forecastConfidenceScore: scoreCard?.forecastConfidence.score ?? null,
+      entryQualityScore: scoreCard?.entryTimingScore ?? null,
+      evAfterCostsPct: evReport?.evAfterCostsPct ?? null,
+    });
+    const holder = evaluateHolderPolicy(decisionV3, {
+      ticker: instrument.yahooTicker,
+      issuance: issuanceInputs,
+      measured,
+      afterMarketClose,
+      riskScore: scoreCard?.risk.score ?? null,
+      dataQualityScore: scoreCard?.dataQuality.score ?? null,
+    });
 
     const repo = AppDataSource.getRepository(DecisionSnapshot);
     return repo.save(
       repo.create({
         instrumentId: instrument.id,
         ticker: instrument.yahooTicker,
-        decisionStatus: decision.decisionStatus,
-        evidenceStatus: decision.evidenceStatus,
-        riskLevel: decision.riskLevel,
-        intendedHorizon: decision.intendedHorizon,
-        reasons: decision.reasons,
-        risks: decision.risks,
-        holdingsReviewNote: decision.holdingsReviewNote,
+        decisionStatus: decisionV3.decisionStatus,
+        evidenceStatus: decisionV3.evidenceStatus,
+        riskLevel: decisionV3.riskLevel,
+        intendedHorizon: decisionV3.intendedHorizon,
+        reasons: decisionV3.reasons,
+        risks: decisionV3.risks,
+        holdingsReviewNote: decisionV3.holdingsReviewNote,
         horizonSuitability,
+        scoreCard: scoreCard as unknown as Record<string, unknown> | null,
+        expectedValue: evReport as unknown as Record<string, unknown> | null,
+        existingHolderAction: holder.action,
+        holderReasons: holder.reasons,
+        unmetGates: decisionV3.unmetGates,
         inputs: {
           runId: run?.id ?? null,
           issuance: issuanceInputs,

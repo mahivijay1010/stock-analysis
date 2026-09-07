@@ -25,7 +25,6 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 
 export type TabId =
   | 'watchlist'
-  | 'holdings'
   | 'discover'
   | 'track-record'
   | 'stock'
@@ -34,7 +33,7 @@ export type TabId =
 
 type NavItem = { id: TabId; label: string; short: string; description: string; icon: LucideIcon };
 
-/** The four primary destinations (spec §2/§10). */
+/** The three primary destinations in the simplified product shell. */
 const PRIMARY: NavItem[] = [
   { id: 'watchlist', label: 'Watchlist', short: 'Watch', description: 'Follow & own in one place — forecasts, decisions, your ledger', icon: Eye },
   { id: 'discover', label: 'Discover', short: 'Discover', description: 'Search & rank the covered NSE universe', icon: Compass },
@@ -84,7 +83,7 @@ function DesktopNavButton({ item, active, onClick }: { item: NavItem; active: bo
       <span className={clsx('sidebar-nav-icon relative z-10', active && 'sidebar-nav-icon-active')}>
         <Icon className="h-[17px] w-[17px]" aria-hidden />
       </span>
-      <span className="sidebar-nav-tooltip" role="tooltip">
+      <span className="sidebar-nav-copy relative z-10">
         <strong>{item.label}</strong>
         <small>{item.description}</small>
       </span>
@@ -93,10 +92,21 @@ function DesktopNavButton({ item, active, onClick }: { item: NavItem; active: bo
 }
 
 /** Honest backend status — wired to GET /health, never hardcoded. */
-function HealthStatus() {
+function HealthStatus({ sidebar = false }: { sidebar?: boolean }) {
   const q = useQuery({ queryKey: ['health'], queryFn: getHealth, staleTime: 60_000, retry: false });
-  if (q.isPending) return null;
   const ok = q.isSuccess && q.data?.status === 'ok';
+  if (sidebar) {
+    return (
+      <div className={clsx('sidebar-engine-status', ok ? 'sidebar-engine-online' : q.isPending ? 'sidebar-engine-checking' : 'sidebar-engine-offline')}>
+        <span className="sidebar-engine-icon"><Activity className="h-4 w-4" aria-hidden /></span>
+        <span className="min-w-0">
+          <strong>Research engine</strong>
+          <small>{q.isPending ? 'Checking connection…' : ok ? 'Live data connection' : 'Connection unavailable'}</small>
+        </span>
+      </div>
+    );
+  }
+  if (q.isPending) return null;
   return (
     <div
       className="flex items-center gap-2 border-l border-white/[0.07] pl-3 text-[10px] text-slate-500"
@@ -137,13 +147,17 @@ function SecondaryMenu({ tab, onChoose }: { tab: TabId; onChoose: (id: TabId) =>
         <span className={clsx('sidebar-nav-icon relative z-10', secondaryActive && 'sidebar-nav-icon-active')}>
           <Settings className="h-[17px] w-[17px]" aria-hidden />
         </span>
+        <span className="sidebar-nav-copy relative z-10">
+          <strong>More tools</strong>
+          <small>Sandbox & diagnostics</small>
+        </span>
       </button>
       <AnimatePresence>
         {open && (
           <motion.div
             role="menu"
             aria-label="Secondary destinations"
-            className="overlay-panel absolute bottom-0 left-[64px] z-[70] w-56 py-1"
+            className="overlay-panel absolute bottom-0 left-[calc(100%+10px)] z-[70] w-64 py-1"
             initial={{ opacity: 0, x: -6 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -6 }}
@@ -204,12 +218,15 @@ export function Header({
 
   return (
     <>
-      <aside className="app-sidebar fixed inset-y-0 left-0 z-50 hidden w-[84px] flex-col lg:flex">
-        <div className="flex h-[76px] items-center justify-center">
-          <div className="brand-mark" aria-label="StockSense" title="StockSense"><BarChart3 className="h-[19px] w-[19px]" /></div>
+      <aside className="app-sidebar fixed inset-y-0 left-0 z-50 hidden w-[216px] flex-col lg:flex">
+        <div className="desktop-sidebar-brand flex h-[76px] items-center px-5">
+          <Brand />
         </div>
 
-        <nav className="flex flex-1 flex-col items-center gap-2 overflow-visible px-3 pt-5" aria-label="Primary navigation">
+        <div className="px-5 pt-5">
+          <p className="sidebar-section-label">Workspace</p>
+        </div>
+        <nav className="flex flex-1 flex-col gap-1.5 overflow-visible px-3 pt-2" aria-label="Primary navigation">
           {PRIMARY.map((item) => (
             <div key={item.id} className="w-full">
               <DesktopNavButton item={item} active={tab === item.id} onClick={() => choose(item.id)} />
@@ -218,14 +235,15 @@ export function Header({
         </nav>
 
         {/* Secondary destinations live behind the small gear menu. */}
-        <div className="mb-5 flex flex-col items-center gap-2 px-3" aria-label="Secondary navigation">
+        <div className="mb-5 flex flex-col gap-2 px-3" aria-label="Secondary navigation">
+          <HealthStatus sidebar />
           <div className="w-full border-t border-white/[0.07] pt-4">
             <SecondaryMenu tab={tab} onChoose={choose} />
           </div>
         </div>
       </aside>
 
-      <header className="workspace-topbar fixed top-0 right-0 left-[84px] z-40 hidden h-[64px] items-center justify-between px-7 lg:flex">
+      <header className="workspace-topbar fixed top-0 right-0 left-[216px] z-40 hidden h-[64px] items-center justify-between px-7 lg:flex">
         <div className="flex items-center gap-2 text-xs">
           <span className="text-slate-600">StockSense</span>
           <ChevronRight className="h-3 w-3 text-slate-700" aria-hidden />
@@ -280,7 +298,7 @@ export function Header({
               transition={{ type: 'spring', stiffness: 420, damping: 36 }}
             >
               <div className="mb-3 flex items-center justify-between px-1">
-                <div><p className="font-display text-sm font-semibold text-white">Where next?</p><p className="mt-1 text-[10px] text-slate-500">Watchlist · Holdings · Discover · Track Record — plus the sandbox desk</p></div>
+                <div><p className="font-display text-sm font-semibold text-white">Where next?</p><p className="mt-1 text-[10px] text-slate-500">Watchlist · Discover · Track Record — plus the sandbox desk</p></div>
                 <button type="button" onClick={() => setMoreOpen(false)} className="icon-button" aria-label="Close navigation"><X className="h-4 w-4" aria-hidden /></button>
               </div>
               <div className="mb-3 px-1">

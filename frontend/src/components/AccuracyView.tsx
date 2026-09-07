@@ -103,7 +103,8 @@ function AccuracyTip({
  * the per-stock table with its overlapping-window caveat, and the model
  * pool comparison.
  */
-export function AccuracyView({ diagnosticsOpen: _diagnosticsOpen = false }: { diagnosticsOpen?: boolean } = {}) {
+export function AccuracyView({ diagnosticsOpen = false }: { diagnosticsOpen?: boolean } = {}) {
+  void diagnosticsOpen;
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ['accuracy'],
     queryFn: getAccuracy,
@@ -211,6 +212,7 @@ export function AccuracyView({ diagnosticsOpen: _diagnosticsOpen = false }: { di
   return (
     <div className="space-y-5">
       <ViewHero
+        className="view-hero-subsection"
         eyebrow="measured, not promised"
         title="Accuracy"
         subtitle="Everything here is measured, not promised — walk-forward backtests replay past days and compare each prediction with what actually happened."

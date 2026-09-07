@@ -520,6 +520,7 @@ export function LeadersView({ onAnalyze }: { onAnalyze: (ticker: string) => void
   return (
     <div className="space-y-5">
       <ViewHero
+        className="view-hero-subsection"
         eyebrow="Cross-sectional rank"
         title="Relative Leaders"
         subtitle="Who is strongest versus the rest of the universe right now — a cross-sectional rank, not a market-direction promise."

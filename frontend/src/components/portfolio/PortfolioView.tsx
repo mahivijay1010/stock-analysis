@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
@@ -242,20 +242,20 @@ function PortfolioRow({
   }, [row.held, row.monthForecast]);
 
   return (
-    <Card className="p-4">
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-start">
+    <Card className="portfolio-stock-card p-5">
+      <div className="portfolio-stock-grid">
         {/* Identity + price */}
-        <div className="min-w-0">
+        <div className="portfolio-stock-identity min-w-0">
           <button type="button" onClick={() => onOpenStock(row.ticker)} className="group block min-w-0 text-left">
-            <p className="truncate font-display text-sm font-semibold tracking-tight text-slate-100 group-hover:text-cyan-300">
+            <p className="portfolio-stock-name truncate font-display font-semibold tracking-tight text-slate-100 group-hover:text-cyan-300">
               {row.name}
             </p>
-            <p className="text-xs text-slate-500">{row.ticker}</p>
+            <p className="portfolio-stock-ticker text-slate-500">{row.ticker}</p>
           </button>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {row.price ? (
               <>
-                <span className="text-sm font-semibold text-slate-100 tabular-nums">{inr(row.price.current)}</span>
+                <span className="portfolio-stock-price font-display font-semibold text-slate-100 tabular-nums">{inr(row.price.current)}</span>
                 {row.price.asOf && (
                   <span className="inline-flex items-center gap-1 text-[10px] text-slate-500" title={row.price.source ?? undefined}>
                     <Clock3 className="h-3 w-3" aria-hidden />
@@ -270,16 +270,16 @@ function PortfolioRow({
         </div>
 
         {/* Held state */}
-        <HeldBlock row={row} />
+        <div className="portfolio-data-cell"><span className="portfolio-data-label">Position</span><HeldBlock row={row} /></div>
 
         {/* This month's forecast */}
-        <MonthForecastBlock row={row} />
+        <div className="portfolio-data-cell"><span className="portfolio-data-label">Monthly outlook</span><MonthForecastBlock row={row} /></div>
 
         {/* Decision + horizon */}
-        <DecisionChips row={row} />
+        <div className="portfolio-data-cell"><span className="portfolio-data-label">Latest decision</span><DecisionChips row={row} /></div>
 
         {/* Actions */}
-        <div className="flex flex-wrap items-center gap-1.5 lg:flex-col lg:items-end">
+        <div className="portfolio-stock-actions flex flex-wrap items-center gap-1.5">
           <Button
             variant="secondary"
             size="sm"
@@ -401,14 +401,6 @@ export function PortfolioView({
     enabled: auth?.status === 'authenticated',
   });
 
-  // Watchlist "Add purchase" hand-off (from Discover/Stock Detail) opens the form here.
-  useEffect(() => {
-    if (pendingPurchaseTicker) {
-      setPurchaseTicker(pendingPurchaseTicker);
-      setPurchaseOpen(true);
-    }
-  }, [pendingPurchaseTicker]);
-
   const addMut = useMutation({
     mutationFn: (ticker: string) => addWatchlistItem({ ticker, horizon: 'medium' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['portfolio-overview'] }),
@@ -423,12 +415,12 @@ export function PortfolioView({
   const data = overviewQ.data;
   const hero = (
     <ViewHero
-      eyebrow="follow & own — one place"
+      eyebrow="Your personal market intelligence"
       title="Watchlist"
-      subtitle="Every stock you follow or hold: observed price, this month's forecast, the nightly decision and a risk-based holding-horizon label. Following records no purchase; positions come only from your recorded transactions."
+      subtitle="Follow the names that matter. Monthly forecasts, nightly decisions, live positions and holding horizons—together, without the noise."
       right={
         data ? (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="portfolio-hero-counts flex flex-wrap gap-1.5">
             <Chip tone="cyan" glow>{data.totals.followed} followed</Chip>
             {data.totals.held > 0 && <Chip tone="zinc">{data.totals.held} held</Chip>}
           </div>
@@ -479,10 +471,11 @@ export function PortfolioView({
       {data && heldCount > 0 && (
         <Stagger className="grid grid-cols-2 gap-4 xl:grid-cols-3">
           <StaggerItem>
-            <StatTile label="Invested basis" value={inrSmart(data.totals.costBasis)} sub="cost incl. allocated charges" />
+            <StatTile className="portfolio-stat-tile" label="Invested basis" value={inrSmart(data.totals.costBasis)} sub="cost incl. allocated charges" />
           </StaggerItem>
           <StaggerItem>
             <StatTile
+              className="portfolio-stat-tile"
               label="Unrealized P&L"
               value={
                 <span className={data.totals.unrealizedGrossPnl != null ? signTone(data.totals.unrealizedGrossPnl) : ''}>
@@ -494,6 +487,7 @@ export function PortfolioView({
           </StaggerItem>
           <StaggerItem>
             <StatTile
+              className="portfolio-stat-tile"
               label="Realized P&L"
               value={<span className={signTone(data.totals.realizedPnl)}>{signedInr(data.totals.realizedPnl)}</span>}
               sub="actual net sale proceeds − sold basis"
@@ -503,12 +497,13 @@ export function PortfolioView({
       )}
 
       {/* Follow a stock */}
-      <Card className="p-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
-            <Plus className="h-4 w-4 text-cyan-300" aria-hidden /> Follow a stock
-          </span>
-          <div className="min-w-0 flex-1">
+      <Card className="portfolio-command-dock p-5">
+        <div className="portfolio-command-layout">
+          <div className="portfolio-command-copy">
+            <span className="portfolio-command-icon"><Plus className="h-4 w-4" aria-hidden /></span>
+            <span><strong>Build your focus list</strong><small>Follow a company or record a position.</small></span>
+          </div>
+          <div className="portfolio-command-search min-w-0">
             <SearchBox onSelect={(t) => addMut.mutate(t)} inputId="watchlist-add-input" className="max-w-xl" />
           </div>
           {addMut.isPending && <Loader2 className="h-4 w-4 animate-spin text-slate-500" aria-hidden />}
@@ -532,9 +527,10 @@ export function PortfolioView({
       </Card>
 
       {/* Purchase / correction form — collapsed until asked for. */}
-      {(purchaseOpen || correcting) && (
+      {(purchaseOpen || correcting || pendingPurchaseTicker) && (
         <AddPurchaseForm
-          initialTicker={purchaseTicker}
+          key={`${correcting?.id ?? 'new'}:${purchaseTicker ?? pendingPurchaseTicker ?? ''}`}
+          initialTicker={purchaseTicker ?? pendingPurchaseTicker}
           correcting={correcting}
           onDone={() => {
             setCorrecting(null);
@@ -581,28 +577,29 @@ export function PortfolioView({
       )}
 
       {rows.length > 0 && (
-        <div className="space-y-3">
+        <Stagger className="portfolio-list space-y-3">
           {rows.map((row) => (
-            <PortfolioRow
-              key={row.instrumentId}
-              row={row}
-              onOpenStock={onOpenStock}
-              onRecordPurchase={(t) => {
-                setPurchaseTicker(t);
-                setPurchaseOpen(true);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-              onEditTransaction={(tx) => {
-                setCorrecting(tx);
-                setPurchaseOpen(true);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-            />
+            <StaggerItem key={row.instrumentId}>
+              <PortfolioRow
+                row={row}
+                onOpenStock={onOpenStock}
+                onRecordPurchase={(t) => {
+                  setPurchaseTicker(t);
+                  setPurchaseOpen(true);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onEditTransaction={(tx) => {
+                  setCorrecting(tx);
+                  setPurchaseOpen(true);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+              />
+            </StaggerItem>
           ))}
           {data?.notes && (
             <p className="px-1 text-[11px] leading-relaxed text-slate-500">{data.notes.join(' ')}</p>
           )}
-        </div>
+        </Stagger>
       )}
 
     </div>
