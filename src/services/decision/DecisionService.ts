@@ -101,6 +101,11 @@ export class DecisionService {
               e->>'brierScore' AS brier
          FROM model_performance mp, jsonb_array_elements(mp.horizons) e
         WHERE mp.ticker = $1 AND e->>'horizonDays' = '30'
+          -- T3 fix (audit §5): pin the champion model and refuse stale
+          -- evidence — a surviving legacy-model row or a weeks-old backtest
+          -- must not feed the gate.
+          AND mp.model_version = 'quant-v1'
+          AND mp.ran_at > now() - interval '14 days'
         ORDER BY mp.ran_at DESC NULLS LAST LIMIT 1`,
       [instrument.yahooTicker]
     );

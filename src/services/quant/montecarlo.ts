@@ -249,3 +249,80 @@ export function simulateDailyQuantiles(
     perStep,
   };
 }
+
+
+// ── Risk-spec Rule 10 (T3): stationary BLOCK bootstrap — EXPERIMENTAL ────────
+
+/**
+ * Same interface as simulateDailyQuantiles but resampling STATIONARY BLOCKS
+ * (Politis–Romano): at each step, with probability 1/meanBlockLen the path
+ * jumps to a fresh uniform start index, otherwise it continues sequentially
+ * (wrapping). Partially preserves autocorrelation and volatility clustering
+ * that i.i.d. resampling destroys.
+ *
+ * EXPERIMENTAL: not wired to any product surface. It must beat the i.i.d.
+ * simulator on out-of-sample interval scores in the experiment registry
+ * before an issuance may use it (risk-spec Rule 4/10).
+ */
+export function simulateDailyQuantilesBlock(
+  dailyReturns: number[],
+  steps: number,
+  opts?: MonteCarloOptions & { meanBlockLen?: number }
+): DailyQuantileForecast {
+  const usable = (Array.isArray(dailyReturns) ? dailyReturns : []).filter(
+    (r) => Number.isFinite(r) && r > -1
+  );
+  if (usable.length < MIN_RETURNS) {
+    throw new Error(
+      `simulateDailyQuantilesBlock requires at least ${MIN_RETURNS} real daily returns, got ${usable.length}`
+    );
+  }
+  if (!Number.isInteger(steps) || steps < 1 || steps > 40) {
+    throw new Error(`simulateDailyQuantilesBlock steps must be an integer in 1..40, got ${steps}`);
+  }
+  const maxReturns = opts?.maxReturns ?? DEFAULT_MAX_RETURNS;
+  const pool = usable.slice(-maxReturns);
+  const nPool = pool.length;
+  const paths = opts?.paths ?? DEFAULT_PATHS;
+  const seed = opts?.seed ?? DEFAULT_SEED;
+  const meanBlockLen = opts?.meanBlockLen ?? 10;
+  const pNew = 1 / Math.max(1, meanBlockLen);
+  const rand = mulberry32(seed);
+
+  const byStep: Float64Array[] = Array.from({ length: steps }, () => new Float64Array(paths));
+  for (let p = 0; p < paths; p++) {
+    let cum = 1;
+    let idx = Math.floor(rand() * nPool);
+    for (let step = 1; step <= steps; step++) {
+      cum *= 1 + pool[idx];
+      byStep[step - 1][p] = cum - 1;
+      idx = rand() < pNew ? Math.floor(rand() * nPool) : (idx + 1) % nPool;
+    }
+  }
+
+  const perStep: DailyQuantileStep[] = byStep.map((outcomes, i) => {
+    const sorted = Array.from(outcomes).sort((a, b) => a - b);
+    let up = 0;
+    let sum = 0;
+    for (const r of outcomes) {
+      if (r > 0) up++;
+      sum += r;
+    }
+    const q = (p: number) => round4(percentileSorted(sorted, p));
+    return {
+      offset: i + 1,
+      q: { p05: q(5), p10: q(10), p25: q(25), p50: q(50), p75: q(75), p90: q(90), p95: q(95) },
+      mean: round4(sum / paths),
+      pop: round4(up / paths),
+    };
+  });
+
+  return {
+    paths,
+    seed,
+    poolSize: nPool,
+    steps,
+    method: `stationary block bootstrap (mean block ${meanBlockLen}d, seeded mulberry32, ${nPool}-day pool) — EXPERIMENTAL, not product-wired`,
+    perStep,
+  };
+}

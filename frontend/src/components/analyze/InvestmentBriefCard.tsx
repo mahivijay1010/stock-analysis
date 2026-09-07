@@ -86,7 +86,7 @@ function briefToPlainText(b: ResearchBrief): string {
       push(
         `${f.horizonDays}d: expected ${signedPct(f.expectedPct)} (range ${signedPct(f.low80Pct)} to ${signedPct(
           f.high80Pct,
-        )}), freq(up) ${Math.round((f.pop ?? 0) * 100)}%`,
+        )}), freq(up) ${f.pop != null ? Math.round(f.pop * 100) + '%' : 'unavailable'}`,
       ),
     );
   }
@@ -325,7 +325,7 @@ function BriefDocument({ brief }: { brief: ResearchBrief }) {
                     <td className="num text-slate-400 tabular-nums">
                       {signedPct(f.low80Pct)} … {signedPct(f.high80Pct)}
                     </td>
-                    <td className="num text-slate-200 tabular-nums">{pct((f.pop ?? 0) * 100, 0)}</td>
+                    <td className="num text-slate-200 tabular-nums">{f.pop != null ? pct(f.pop * 100, 0) : '—'}</td>
                   </tr>
                 ))}
               </tbody>

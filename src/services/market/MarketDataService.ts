@@ -255,9 +255,31 @@ export class MarketDataService {
     }
 
     const { meta } = await fetchChart(t, "1d");
-    const quote = this.quoteFromMeta(t, meta);
+    // T3 fix (audit §6): when Yahoo omits both previous-close fields, the old
+    // code silently used the live price and fabricated a 0.00% change. Fall
+    // back to the last stored completed close (real data) first.
+    const hasPrev =
+      (typeof meta.previousClose === "number" && Number.isFinite(meta.previousClose)) ||
+      (typeof meta.chartPreviousClose === "number" && Number.isFinite(meta.chartPreviousClose));
+    let fallbackPrev: number | null = null;
+    if (!hasPrev) {
+      fallbackPrev = await this.lastStoredClose(t).catch(() => null);
+    }
+    const quote = this.quoteFromMeta(t, meta, fallbackPrev);
     this.quoteCache.set(t, { quote, fetchedAt: Date.now() });
     return quote;
+  }
+
+  /** Latest stored completed close for a ticker, or null. */
+  private async lastStoredClose(ticker: string): Promise<number | null> {
+    const row: Array<{ close: string }> = await AppDataSource.query(
+      `SELECT h.close_price::text AS close
+         FROM stock_history h JOIN stocks s ON s.id = h.stock_id
+        WHERE s.ticker = $1 ORDER BY h.trading_date DESC LIMIT 1`,
+      [ticker]
+    );
+    const v = row.length > 0 ? Number(row[0].close) : NaN;
+    return Number.isFinite(v) && v > 0 ? v : null;
   }
 
   // ── Daily bars (DB-cached) ────────────────────────────────────────────────
@@ -313,7 +335,12 @@ export class MarketDataService {
         throw new Error(`Yahoo returned no bars for ${t} (range ${range})`);
       }
       await this.persistBars(t, bars, meta);
-      return { bars, source: "yahoo" };
+      // T3 fix (risk-spec audit §9.2): the partial-today-bar guard used to run
+      // only at persist time, so intraday callers (backtests, prediction logs,
+      // forecast issuances, outcome grading) treated a mid-session price as a
+      // final close. Analytics callers get COMPLETED bars only.
+      const completed = dropPartialTodayBar(bars);
+      return { bars: completed.length > 0 ? completed : bars, source: "yahoo" };
     } catch (err) {
       // Stale-but-real DB data beats an error; never fabricate.
       if (dbBars.length > 0) return { bars: dbBars, source: "db-stale" };
@@ -436,7 +463,7 @@ export class MarketDataService {
     return ranked.map((r) => r.stock);
   }
 
-  private quoteFromMeta(ticker: string, meta: YahooChartMeta): Quote {
+  private quoteFromMeta(ticker: string, meta: YahooChartMeta, fallbackPreviousClose: number | null = null): Quote {
     const price = meta.regularMarketPrice;
     if (typeof price !== "number" || !Number.isFinite(price)) {
       throw new Error(`Yahoo quote for ${ticker} has no regularMarketPrice`);
@@ -449,7 +476,9 @@ export class MarketDataService {
             Number.isFinite(meta.chartPreviousClose)
           ? meta.chartPreviousClose
           : null;
-    const previousClose = previousCloseRaw ?? price;
+    // T3 fix (audit §6): last stored completed close beats fabricating a flat
+    // day from the live price; price remains the final fallback (flat, stated).
+    const previousClose = previousCloseRaw ?? fallbackPreviousClose ?? price;
     const change = price - previousClose;
     const changePercent =
       previousClose !== 0 ? (change / previousClose) * 100 : 0;

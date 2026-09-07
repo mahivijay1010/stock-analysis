@@ -201,12 +201,16 @@ export class FrameworkService {
       masterScore = round1(acc);
     }
 
+    // T3 fix (audit §10.7): a null master score (insufficient scored phases)
+    // is DATA ABSENCE, not a judgment — it must not share the reject label.
     const verdict: FrameworkReport["verdict"] =
-      masterScore !== null && masterScore > 85
-        ? "STRONG_CANDIDATE"
-        : masterScore !== null && masterScore >= 70
-          ? "WATCH"
-          : "PASS";
+      masterScore === null
+        ? "NO_DATA"
+        : masterScore > 85
+          ? "STRONG_CANDIDATE"
+          : masterScore >= 70
+            ? "WATCH"
+            : "PASS";
 
     phases.push(this.phaseMasterScore(masterScore, verdict, weightsUsed, scored.length));
     phases.push(this.phaseRiskPlan(input));

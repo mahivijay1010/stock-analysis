@@ -8,6 +8,7 @@ import { NextFunction, Request, Response } from "express";
 import { forecastService } from "../services/forecast/ForecastService";
 import { decisionService } from "../services/decision/DecisionService";
 import { portfolioOverviewService } from "../services/portfolio/PortfolioOverviewService";
+import { latestExperiments, runLiveBaselineExperiment } from "../services/experiments/runner";
 import { LedgerService } from "../services/ledger/LedgerService";
 import { HttpError } from "../types";
 
@@ -123,6 +124,25 @@ export class ForecastController {
   publishDecision = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       ok(res, { snapshot: await decisionService.publish(req.params.ticker) }, 201);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/experiments/latest — the experiment registry, newest first (read-only). */
+  experiments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const limit = Number(req.query.limit) || 5;
+      ok(res, { runs: await latestExperiments(limit) });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** POST /api/jobs/experiments — run the champion-vs-baselines evaluation (auth/admin). */
+  runExperiments = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      ok(res, { run: await runLiveBaselineExperiment() }, 201);
     } catch (err) {
       next(err);
     }

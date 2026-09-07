@@ -147,7 +147,7 @@ export interface PhaseResult {
 export interface FrameworkReport {
   phases: PhaseResult[]; // 8 entries
   masterScore: number | null; // weighted avg over AVAILABLE scored phases (weights renormalized); null if <3 scored
-  verdict: "STRONG_CANDIDATE" | "WATCH" | "PASS"; // >85 / 70-85 / <70
+  verdict: "STRONG_CANDIDATE" | "WATCH" | "PASS" | "NO_DATA"; // >85 / 70-85 / <70 / unscored
   coverage: { done: number; partial: number; unavailable: number };
   weightsUsed: Record<string, number>;
 }
@@ -457,7 +457,8 @@ export interface ResearchBrief {
     expectedPct: number;
     low80Pct: number;
     high80Pct: number;
-    pop: number;
+    /** Bootstrap scenario frequency of a gain; NULL when unavailable (never a substituted heuristic — audit §4). */
+    pop: number | null;
   }>;
   newsContext: string; // NewsSummary.assessment or quiet-tape line
   risks: string[];

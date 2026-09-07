@@ -90,6 +90,10 @@ export const createStockRoutes = (): Router => {
   router.get("/decision/:ticker", forecastController.decision); //                     GET  /api/decision/:t
   router.post("/decision/:ticker/publish", requireAuth, forecastController.publishDecision); // POST /api/decision/:t/publish
   router.post("/jobs/forecast-maintenance", requireAuthOrAdminKey, forecastController.maintenance); // POST /api/jobs/forecast-maintenance
+  // Experiment registry (risk-spec Rule 4): champion vs naive baselines on
+  // VERIFIED live predictions; append-only runs; GET is read-only.
+  router.get("/experiments/latest", forecastController.experiments); //                 GET  /api/experiments/latest?limit=5
+  router.post("/jobs/experiments", requireAuthOrAdminKey, forecastController.runExperiments); // POST /api/jobs/experiments
 
   // Admin trading desk (V2-D) — before any param routes. Now requires a real
   // session (or x-admin-key when ADMIN_KEY is configured) — see routes/admin.ts.

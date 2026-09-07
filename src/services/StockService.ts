@@ -1322,7 +1322,10 @@ export class StockService {
         expectedPct: p.expectedReturnPct,
         low80Pct: p.low80Pct,
         high80Pct: p.high80Pct,
-        pop: mcH ? mcH.pop : p.directionProb,
+        // T3 fix (audit §4): NEVER substitute the engine's uncalibrated
+        // normal-CDF heuristic for a missing bootstrap frequency under one
+        // label — a missing scenario frequency renders as unavailable.
+        pop: mcH ? mcH.pop : null,
       };
     });
 
@@ -1547,7 +1550,12 @@ export class StockService {
     // removes the "—" score/recommendation gaps for universe stocks that were
     // scanned but never individually analyzed.
     const scanByTicker = new Map<string, ScanEntry>(
-      (this.topPicksCache?.entries ?? []).map((e) => [e.ticker, e])
+      // T3 fix (audit §10.10): respect the scan-cache TTL here exactly like
+      // peekScanEntry does — an hours-old in-memory scan is not "current".
+      (this.topPicksCache && Date.now() - this.topPicksBuiltAt <= TOP_PICKS_TTL_MS
+        ? this.topPicksCache.entries
+        : []
+      ).map((e) => [e.ticker, e])
     );
     const scanAsOf = this.topPicksCache?.asOf ?? null;
 
@@ -1654,7 +1662,9 @@ export class StockService {
     for (const [ticker, logs] of byTicker) {
       let bars: Bar[];
       try {
-        bars = await marketDataService.getDailyBars(ticker, "1y");
+        // T3 fix (audit §5): a 1y window silently never-verified rows older
+        // than it; 2y covers every log this system can have produced.
+        bars = await marketDataService.getDailyBars(ticker, "2y");
       } catch (err) {
         console.warn(`⚠️ verify skipped ${ticker}:`, (err as Error).message);
         continue;

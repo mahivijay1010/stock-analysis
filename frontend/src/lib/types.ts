@@ -265,7 +265,7 @@ export interface PhaseResult {
   missing: string[];
 }
 
-export type FrameworkVerdict = 'STRONG_CANDIDATE' | 'WATCH' | 'PASS';
+export type FrameworkVerdict = 'STRONG_CANDIDATE' | 'WATCH' | 'PASS' | 'NO_DATA';
 
 export interface FrameworkReport {
   phases: PhaseResult[];
@@ -454,7 +454,7 @@ export interface ResearchForecastRow {
   expectedPct: number;
   low80Pct: number;
   high80Pct: number;
-  pop: number; // P(return > 0), 0..1
+  pop: number | null; // bootstrap scenario frequency of a gain; null = unavailable
 }
 
 export interface ResearchBrief {

@@ -139,9 +139,14 @@ export function analyzeBars(bars: Bar[], opts?: { niftyBars?: Bar[] }): QuantAna
   }
 
   let volumeRatio20d: number | null = null;
-  const vol20 = sma(volumes, 20);
-  if (vol20 !== null && vol20 > 0) {
-    volumeRatio20d = volumes[volumes.length - 1] / vol20;
+  // T3 fix (audit §6): the provider records missing volume as 0; a fabricated
+  // zero must not feed the signal. Average only positive-volume days and emit
+  // null when today's volume is missing/zero.
+  const positiveVol = volumes.slice(-20).filter((v) => v > 0);
+  const todayVol = volumes[volumes.length - 1];
+  if (positiveVol.length >= 10 && todayVol > 0) {
+    const vol20 = positiveVol.reduce((a, b) => a + b, 0) / positiveVol.length;
+    if (vol20 > 0) volumeRatio20d = todayVol / vol20;
   }
 
   const r5 = trailingReturnPct(closes, 5);
