@@ -377,8 +377,8 @@ export function TopPicksView({ onAnalyze }: { onAnalyze: (ticker: string) => voi
       <ViewHero
         className="view-hero-subsection"
         eyebrow="Daily full-universe scan"
-        title="Top 5 Today"
-        subtitle="The highest-scoring stocks from today's full-universe scan — measured signals, 80% confidence ranges, and the reasons in plain words."
+        title="Today's Scan"
+        subtitle="Setups from today's full-universe scan, grouped honestly: only stocks that pass the evidence gate can appear under Best new entries — strong charts without that evidence are labeled as setups, never recommendations."
         right={
           data ? (
             <>
@@ -455,31 +455,104 @@ export function TopPicksView({ onAnalyze }: { onAnalyze: (ticker: string) => voi
         <ErrorState message={error instanceof Error ? error.message : 'Failed to load top picks'} onRetry={() => refetch()} />
       )}
 
-      {data && data.picks.length === 0 && (
-        <Card className="p-8">
-          <EmptyState
-            glyph="radar"
-            title="No qualifying picks right now"
-            message={
-              filtered
-                ? `Nothing under ₹${plain(data.maxPrice ?? 0, 0)} per share clears the score and risk thresholds today. Raise the budget or tap Any — that honesty is the feature.`
-                : 'No stock in the universe currently clears the score and risk thresholds. That honesty is the feature.'
-            }
+      {data && (
+        <>
+          {/* Rule 15: BEST NEW ENTRIES — gate-passed only; honest emptiness beats forced picks. */}
+          <BucketSection
+            title="Best new entries"
+            explain="Passed the evidence gate: validated directional edge on independent samples, calibration, data quality, entry quality and positive expected value after costs."
+            picks={data.buckets?.bestNewEntries ?? []}
+            emptyBanner={data.bestNewEntriesNote ?? 'No statistically attractive entries today.'}
+            budget={data.maxPrice ?? budget}
+            onAnalyze={onAnalyze}
+            isFetching={isFetching}
+            tone="buy"
           />
-        </Card>
+          <BucketSection
+            title="Strong but extended"
+            explain="High setup scores near 52-week highs after rapid runs — chasing strength is the classic way a good chart becomes a bad entry."
+            picks={data.buckets?.strongButExtended ?? []}
+            budget={data.maxPrice ?? budget}
+            onAnalyze={onAnalyze}
+            isFetching={isFetching}
+          />
+          <BucketSection
+            title="Watch for pullback"
+            explain="Strong setups where the evidence gate still says WAIT — worth following, not chasing."
+            picks={data.buckets?.watchForPullback ?? []}
+            budget={data.maxPrice ?? budget}
+            onAnalyze={onAnalyze}
+            isFetching={isFetching}
+          />
+          <BucketSection
+            title="High-risk momentum"
+            explain="Strong setup scores with HIGH risk character — volatility this hostile makes sizing and stops unreliable."
+            picks={data.buckets?.highRiskMomentum ?? []}
+            budget={data.maxPrice ?? budget}
+            onAnalyze={onAnalyze}
+            isFetching={isFetching}
+          />
+          {data.buckets && (
+            <p className="px-1 text-[11px] leading-relaxed text-slate-500">
+              {plain(data.buckets.insufficientEdgeCount, 0)} scanned stocks fall under{' '}
+              <span className="font-medium text-slate-400">insufficient edge</span> (setup score &lt; 62) and are not
+              listed — see the full universe in Discover.
+            </p>
+          )}
+        </>
       )}
+    </div>
+  );
+}
 
-      {data && data.picks.length > 0 && (
-        <Stagger
-          className={clsx('grid grid-cols-1 gap-4 transition-opacity xl:grid-cols-2', isFetching && 'opacity-60')}
+function BucketSection({
+  title,
+  explain,
+  picks,
+  emptyBanner,
+  budget,
+  onAnalyze,
+  isFetching,
+  tone = 'zinc',
+}: {
+  title: string;
+  explain: string;
+  picks: TopPick[];
+  /** When set, an empty bucket renders this banner instead of disappearing. */
+  emptyBanner?: string;
+  budget: number | null;
+  onAnalyze: (ticker: string) => void;
+  isFetching: boolean;
+  tone?: 'buy' | 'zinc';
+}) {
+  if (picks.length === 0 && !emptyBanner) return null;
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3
+          className={clsx(
+            'font-display text-sm font-semibold tracking-wide',
+            tone === 'buy' ? 'text-buy' : 'text-slate-200',
+          )}
         >
-          {data.picks.map((pick, idx) => (
-            <StaggerItem key={pick.ticker} className={clsx('h-full', idx === 0 && 'xl:col-span-2')}>
-              <PickCard pick={pick} hero={idx === 0} budget={data.maxPrice ?? budget} onAnalyze={onAnalyze} />
+          {title}
+          {picks.length > 0 && <span className="ml-2 text-xs font-normal text-slate-500">{picks.length}</span>}
+        </h3>
+        <p className="mt-0.5 max-w-3xl text-xs leading-relaxed text-slate-500">{explain}</p>
+      </div>
+      {picks.length === 0 ? (
+        <Card className="p-5">
+          <p className="text-sm leading-relaxed text-slate-400">{emptyBanner}</p>
+        </Card>
+      ) : (
+        <Stagger className={clsx('grid grid-cols-1 gap-4 transition-opacity xl:grid-cols-2', isFetching && 'opacity-60')}>
+          {picks.map((pick) => (
+            <StaggerItem key={pick.ticker} className="h-full">
+              <PickCard pick={pick} hero={false} budget={budget} onAnalyze={onAnalyze} />
             </StaggerItem>
           ))}
         </Stagger>
       )}
-    </div>
+    </section>
   );
 }

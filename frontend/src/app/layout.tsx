@@ -7,7 +7,7 @@ import { Backdrop } from '@/components/Backdrop';
 export const metadata: Metadata = {
   title: 'StockSense — Indian Market Intelligence',
   description:
-    'Quantitative analysis for NSE stocks — honest forecasts with 80% confidence ranges, measured backtest accuracy, and INR projections.',
+    'Quantitative analysis for NSE stocks — honest forecasts with 80% intervals, measured backtest accuracy, and INR projections.',
 };
 
 export default function RootLayout({

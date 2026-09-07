@@ -116,17 +116,19 @@ export function RiskChip({ risk }: { risk: RiskLevel }) {
 }
 
 /** V5 entry-timing metadata shared by the Stocks table, Top-5 cards and the Analyze timing card. */
+// Risk-spec Rule 7/17: entry timing is a TIMING description — 'BUY TODAY' was
+// retired because only the evidence-gated decision may use buy vocabulary.
 export const ENTRY_META: Record<EntryAction, { label: string; short: string; tone: Tone }> = {
-  BUY_TODAY: { label: 'BUY TODAY', short: 'BUY TODAY', tone: 'buy' },
-  WAIT: { label: 'WAIT', short: 'WAIT', tone: 'wait' },
-  AVOID_ENTRY: { label: 'AVOID ENTRY', short: 'AVOID', tone: 'sell' },
+  BUY_TODAY: { label: 'TIMING OK', short: 'TIMING OK', tone: 'buy' },
+  WAIT: { label: 'TIMING: WAIT', short: 'WAIT', tone: 'wait' },
+  AVOID_ENTRY: { label: 'POOR TIMING', short: 'POOR TIMING', tone: 'sell' },
 };
 
-/** Small BUY TODAY / WAIT / AVOID chip for table rows and pick cards. */
+/** Small timing chip for table rows and pick cards — a lean, never an order. */
 export function EntryChip({ action, title }: { action: EntryAction; title?: string }) {
   const meta = ENTRY_META[action];
   return (
-    <Chip tone={meta.tone} glow title={title ?? 'Entry timing (technical lean, not a guarantee)'}>
+    <Chip tone={meta.tone} glow title={title ?? 'Entry timing lean (heuristic, not a recommendation — see the Published decision)'}>
       {meta.short}
     </Chip>
   );

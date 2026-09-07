@@ -111,7 +111,7 @@ export function ProjectionsTable({
         <div className="min-w-0">
           <SectionTitle>If you invested…</SectionTitle>
           <p className="mt-1 text-xs text-slate-500">
-            Expected value of a lump-sum investment at each horizon, with the 80% confidence range. Estimates, not
+            Expected value of a lump-sum investment at each horizon, with the 80% interval. Estimates, not
             guarantees.
           </p>
         </div>

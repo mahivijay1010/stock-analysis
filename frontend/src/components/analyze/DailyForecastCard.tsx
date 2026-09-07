@@ -291,7 +291,7 @@ export function DailyForecastCard({ ticker }: { ticker: string }) {
               <th className="py-2 pr-3 text-right font-medium">Median</th>
               <th className="py-2 pr-3 text-right font-medium">80% interval</th>
               <th className="py-2 pr-3 text-right font-medium">90% interval</th>
-              <th className="py-2 pr-3 text-right font-medium">P(up)</th>
+              <th className="py-2 pr-3 text-right font-medium" title="Bootstrap scenario frequency of a gain vs the anchor — historical resampling, not a calibrated probability">freq(up)</th>
               <th className="py-2 text-right font-medium">Actual</th>
             </tr>
           </thead>

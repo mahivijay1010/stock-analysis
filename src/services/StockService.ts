@@ -116,6 +116,9 @@ export interface ScanEntry {
   // V5: technical-only entry timing (news=null, pop7d=directionProb7d).
   entryAction: EntryAction;
   entryScore: number;
+  // Risk-spec Rule 15: extension inputs for scan bucketing.
+  week52PositionPct: number | null;
+  r60dPct: number | null;
 }
 
 export interface ScanResult {
@@ -562,28 +565,34 @@ export class StockService {
     await repo.save(rows);
   }
 
-  // ── Top picks (30-min cached universe scan) ───────────────────────────────
+  // ── Daily scan (30-min cached) — bucketed per risk-spec Rule 15 ───────────
 
   async getTopPicks(count: number, maxPrice?: number): Promise<TopPicksResponse> {
     const scan = await this.getScan(false);
-    let eligible = scan.entries.filter(
-      (e) => e.riskLevel !== "HIGH" || e.score >= 75
-    );
+    let pool = scan.entries;
     let affordableCount: number | null = null;
     if (maxPrice !== undefined && Number.isFinite(maxPrice) && maxPrice > 0) {
-      // Budget mode: rank only what the user can actually buy one share of.
-      const affordable = scan.entries.filter((e) => e.price <= maxPrice);
-      affordableCount = affordable.length;
-      eligible = affordable.filter((e) => e.riskLevel !== "HIGH" || e.score >= 75);
+      pool = scan.entries.filter((e) => e.price <= maxPrice);
+      affordableCount = pool.length;
     }
-    const note =
-      maxPrice !== undefined && affordableCount !== null
-        ? `Budget mode: of ${scan.scannedCount} stocks scanned, ${affordableCount} trade at or under ` +
-          `₹${maxPrice.toLocaleString("en-IN")} per share; these are the highest-scoring among them ` +
-          `(HIGH-risk names need a score ≥ 75 to qualify). A smaller pond can mean weaker setups — ` +
-          `check each pick's score and reasons rather than assuming rank 1 here equals rank 1 overall.`
-        : `Ranked by quant score across all ${scan.scannedCount} scanned stocks; HIGH-risk names need a score ≥ 75 to qualify.`;
-    const picks: TopPick[] = eligible.slice(0, count).map((e, i) => ({
+
+    // Rule 15: ONLY stocks with a currently-valid gate-passed canonical
+    // decision may appear under BEST NEW ENTRIES. Read stored snapshots —
+    // never recompute or lower the bar here.
+    let gatePassed = new Set<string>();
+    try {
+      const rows: Array<{ ticker: string }> = await AppDataSource.query(
+        `SELECT DISTINCT ON (instrument_id) ticker
+           FROM decision_snapshots
+          WHERE decision_status = 'BUY_CANDIDATE' AND valid_until > now()
+          ORDER BY instrument_id, as_of DESC`
+      );
+      gatePassed = new Set(rows.map((r) => r.ticker));
+    } catch {
+      gatePassed = new Set(); // unreadable ⇒ nobody passes (conservative)
+    }
+
+    const toPick = (e: ScanEntry, i: number): TopPick => ({
       rank: i + 1,
       ticker: e.ticker,
       name: e.name,
@@ -598,7 +607,53 @@ export class StockService {
       projections: e.projections,
       entryAction: e.entryAction,
       entryScore: e.entryScore,
-    }));
+    });
+
+    const byScore = [...pool].sort((a, b) => b.score - a.score);
+    const extended = (e: ScanEntry) =>
+      e.week52PositionPct != null && e.week52PositionPct >= 90 && e.r60dPct != null && e.r60dPct >= 15;
+
+    const best: ScanEntry[] = [];
+    const highRisk: ScanEntry[] = [];
+    const strongExtended: ScanEntry[] = [];
+    const pullback: ScanEntry[] = [];
+    let insufficientCount = 0;
+    for (const e of byScore) {
+      if (gatePassed.has(e.ticker)) best.push(e);
+      else if (e.score >= 62 && e.riskLevel === "HIGH") highRisk.push(e);
+      else if (e.score >= 62 && extended(e)) strongExtended.push(e);
+      else if (e.score >= 62) pullback.push(e);
+      else insufficientCount++;
+    }
+
+    const cap = Math.max(count, 5);
+    const buckets = {
+      bestNewEntries: best.slice(0, cap).map(toPick),
+      strongButExtended: strongExtended.slice(0, cap).map(toPick),
+      watchForPullback: pullback.slice(0, cap).map(toPick),
+      highRiskMomentum: highRisk.slice(0, cap).map(toPick),
+      insufficientEdgeCount: insufficientCount,
+    };
+    const bestNewEntriesNote =
+      best.length > 0
+        ? `${best.length} stock(s) currently pass the evidence gate (validated edge, calibration, data quality, entry quality, EV after costs).`
+        : "No statistically attractive entries today — no stock currently passes the evidence gate " +
+          "(validated directional edge on independent samples, calibration, data quality, entry quality, " +
+          "positive expected value after costs). Strong setups without that evidence are listed below as " +
+          "what they are: setups, not recommendations.";
+
+    // Legacy flat list (highest setup scores, HIGH-risk carve-out retained for
+    // response-shape compatibility) — the UI now renders buckets instead.
+    const eligible = byScore.filter((e) => e.riskLevel !== "HIGH" || e.score >= 75);
+    const picks: TopPick[] = eligible.slice(0, count).map(toPick);
+    const note =
+      maxPrice !== undefined && affordableCount !== null
+        ? `Budget mode: of ${scan.scannedCount} stocks scanned, ${affordableCount} trade at or under ` +
+          `₹${maxPrice.toLocaleString("en-IN")} per share. Buckets are SETUP descriptions ranked by the ` +
+          `setup score — only the evidence gate can call anything a buy.`
+        : `Buckets are SETUP descriptions ranked by the setup score across all ${scan.scannedCount} scanned ` +
+          `stocks — only the evidence gate can call anything a buy (see Best new entries).`;
+
     return {
       asOf: scan.asOf,
       universeSize: NSE_UNIVERSE.length,
@@ -607,6 +662,8 @@ export class StockService {
       affordableCount,
       note,
       picks,
+      buckets,
+      bestNewEntriesNote,
     };
   }
 
@@ -730,6 +787,8 @@ export class StockService {
           directionProb7d,
           entryAction: entryTiming.action,
           entryScore: entryTiming.score,
+          week52PositionPct: analysis.technicals.week52?.positionPct ?? null,
+          r60dPct: analysis.technicals.returns.r60dPct,
         });
 
         if (logPredictions) {
@@ -923,6 +982,14 @@ export class StockService {
         return {
           horizonDays: h as Horizon,
           samples: a.samples,
+          // Risk-spec Rule 3: a 1-trading-day-step backtest makes h-day
+          // predictions share (h_td−1)/h_td of their outcome windows; the raw
+          // count wildly overstates the evidence. Report BOTH, per ticker
+          // (cross-ticker correlation makes even this an upper bound).
+          effectiveIndependentSamples: Math.max(
+            1,
+            Math.floor(a.samples / Math.max(1, TRADING_DAY_OFFSETS[h as Horizon] ?? 1))
+          ),
           directionHitRatePct: Number(((a.hit / n) * 100).toFixed(2)),
           avgAbsErrorPct: Number((a.err / n).toFixed(4)),
           avgPredictedPct: Number((a.pred / n).toFixed(4)),

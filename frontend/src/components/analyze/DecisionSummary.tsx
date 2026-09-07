@@ -17,31 +17,34 @@ import type { AnalyzeResponse, EntryAction, Recommendation } from '@/lib/types';
 import { inr, plain } from '@/lib/format';
 import { Card } from '@/components/ui';
 
+// Risk-spec Rule 17 / audit §10.1: this card DESCRIBES the technical setup —
+// action words (buy/wait/avoid) belong exclusively to the evidence-gated
+// Published decision card above it.
 const RECOMMENDATION_COPY: Record<Recommendation, { eyebrow: string; headline: string; summary: string; tone: string }> = {
   BUY: {
-    eyebrow: 'Constructive opportunity',
-    headline: 'Buy candidate',
-    summary: 'The measured setup is positive. Use the risk levels below instead of chasing the headline.',
+    eyebrow: 'Setup description',
+    headline: 'Strong setup',
+    summary: 'The technical setup scores well — that describes the chart, not the future. The action verdict is the evidence-gated Published decision above.',
     tone: 'decision-call-buy',
   },
   HOLD: {
-    eyebrow: 'Patience has value',
-    headline: 'Hold and observe',
-    summary: 'The setup is not decisive enough yet. Keep it on watch and wait for stronger confirmation.',
+    eyebrow: 'Setup description',
+    headline: 'Neutral setup',
+    summary: 'The technical setup is indecisive. The action verdict is the evidence-gated Published decision above.',
     tone: 'decision-call-wait',
   },
   AVOID: {
-    eyebrow: 'Protect capital',
-    headline: 'Avoid for now',
-    summary: 'The current evidence does not justify the risk. A better entry can appear later.',
+    eyebrow: 'Setup description',
+    headline: 'Weak setup',
+    summary: 'The technical setup scores poorly. The action verdict is the evidence-gated Published decision above.',
     tone: 'decision-call-avoid',
   },
 };
 
 const ENTRY_LABEL: Record<EntryAction, string> = {
-  BUY_TODAY: 'Buy today',
-  WAIT: 'Wait',
-  AVOID_ENTRY: 'Avoid entry',
+  BUY_TODAY: 'Timing OK',
+  WAIT: 'Timing: wait',
+  AVOID_ENTRY: 'Timing poor',
 };
 
 function ScoreOrb({ score }: { score: number }) {
@@ -49,7 +52,7 @@ function ScoreOrb({ score }: { score: number }) {
   const value = Math.max(0, Math.min(100, score));
 
   return (
-    <div className="decision-score-orb" role="meter" aria-label="Quant conviction score" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value)}>
+    <div className="decision-score-orb" role="meter" aria-label="Technical setup score" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value)}>
       <span className="decision-orbit decision-orbit-one" aria-hidden><i /></span>
       <span className="decision-orbit decision-orbit-two" aria-hidden><i /></span>
       <span className="decision-orb-halo" aria-hidden />
@@ -68,7 +71,7 @@ function ScoreOrb({ score }: { score: number }) {
         />
       </svg>
       <span className="decision-orb-value">{Math.round(value)}</span>
-      <span className="decision-orb-label">conviction</span>
+      <span className="decision-orb-label">setup</span>
     </div>
   );
 }
@@ -142,7 +145,7 @@ export function DecisionSummary({ data }: { data: AnalyzeResponse }) {
         </div>
 
         <div className="decision-key-grid">
-          <KeyMetric icon={<Gauge aria-hidden />} label="Quant signal" value={`${Math.round(analysis.score)}/100`} detail="Model consensus" />
+          <KeyMetric icon={<Gauge aria-hidden />} label="Setup score" value={`${Math.round(analysis.score)}/100`} detail="Model consensus" />
           <KeyMetric icon={<Clock3 aria-hidden />} label="Entry timing" value={entryTiming ? `${Math.round(entryTiming.score)}/100` : '—'} detail={entryTiming?.newsAware ? 'News-aware' : 'Market inputs'} />
           <KeyMetric icon={<BrainCircuit aria-hidden />} label="8-phase framework" value={framework?.masterScore != null ? `${Math.round(framework.masterScore)}/100` : '—'} detail={framework?.verdict ? framework.verdict.replaceAll('_', ' ').toLowerCase() : 'Partial coverage'} />
         </div>

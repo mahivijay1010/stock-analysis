@@ -86,7 +86,7 @@ function briefToPlainText(b: ResearchBrief): string {
       push(
         `${f.horizonDays}d: expected ${signedPct(f.expectedPct)} (range ${signedPct(f.low80Pct)} to ${signedPct(
           f.high80Pct,
-        )}), P(up) ${Math.round((f.pop ?? 0) * 100)}%`,
+        )}), freq(up) ${Math.round((f.pop ?? 0) * 100)}%`,
       ),
     );
   }
@@ -307,7 +307,7 @@ function BriefDocument({ brief }: { brief: ResearchBrief }) {
                   <th>Horizon</th>
                   <th className="num">Expected</th>
                   <th className="num">80% range</th>
-                  <th className="num">P(up)</th>
+                  <th className="num" title="Scenario frequency / model odds — uncalibrated">freq(up)</th>
                 </tr>
               </thead>
               <tbody>

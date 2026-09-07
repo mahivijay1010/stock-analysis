@@ -48,13 +48,13 @@ function isExtreme(v: number | null): boolean {
 /** One plain sentence per metric — shown in the ⓘ popovers. */
 const TILE_INFO = {
   samples:
-    'Total prediction-vs-outcome pairs replayed across all stocks and horizons — more samples make these stats harder to fluke.',
+    'Raw prediction-vs-outcome pairs replayed across all stocks and horizons. Because the backtest steps one day at a time, an h-day prediction shares almost its whole outcome window with its neighbours — the "independent" figure divides by the horizon overlap and is the honest evidence count (still an upper bound: stocks are correlated with each other).',
   bestHorizon:
     'The horizon whose direction call matched what actually happened most often in the backtest — measured, not promised.',
   avgError:
     'On average, how many percentage points the predicted return missed the actual return by, ignoring direction.',
   withinBand:
-    'How often the actual return landed inside the stated 80% confidence range — honest bands should land near 80%.',
+    'How often the actual return landed inside the stated 80% interval — honest bands should land near 80%.',
 } as const;
 
 const COLUMN_INFO: Partial<Record<SortKey, string>> = {
@@ -133,10 +133,16 @@ export function AccuracyView({ diagnosticsOpen = false }: { diagnosticsOpen?: bo
   const tiles = useMemo(() => {
     if (!overall.length) return null;
     const totalSamples = overall.reduce((s, h) => s + h.samples, 0);
+    // Risk-spec Rule 3: raw counts wildly overstate the evidence — daily-step
+    // h-day predictions overlap almost entirely. Show the honest count too.
+    const totalEffective = overall.reduce(
+      (s, h) => s + (h.effectiveIndependentSamples ?? h.samples),
+      0,
+    );
     const best = overall.reduce((a, b) => (b.directionHitRatePct > a.directionHitRatePct ? b : a));
     const avgErr = overall.reduce((s, h) => s + h.avgAbsErrorPct, 0) / overall.length;
     const withinBand = overall.reduce((s, h) => s + h.withinBandPct, 0) / overall.length;
-    return { totalSamples, best, avgErr, withinBand };
+    return { totalSamples, totalEffective, best, avgErr, withinBand };
   }, [overall]);
 
   const sortedStocks = useMemo(() => {
@@ -245,8 +251,8 @@ export function AccuracyView({ diagnosticsOpen = false }: { diagnosticsOpen?: bo
                 <StatTile
                   tilt
                   label="Backtest samples"
-                  value={plain(tiles.totalSamples, 0)}
-                  sub="across all horizons"
+                  value={`${plain(tiles.totalSamples, 0)} raw`}
+                  sub={`≈ ${plain(tiles.totalEffective, 0)} independent after overlap adjustment`}
                   info={<InfoTip label="What does backtest samples mean?" text={TILE_INFO.samples} />}
                 />
               </StaggerItem>

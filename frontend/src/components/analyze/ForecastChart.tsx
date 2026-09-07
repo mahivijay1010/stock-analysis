@@ -205,7 +205,7 @@ export function ForecastChart({ bars, predictions }: { bars: Bar[]; predictions:
               <p className="text-[11px] text-slate-500">
                 {signedPct(p.low80Pct, 1)} to {signedPct(p.high80Pct, 1)}
               </p>
-              <p className="text-[11px] text-slate-500">P(up) {pct(p.directionProb * 100, 0)}</p>
+              <p className="text-[11px] text-slate-500" title="Model-derived odds (uncalibrated heuristic — not a measured probability)">model odds {pct(p.directionProb * 100, 0)}</p>
             </div>
           ))}
         </div>

@@ -103,6 +103,8 @@ export interface ProjectionRow {
 export interface BacktestHorizonStats {
   horizonDays: Horizon;
   samples: number;
+  /** Risk-spec Rule 3: raw ÷ horizon overlap — the honest evidence count. */
+  effectiveIndependentSamples?: number;
   directionHitRatePct: number;
   avgAbsErrorPct: number;
   avgPredictedPct: number;
@@ -877,6 +879,16 @@ export interface TopPicksResponse {
   affordableCount: number | null;
   note: string;
   picks: TopPick[];
+  /** Risk-spec Rule 15 buckets — setups grouped honestly; only gate-passed
+   *  stocks appear under bestNewEntries (empty today rather than padded). */
+  buckets?: {
+    bestNewEntries: TopPick[];
+    strongButExtended: TopPick[];
+    watchForPullback: TopPick[];
+    highRiskMomentum: TopPick[];
+    insufficientEdgeCount: number;
+  };
+  bestNewEntriesNote?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1024,6 +1036,44 @@ export interface PortfolioOverviewResponse {
   notes: string[];
 }
 
+export interface DecisionScoreCard {
+  version: string;
+  setupScore: number | null;
+  technicalScore: number | null;
+  momentumScore: number | null;
+  valuationScore: number | null;
+  fundamentalScore: number | null;
+  businessQualityScore: number | null;
+  entryTimingScore: number | null;
+  risk: { score: number | null; band: 'low' | 'medium' | 'high' | 'unknown'; reasons: string[] };
+  dataQuality: { score: number; penalties: string[] };
+  forecastConfidence: {
+    score: number;
+    band: 'LOW' | 'MEDIUM' | 'HIGH';
+    brierSkill: number | null;
+    effectiveSamples: number | null;
+    reasons: string[];
+  };
+  overallOpportunityScore: number | null;
+  caption: string;
+}
+
+export interface DecisionExpectedValue {
+  version: string;
+  horizonDays: number;
+  expectedReturnPct: number;
+  expectedUpsidePct: number;
+  expectedDownsidePct: number;
+  scenarioFrequencyUp: number | null;
+  scenarioFrequencyDown: number | null;
+  transactionCostPct: number;
+  evAfterCostsPct: number;
+  expectedShortfallPct: number;
+  rewardRiskRatio: number | null;
+  notionalInr: number;
+  notes: string[];
+}
+
 export interface DecisionSnapshotView {
   id: string;
   ticker: string;
@@ -1035,6 +1085,12 @@ export interface DecisionSnapshotView {
   risks: string[];
   holdingsReviewNote: string;
   horizonSuitability: { label: string | null; reasons: string[]; evidenceStatus: string } | null;
+  /** Risk-spec T1 fields — null on snapshots published before 2026-09-07. */
+  scoreCard?: DecisionScoreCard | null;
+  expectedValue?: DecisionExpectedValue | null;
+  existingHolderAction?: 'HOLD' | 'REVIEW' | 'INSUFFICIENT_DATA' | null;
+  holderReasons?: string[] | null;
+  unmetGates?: Array<{ gate: string; current: string; required: string }> | null;
   asOf: string;
   validUntil: string;
   modelVersion: string;

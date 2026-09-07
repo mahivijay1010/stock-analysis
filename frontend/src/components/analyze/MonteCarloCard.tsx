@@ -42,7 +42,7 @@ function PopDonut({ horizon }: { horizon: MonteCarloHorizon }) {
         width={64}
         height={64}
         role="img"
-        aria-label={`${horizon.horizonDays}-day probability of profit ${Math.round(popPct)} percent`}
+        aria-label={`${horizon.horizonDays}-day historical bootstrap scenario frequency of profit ${Math.round(popPct)} percent`}
       >
         <defs>
           <linearGradient id={`pop-${uid}`} x1="0%" y1="0%" x2="100%" y2="100%">
@@ -121,7 +121,7 @@ function ConeTip({ active, payload }: { active?: boolean; payload?: Array<{ payl
         <p className="text-slate-400">
           p5 <span className="font-semibold text-slate-100">{signedPct(q.p5)}</span>
         </p>
-        <p className="mt-1 text-slate-500">P(up) {pct(p.h.pop * 100, 0)}</p>
+        <p className="mt-1 text-slate-500">freq(up) {pct(p.h.pop * 100, 0)}</p>
       </div>
     </div>
   );
@@ -172,7 +172,7 @@ export function MonteCarloCard({ forecast }: { forecast: MonteCarloForecast }) {
 
       {/* PoP donut row */}
       <p className="mt-4 text-[11px] font-medium tracking-[0.08em] text-slate-500 uppercase">
-        Probability of profit by horizon
+        Historical bootstrap scenario frequency (NOT a calibrated probability)
       </p>
       <div className="thin-scroll mt-2 flex gap-4 overflow-x-auto sm:gap-6">
         {horizons.map((h) => (
@@ -269,7 +269,7 @@ export function MonteCarloCard({ forecast }: { forecast: MonteCarloForecast }) {
             </p>
           </div>
           <div className="glass-inset px-3 py-2">
-            <p className="text-[11px] text-slate-500">P(+10% or better) · {h30.horizonDays}d</p>
+            <p className="text-[11px] text-slate-500">freq(+10% or better) · {h30.horizonDays}d</p>
             <p className={clsx('font-display text-sm font-semibold tabular-nums', 'text-buy')}>
               {pct(h30.pUp10 * 100, 1)}
             </p>

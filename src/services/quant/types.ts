@@ -107,6 +107,8 @@ export interface ModelHorizonStat {
 export interface BacktestHorizonStats {
   horizonDays: Horizon;
   samples: number;
+  /** Risk-spec Rule 3: raw ÷ horizon overlap — the honest evidence count. */
+  effectiveIndependentSamples?: number;
   directionHitRatePct: number; // % of predictions where sign(predicted) === sign(actual)
   avgAbsErrorPct: number; // mean |predictedReturnPct - actualReturnPct|
   avgPredictedPct: number;

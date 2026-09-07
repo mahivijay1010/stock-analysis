@@ -303,6 +303,16 @@ export interface TopPicksResponse {
   /** Honest note about how the list was ranked/filtered. */
   note: string;
   picks: TopPick[];
+  /** Risk-spec Rule 15 buckets: setups grouped honestly; only gate-passed
+   *  stocks appear under bestNewEntries (empty today — stated, not padded). */
+  buckets: {
+    bestNewEntries: TopPick[];
+    strongButExtended: TopPick[];
+    watchForPullback: TopPick[];
+    highRiskMomentum: TopPick[];
+    insufficientEdgeCount: number;
+  };
+  bestNewEntriesNote: string;
 }
 
 // ── Prediction audit (the validation loop: predicted vs real, explained) ────
