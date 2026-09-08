@@ -37,3 +37,4 @@ backups/
 nohup.out
 .tsbuildinfo
 *.tsbuildinfo
+research/worker/.venv/
