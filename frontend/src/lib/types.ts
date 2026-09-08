@@ -1100,6 +1100,18 @@ export interface DecisionSnapshotView {
       status: 'calibrated' | 'unavailable';
       statement: string;
     } | null;
+    /** Phase 13: live monitoring state stored with the decision it gated. */
+    modelHealth?: {
+      overallState: 'HEALTHY' | 'DEGRADED' | 'SUSPENDED' | 'INSUFFICIENT_HISTORY';
+      overallReasons: string[];
+      horizons: Array<{
+        horizonDays: number;
+        state: string;
+        effectiveResolved: number;
+        rollingBrier: number | null;
+        rollingCoverage80Pct: number | null;
+      }>;
+    } | null;
   } | null;
   asOf: string;
   validUntil: string;

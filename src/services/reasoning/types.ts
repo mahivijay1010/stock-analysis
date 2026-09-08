@@ -25,7 +25,13 @@ export interface CommitteeContext {
   fundamentals: Record<string, number | string | null> | null;
   valuation: { valuationScore: number | null; notes: string[] } | null;
   technicals: { setupScore: number | null; entryQualityScore: number | null; details: Record<string, number | null> } | null;
-  regime: { market: string | null; notes: string[] } | null;
+  regime: {
+    market: string | null;
+    stock?: string | null;
+    entry?: string | null;
+    confidence?: number | null;
+    notes: string[];
+  } | null;
   events: Array<{ type: string; date: string; source: string; detail: string }> | null;
   forecast: {
     horizonDays: number;
@@ -35,6 +41,15 @@ export interface CommitteeContext {
     scenarioFrequencyUp: number | null;
     method: string;
   } | null;
+  /** Phase 8/12: the validated ensemble's stance — abstention is stated, never papered over. */
+  ensembleForecast: {
+    status: "abstained" | "available";
+    directionProbability: number | null;
+    members: string[];
+    reason: string;
+  } | null;
+  /** Phase 12: cross-model disagreement measured offline; null = not measurable live. */
+  modelDisagreement: { summary: string } | null;
   calibration: {
     brier: number | null;
     brierSkill: number | null;

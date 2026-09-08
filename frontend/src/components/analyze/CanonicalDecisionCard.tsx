@@ -179,6 +179,21 @@ export function CanonicalDecisionCard({ ticker }: { ticker: string }) {
             </Chip>
           )}
           {horizon && <Chip tone="cyan">{HORIZON_LABEL[horizon] ?? horizon}</Chip>}
+          {s.inputs?.modelHealth && (
+            <Chip
+              tone={
+                s.inputs.modelHealth.overallState === 'HEALTHY'
+                  ? 'buy'
+                  : s.inputs.modelHealth.overallState === 'SUSPENDED'
+                    ? 'sell'
+                    : s.inputs.modelHealth.overallState === 'DEGRADED'
+                      ? 'amber'
+                      : 'zinc'
+              }
+            >
+              Model health: {s.inputs.modelHealth.overallState.replace('_', ' ').toLowerCase()}
+            </Chip>
+          )}
           {res.expired && <span className="text-[10px] text-slate-500">expired — refreshes tonight</span>}
         </div>
       </div>

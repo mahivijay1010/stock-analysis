@@ -94,6 +94,10 @@ export const createStockRoutes = (): Router => {
   router.get("/decision/:ticker/committee", forecastController.committeeLatest); //     GET  /api/decision/:t/committee
   router.post("/decision/:ticker/committee", requireAuth, forecastController.committeeRun); // POST /api/decision/:t/committee
   router.post("/jobs/forecast-maintenance", requireAuthOrAdminKey, forecastController.maintenance); // POST /api/jobs/forecast-maintenance
+  // Phase 13 live model monitoring: rolling Brier/coverage over resolved
+  // prediction_logs → HEALTHY/DEGRADED/SUSPENDED/INSUFFICIENT_HISTORY.
+  // SUSPENDED hard-caps BUY in decision-policy-v5.
+  router.get("/monitoring/model-health", forecastController.modelHealth); //            GET  /api/monitoring/model-health
   // Experiment registry (risk-spec Rule 4): champion vs naive baselines on
   // VERIFIED live predictions; append-only runs; GET is read-only.
   router.get("/experiments/latest", forecastController.experiments); //                 GET  /api/experiments/latest?limit=5

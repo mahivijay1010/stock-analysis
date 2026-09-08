@@ -45,6 +45,7 @@ import {
   assessFundamentalsCompleteness,
   FundamentalsCompleteness,
 } from "./fundamentalsCompleteness";
+import { modelHealthService, ModelHealthAssessment } from "../monitoring/ModelHealthService";
 
 export class DecisionService {
   /** Latest published snapshot (may be expired — expiry is reported, not hidden). */
@@ -350,6 +351,15 @@ export class DecisionService {
       directionProbability = await resolveDirectionProbability("champion-quant-v1", 30, null);
     }
 
+    // Phase 13: live model health. Failure ⇒ null, which the policy treats as
+    // "no live evidence" — it never loosens, and SUSPENDED hard-caps BUY.
+    let modelHealth: ModelHealthAssessment | null = null;
+    try {
+      modelHealth = await modelHealthService.assess("quant-v1");
+    } catch {
+      modelHealth = null;
+    }
+
     // Re-evaluate the gate WITH the v3 inputs (the first evaluation above only
     // covered v2 evidence; scorecard fields can only cap further).
     const decisionV3 = evaluateEntryPolicy({
@@ -363,6 +373,7 @@ export class DecisionService {
       entryQualityScore: scoreCard?.entryTimingScore ?? null,
       evAfterCostsPct: evReport?.evAfterCostsPct ?? null,
       regime: regime ? { marketRegime: regime.marketRegime, entryRegime: regime.entryRegime } : null,
+      modelHealthState: modelHealth?.overallState ?? null,
     });
     const holder = evaluateHolderPolicy(decisionV3, {
       ticker: instrument.yahooTicker,
@@ -401,6 +412,19 @@ export class DecisionService {
           directionProbability: directionProbability as unknown as Record<string, unknown> | null,
           eventRisk: eventRisk as unknown as Record<string, unknown> | null,
           fundamentalsCompleteness: fundCompletenessDetail as unknown as Record<string, unknown> | null,
+          modelHealth: modelHealth
+            ? {
+                overallState: modelHealth.overallState,
+                overallReasons: modelHealth.overallReasons,
+                horizons: modelHealth.horizons.map((h) => ({
+                  horizonDays: h.horizonDays,
+                  state: h.state,
+                  effectiveResolved: h.effectiveResolved,
+                  rollingBrier: h.rollingBrier,
+                  rollingCoverage80Pct: h.rollingCoverage80Pct,
+                })),
+              }
+            : null,
         },
         asOf: now,
         validUntil,

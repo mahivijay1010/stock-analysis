@@ -10,6 +10,7 @@ import { decisionService } from "../services/decision/DecisionService";
 import { portfolioOverviewService } from "../services/portfolio/PortfolioOverviewService";
 import { latestExperiments, runLiveBaselineExperiment } from "../services/experiments/runner";
 import { reasoningService } from "../services/reasoning/ReasoningService";
+import { modelHealthService } from "../services/monitoring/ModelHealthService";
 import { LedgerService } from "../services/ledger/LedgerService";
 import { HttpError } from "../types";
 
@@ -162,6 +163,15 @@ export class ForecastController {
       };
       const { review, result } = await reasoningService.review(req.params.ticker, body);
       ok(res, { review, clamped: result.clamped, clampNotes: result.clampNotes }, 201);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/monitoring/model-health — Phase 13 live rolling metrics + state. */
+  modelHealth = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      ok(res, { health: await modelHealthService.assess("quant-v1") });
     } catch (err) {
       next(err);
     }

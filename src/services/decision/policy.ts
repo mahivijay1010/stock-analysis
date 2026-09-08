@@ -34,7 +34,7 @@
  * a new-entry caution is never a sell instruction.
  */
 
-export const DECISION_POLICY_VERSION = "decision-policy-v4";
+export const DECISION_POLICY_VERSION = "decision-policy-v5";
 
 export const POLICY_THRESHOLDS = {
   minMaturedSamples: 30, // fewer matured 30d predictions ⇒ INSUFFICIENT_EVIDENCE
@@ -102,6 +102,13 @@ export interface PolicyInputs {
     marketRegime: string;
     entryRegime: string;
   } | null;
+  /**
+   * Phase 13 live monitoring state (ModelHealthService). SUSPENDED is a hard
+   * cap — a suspended model may not produce a BUY-supporting signal. null /
+   * INSUFFICIENT_HISTORY never loosens anything (the walk-forward gates still
+   * carry the burden of proof).
+   */
+  modelHealthState?: string | null;
 }
 
 export interface PolicyDecision {
@@ -316,6 +323,16 @@ export function evaluateEntryPolicy(inputs: PolicyInputs): PolicyDecision {
         { gate: "entry regime", current: inputs.regime.entryRegime, required: "healthy/neutral/breakout entry regime" }
       );
     }
+  }
+  if (inputs.modelHealthState === "SUSPENDED") {
+    cap(
+      "Live model monitoring is SUSPENDED — rolling out-of-sample metrics breached the suspension thresholds; a suspended model may not support a BUY (Phase 13).",
+      {
+        gate: "model health",
+        current: "SUSPENDED",
+        required: "HEALTHY or DEGRADED (rolling Brier ≤0.35 and 80% coverage ≥55% on the live tape)",
+      }
+    );
   }
 
   if (capped) {

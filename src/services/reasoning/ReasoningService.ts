@@ -127,8 +127,25 @@ export class ReasoningService {
             details: {},
           }
         : null,
-      regime: null,
-      events: null,
+      // Phase 12: the deterministic regime + point-in-time events now ride the
+      // snapshot — the committee sees exactly what the gate saw, nothing fresher.
+      regime: inputs.regime
+        ? {
+            market: inputs.regime.marketRegime ?? null,
+            stock: inputs.regime.stockRegime ?? null,
+            entry: inputs.regime.entryRegime ?? null,
+            confidence: inputs.regime.regimeConfidence ?? null,
+            notes: Array.isArray(inputs.regime.regimeReasons) ? inputs.regime.regimeReasons.slice(0, 5) : [],
+          }
+        : null,
+      events: Array.isArray(inputs.eventRisk?.events)
+        ? inputs.eventRisk.events.slice(0, 8).map((e: Record<string, unknown>) => ({
+            type: String(e.eventType ?? "other"),
+            date: String(e.eventDate ?? ""),
+            source: `${String(e.source ?? "unknown")} (tier ${String(e.sourceTier ?? "?")})`,
+            detail: String(e.headline ?? ""),
+          }))
+        : null,
       forecast: issuance
         ? {
             horizonDays: 30,
@@ -139,11 +156,32 @@ export class ReasoningService {
             method: "seeded bootstrap issuance (historical scenario frequencies — uncalibrated)",
           }
         : null,
+      ensembleForecast:
+        inputs.directionProbability?.status === "calibrated"
+          ? {
+              status: "available",
+              directionProbability: inputs.directionProbability.calibratedProbability ?? null,
+              members: ["champion-quant-v1 (calibrated)"],
+              reason: String(inputs.directionProbability.statement ?? ""),
+            }
+          : {
+              status: "abstained",
+              directionProbability: null,
+              members: [],
+              reason:
+                "No model met validation eligibility at the 30d horizon (calibration-ensemble-study): " +
+                "directional probability unavailable — insufficient calibrated evidence.",
+            },
+      modelDisagreement: {
+        summary:
+          "Offline walk-forward (all ML challengers + baselines): no model beat the naive baselines " +
+          "out-of-sample at any horizon; disagreement between models carries no validated signal.",
+      },
       calibration: {
         brier: measured?.brierScore ?? null,
         brierSkill: fc?.brierSkill ?? (measured?.brierScore != null ? 0.25 - measured.brierScore : null),
         bandCoveragePct: measured?.withinBandPct ?? null,
-        calibrated: false, // no calibrator has passed out-of-sample validation (Rule 9)
+        calibrated: inputs.directionProbability?.status === "calibrated",
       },
       walkForwardPerformance: {
         directionHitRatePct: measured?.directionHitRatePct ?? null,
