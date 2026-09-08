@@ -42,6 +42,7 @@ import {
   ExperimentRun,
   AiReview,
   CalibratorRecord,
+  StructuredMarketEvent,
 } from "../entities";
 import * as dotenv from "dotenv";
 
@@ -108,6 +109,7 @@ export const AppDataSource = new DataSource({
     ExperimentRun,
     AiReview,
     CalibratorRecord,
+    StructuredMarketEvent,
   ],
   migrations: [__dirname + "/../migrations/*.{js,ts}"],
   subscribers: [],

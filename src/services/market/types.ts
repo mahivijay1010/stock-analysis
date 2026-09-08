@@ -90,6 +90,8 @@ export interface Fundamentals {
   marketCap: number | null;
   insiderHoldingPct: number | null;
   beta: number | null;
+  /** Next scheduled earnings date (YYYY-MM-DD) from Yahoo calendarEvents — null when unpublished. */
+  nextEarningsDate: string | null;
   asOf: string;
   source: "yahoo";
 }

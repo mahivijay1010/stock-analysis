@@ -26,7 +26,7 @@ const COOKIE_URL = "https://fc.yahoo.com";
 const CRUMB_URL = "https://query1.finance.yahoo.com/v1/test/getcrumb";
 const QUOTE_SUMMARY_BASE =
   "https://query1.finance.yahoo.com/v10/finance/quoteSummary";
-const MODULES = "financialData,defaultKeyStatistics,summaryDetail";
+const MODULES = "financialData,defaultKeyStatistics,summaryDetail,calendarEvents";
 const REQUEST_TIMEOUT_MS = 10_000;
 const FUNDAMENTALS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -197,6 +197,14 @@ export class FundamentalsService {
     const stats = (result.defaultKeyStatistics ?? {}) as Record<string, any>;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const detail = (result.summaryDetail ?? {}) as Record<string, any>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const calendar = (result.calendarEvents ?? {}) as Record<string, any>;
+    // earningsDate: array of {raw: epochSeconds} (a window when Yahoo shows a range).
+    const earningsRaw = rawNum(calendar.earnings?.earningsDate?.[0]);
+    const nextEarningsDate =
+      earningsRaw != null && earningsRaw > 0
+        ? new Date(earningsRaw * 1000).toISOString().slice(0, 10)
+        : null;
 
     return {
       trailingPE: rawNum(detail.trailingPE) ?? rawNum(stats.trailingPE),
@@ -219,6 +227,7 @@ export class FundamentalsService {
       marketCap: rawNum(detail.marketCap),
       insiderHoldingPct: toPct(rawNum(stats.heldPercentInsiders)),
       beta: rawNum(detail.beta) ?? rawNum(stats.beta),
+      nextEarningsDate,
       asOf: new Date().toISOString(),
       source: "yahoo",
     };

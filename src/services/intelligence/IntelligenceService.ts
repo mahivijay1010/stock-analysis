@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { AppDataSource } from "../../config/database";
 import { fundamentalsService } from "../market/FundamentalsService";
 import { marketDataService } from "../market/MarketDataService";
-import { calculateCurrentRatio, calculateFcf, calculateGrowth, calculatePeg, calculateRoe, calculateRoic, evaluateRules } from "./calculations";
+import { calculateCurrentRatio, calculateFcf, calculateGrowth, calculatePeg, calculateRoce, calculateRoe, calculateRoic, calculateWorkingCapital, evaluateRules } from "./calculations";
 import { calculateDcf } from "./dcf";
 import { extractDocumentEvidence } from "./documentExtraction";
 import { calculateCorrelationMatrix, calculatePortfolioExposure, CorrelationWindow, PortfolioAnalyticsPosition } from "./portfolioAnalytics";
@@ -84,12 +84,15 @@ export class IntelligenceService {
     const coreMetrics: MetricResult<unknown>[] = latest ? [
       calculateRoe(latest, previous), calculateRoic(latest, previous, kind), calculateFcf(latest),
       calculateCurrentRatio(latest, kind), calculateGrowth(series),
+      calculateRoce(latest, previous, kind), calculateWorkingCapital(latest, kind),
     ] : [
       unavailable("roe", "UNKNOWN", "No comparable annual XBRL series.", "AVERAGE_EQUITY"),
       unavailable("roic", "UNKNOWN", "No comparable annual XBRL series.", "NOPAT_AVERAGE_INVESTED_CAPITAL"),
       unavailable("fcf", "UNKNOWN", "No annual CFO/CapEx XBRL facts.", "CFO_LESS_CAPEX"),
       unavailable("current_ratio", "UNKNOWN", "No annual balance-sheet XBRL facts.", "STANDARD"),
       unavailable("earnings_growth", "UNKNOWN", "No comparable annual XBRL series.", "HISTORICAL_ACTUALS"),
+      unavailable("roce", "UNKNOWN", "No comparable annual XBRL series.", "EBIT_AVERAGE_CAPITAL_EMPLOYED"),
+      unavailable("working_capital", "UNKNOWN", "No annual balance-sheet XBRL facts.", "STANDARD"),
     ];
 
     let quote: Awaited<ReturnType<typeof marketDataService.getQuote>> | null = null;

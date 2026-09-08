@@ -179,6 +179,77 @@ export function calculateRoic(
   );
 }
 
+/**
+ * ROCE = EBIT / average capital employed × 100, where capital employed =
+ * total assets − current liabilities (completion Phase 10). Distinct from
+ * ROIC: pre-tax, and charges the whole operating asset base.
+ */
+export function calculateRoce(
+  current: AnnualFinancials,
+  previous: AnnualFinancials | null,
+  industryKind: "BANK" | "NON_FINANCIAL" = "NON_FINANCIAL"
+): MetricResult {
+  const formula = "EBIT / average(total assets - current liabilities) * 100";
+  if (industryKind === "BANK") {
+    return unavailable("roce", current.period, formula, "Capital-employed ROCE is not valid for banks.", "BANK_NOT_MEANINGFUL");
+  }
+  const ebit = finite(current.ebit)
+    ? current.ebit
+    : finite(current.profitBeforeTax) && finite(current.financeCosts)
+      ? current.profitBeforeTax + current.financeCosts
+      : null;
+  if (!previous || !finite(ebit)) {
+    return unavailable("roce", current.period, formula, "EBIT (or PBT + finance costs) and a prior period are required.");
+  }
+  if (
+    !finite(current.totalAssets) || !finite(current.currentLiabilities) ||
+    !finite(previous.totalAssets) || !finite(previous.currentLiabilities)
+  ) {
+    return unavailable("roce", current.period, formula, "Total assets and current liabilities for both periods are required.");
+  }
+  const ceNow = current.totalAssets - current.currentLiabilities;
+  const cePrev = previous.totalAssets - previous.currentLiabilities;
+  const averageCe = (ceNow + cePrev) / 2;
+  if (averageCe <= 0) {
+    return unavailable("roce", current.period, formula, "Average capital employed is non-positive.");
+  }
+  return calculated(
+    "roce",
+    (ebit / averageCe) * 100,
+    current.period,
+    formula,
+    { EBIT: ebit, opening_capital_employed: cePrev, closing_capital_employed: ceNow },
+    "EBIT_AVERAGE_CAPITAL_EMPLOYED",
+    [current, previous]
+  );
+}
+
+/**
+ * Working capital = current assets − current liabilities (absolute, reporting
+ * currency); inputs also expose WC as days of revenue when revenue is known.
+ */
+export function calculateWorkingCapital(
+  current: AnnualFinancials,
+  industryKind: "BANK" | "NON_FINANCIAL" = "NON_FINANCIAL"
+): MetricResult {
+  const formula = "Current assets - current liabilities";
+  if (industryKind === "BANK") {
+    return unavailable("working_capital", current.period, formula, "Working capital is not comparable for a bank balance sheet.", "BANK_NOT_MEANINGFUL");
+  }
+  if (!finite(current.currentAssets) || !finite(current.currentLiabilities)) {
+    return unavailable("working_capital", current.period, formula, "Current assets and current liabilities are required.");
+  }
+  const wc = current.currentAssets - current.currentLiabilities;
+  const inputs: Record<string, number> = {
+    current_assets: current.currentAssets,
+    current_liabilities: current.currentLiabilities,
+  };
+  if (finite(current.revenue) && current.revenue > 0) {
+    inputs.wc_days_of_revenue = round((wc / current.revenue) * 365, 1);
+  }
+  return calculated("working_capital", wc, current.period, formula, inputs, "STANDARD", [current]);
+}
+
 function yoy(current: number | null, previous: number | null): number | null {
   if (!finite(current) || !finite(previous) || previous === 0) return null;
   return round(((current / previous) - 1) * 100);

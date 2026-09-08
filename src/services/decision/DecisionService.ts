@@ -40,6 +40,11 @@ import {
   DirectionProbabilityStatement,
   resolveDirectionProbability,
 } from "../research/calibratorRegistry";
+import { eventService, EventRiskAssessment } from "../market/EventService";
+import {
+  assessFundamentalsCompleteness,
+  FundamentalsCompleteness,
+} from "./fundamentalsCompleteness";
 
 export class DecisionService {
   /** Latest published snapshot (may be expired — expiry is reported, not hidden). */
@@ -144,6 +149,8 @@ export class DecisionService {
     let evReport: ExpectedValueReport | null = null;
     let regime: RegimeAssessment | null = null;
     let directionProbability: DirectionProbabilityStatement | null = null;
+    let eventRisk: EventRiskAssessment | null = null;
+    let fundCompletenessDetail: FundamentalsCompleteness | null = null;
     try {
       const barsResult = await marketDataService.getDailyBarsWithSource(instrument.yahooTicker, "1y");
       const bars = barsResult.bars;
@@ -240,6 +247,27 @@ export class DecisionService {
         directionProbability = await resolveDirectionProbability("champion-quant-v1", 30, last?.pop ?? null);
       }
 
+      // Phase 9: refresh structured events for this instrument (per-source
+      // failures are recorded inside the reports) and assess point-in-time
+      // event risk at "now". Failure ⇒ null: regime falls back to not knowing.
+      try {
+        await eventService.ingestAll(instrument.yahooTicker);
+        eventRisk = await eventService.assessEventRisk(instrument.yahooTicker, now);
+      } catch {
+        eventRisk = null;
+      }
+
+      // Phase 10: per-field fundamentals completeness with availableAt.
+      try {
+        fundCompletenessDetail = await assessFundamentalsCompleteness(
+          instrument.yahooTicker.replace(/\.(NS|BO)$/i, "").toUpperCase(),
+          fundamentals,
+          now
+        );
+      } catch {
+        fundCompletenessDetail = null;
+      }
+
       // Phase 4: regime assessment — NIFTY/VIX cached bars + the stock's own
       // bars. Failure ⇒ null (never blocks; can only have made things stricter).
       try {
@@ -260,6 +288,7 @@ export class DecisionService {
           vixPercentile1y,
           stockBars: bars,
           sectorRelativeStrength20pp: null, // point-in-time sector aggregate not available on this path
+          upcomingEventRisk: eventRisk ? eventRisk.upcomingEventRisk : undefined,
         });
       } catch {
         regime = null;
@@ -370,6 +399,8 @@ export class DecisionService {
           lastObservedSession: lastObserved,
           regime: regime as unknown as Record<string, unknown> | null,
           directionProbability: directionProbability as unknown as Record<string, unknown> | null,
+          eventRisk: eventRisk as unknown as Record<string, unknown> | null,
+          fundamentalsCompleteness: fundCompletenessDetail as unknown as Record<string, unknown> | null,
         },
         asOf: now,
         validUntil,
