@@ -106,11 +106,13 @@ export const createStockRoutes = (): Router => {
   router.post("/short-term/scan", requireAuth, shortTermController.scan); //            POST /api/short-term/scan
   router.get("/short-term/latest", shortTermController.latest); //                      GET  /api/short-term/latest
   router.get("/short-term/alerts", shortTermController.alerts); //                      GET  /api/short-term/alerts
+  router.get("/short-term/model-lab", shortTermController.modelLab); //                 GET  /api/short-term/model-lab
   router.get("/short-term/ai-usage", shortTermController.aiUsage); //                   GET  /api/short-term/ai-usage
   router.get("/short-term/preferences", requireAuth, shortTermController.getPreferences); // GET /api/short-term/preferences
   router.put("/short-term/preferences", requireAuth, shortTermController.putPreferences); // PUT /api/short-term/preferences
   router.get("/short-term/:ticker", shortTermController.detail); //                     GET  /api/short-term/:t
   router.post("/short-term/:ticker/review", requireAuth, shortTermController.review); //POST /api/short-term/:t/review
+  router.post("/short-term/:ticker/revalidate", requireAuth, shortTermController.revalidate); // POST /api/short-term/:t/revalidate
   // OpenAI multi-role AI pipeline (O2/O3): evidence graph -> analysts ->
   // critic -> committee; advisory + cap-only; honest 503 without a key.
   router.get("/events/:ticker", forecastController.events); //                          GET  /api/events/:t

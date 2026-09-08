@@ -8,6 +8,21 @@ Run: `npm run dev` (backend :5101) · `cd frontend && npx next dev -p 3001` (UI 
 
 Educational tool — not SEBI-registered investment advice. Markets are uncertain; measured past accuracy does not guarantee future results.
 
+## Short-Term Trade Radar V2 — qualification integrity (2026-09-08)
+
+The Short-Term section separates INTERESTING SETUP from ACTIONABLE TRADE. A
+stock reaching a computed entry zone is NOT actionable: ENTRY_CONFIRMED needs
+evidence tier A (validated realized-R expectancy, CI lower > 0, FDR-significant,
+≥60 independent dates), a satisfied confirmation trigger, fresh EOD/LIVE data,
+an EV-after-costs 80% lower bound > 0, affordability, and prospective shadow
+authority. Deterministic ceilings compose to the most conservative action; AI
+is cap-only. Results split into QUALIFIED TRADES (0–5) and a RESEARCH WATCHLIST
+with per-stock "why not entry". Studies: realized-R expectancy (2/12 cells tier
+A — mean-reversion 5-10d/10-21d), EV uncertainty, empirical-Bayes shrinkage,
+Benjamini–Hochberg FDR, gap policy, survivorship audit. The 8-Sep four
+(BERGEPAINT/M&M/ATGL/BDL) now correctly land on the watchlist, not as entries.
+See docs/short-term-v2-final-report.md.
+
 ## OpenAI-first AI layer (2026-09-08 upgrade)
 
 OpenAI is the primary reasoning provider (`AI_PROVIDER=openai`,

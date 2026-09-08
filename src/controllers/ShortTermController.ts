@@ -8,6 +8,8 @@ import { AppDataSource } from "../config/database";
 import { ShortTermAlert, ShortTermCandidate, ShortTermPreference, ShortTermScanRun, ShortTermTransition } from "../entities";
 import { shortTermScanService } from "../services/shortterm/ScanService";
 import { shortTermTradeAnalyst, aiCostGovernor } from "../services/shortterm/aiAnalyst";
+import { preEntryRevalidationService } from "../services/shortterm/PreEntryRevalidationService";
+import { SETUP_EVIDENCE_MODEL } from "../services/shortterm/setupEvidence";
 import { ShortTermCandidateView, DEFAULT_SCAN_PARAMS, ScanParams } from "../services/shortterm/types";
 import { HttpError } from "../types";
 
@@ -52,12 +54,19 @@ export class ShortTermController {
         return;
       }
       const rows = await AppDataSource.getRepository(ShortTermCandidate).find({ where: { scanRunId: run.id }, order: { rank: "ASC" } });
+      // V2: split on the payload's `qualified` flag (tier A + ENTRY_CONFIRMED +
+      // affordable), NOT on base-gate passage — a passed base gate is not an
+      // actionable trade.
+      const isQualified = (r: (typeof rows)[number]) => (r.payload as { qualified?: boolean }).qualified === true;
+      const qualified = rows.filter(isQualified).map((r) => r.payload);
       ok(res, {
         available: true,
         run,
-        candidates: rows.filter((r) => r.passedGates).map((r) => r.payload),
-        watchlist: rows.filter((r) => !r.passedGates).map((r) => ({ ticker: r.ticker, state: r.state, action: r.action, setupType: r.setupType })),
-        emptyMessage: rows.filter((r) => r.passedGates).length === 0 ? "No statistically attractive short-term setups currently pass the risk and evidence gates." : null,
+        candidates: qualified,
+        watchlist: rows.filter((r) => !isQualified(r)).map((r) => r.payload),
+        qualifiedCount: qualified.length,
+        watchlistCount: rows.length - qualified.length,
+        emptyMessage: qualified.length === 0 ? "No statistically attractive short-term setups currently pass the risk and evidence gates. Interesting setups are on the Research Watchlist below." : null,
       });
     } catch (err) {
       next(err);
@@ -105,6 +114,37 @@ export class ShortTermController {
         userRiskPct: body.riskPerTradePct ?? null,
       });
       ok(res, { review }, 201);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** POST /api/short-term/:ticker/revalidate — pre-entry gap/freshness/EV re-check (auth). */
+  revalidate = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      ok(res, await preEntryRevalidationService.revalidate(req.params.ticker), 201);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/short-term/model-lab — per-setup evidence tiers + expectancy (Model Lab, Part 31). */
+  modelLab = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const rows: Array<{ metrics: Record<string, unknown>; verdict: string | null; created_at: string }> = await AppDataSource.query(
+        `SELECT metrics, verdict, created_at FROM short_term_model_performance
+          WHERE model_name = $1 ORDER BY created_at DESC LIMIT 1`,
+        [SETUP_EVIDENCE_MODEL]
+      );
+      const shadow: Array<{ metrics: Record<string, unknown>; verdict: string | null }> = await AppDataSource.query(
+        `SELECT metrics, verdict FROM short_term_model_performance
+          WHERE model_name IN ('st-shadow-tracker','st-meta-label-lgbm') ORDER BY created_at DESC LIMIT 5`
+      );
+      ok(res, {
+        available: rows.length > 0,
+        setupEvidence: rows[0] ? { cells: rows[0].metrics.cells ?? [], verdict: rows[0].verdict, asOf: rows[0].created_at } : null,
+        shadow: shadow.map((s) => ({ metrics: s.metrics, verdict: s.verdict })),
+      });
     } catch (err) {
       next(err);
     }

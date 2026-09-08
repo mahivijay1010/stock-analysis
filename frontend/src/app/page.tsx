@@ -164,7 +164,7 @@ export default function Home() {
   return (
     <div className="min-h-screen">
       <Header tab={tab} stockLabel={ticker} onTabChange={openTab} onOpenStock={openStock} onAmountChange={setAmount} />
-      <main className="w-full px-4 pt-24 pb-28 sm:px-6 lg:ml-[216px] lg:w-[calc(100%-216px)] lg:px-8 lg:pt-[88px] lg:pb-14">
+      <main className="w-full px-4 pt-24 pb-28 sm:px-6 lg:ml-[232px] lg:w-[calc(100%-232px)] lg:px-8 lg:pt-[88px] lg:pb-14">
         {routeReady && (
           <AnimatePresence mode="wait" initial={false}>
             <TabPanel key={tab} className="mx-auto w-full max-w-[1480px]">

@@ -580,6 +580,34 @@ export interface StCandidate {
   };
   gates: { passed: boolean; failures: Array<{ gate: string; current: string; required: string }> };
   rankingScore: number | null;
+  // ── V2 fields ──
+  tier?: string;
+  qualified?: boolean;
+  geometryAction?: string;
+  freshnessV2?: string;
+  whyNotEntry?: string[];
+  ceilingReasons?: string[];
+  confirmation?: { satisfied: boolean; met: string[]; unmet: string[] } | null;
+  contradictions?: Array<{ code: string; message: string; cap: string }>;
+  ev?: {
+    meanEvAfterCostsPct: number;
+    ev80LowerPct: number;
+    ev95LowerPct: number;
+    expectedR: number;
+    cvarR: number;
+    p10R: number;
+    targetReachRate: number;
+    stopHitRate: number;
+    probabilityEvPositive: number;
+  } | null;
+  setupEvidence?: {
+    evidenceStrength: string;
+    usableForEntry: boolean;
+    expectancyAfterCosts: number;
+    independentEntryDates: number;
+    note: string;
+  } | null;
+  plausibility?: { target1DistanceAtr: number | null; target1ReachRate: number | null; stopDistanceAtr: number | null; stopNoiseRate: number | null; reasons: string[] } | null;
 }
 
 export interface StScanResult {
@@ -588,9 +616,34 @@ export interface StScanResult {
   marketStatus: { session: string; istTime: string; lastCompletedSession: string | null };
   riskManager: { newEntriesAllowed: boolean; reasons: string[]; openRiskInr: number; openPositions: number };
   candidates: StCandidate[];
+  watchlist: StCandidate[];
   universeSize: number;
   passedGates: number;
+  qualifiedCount: number;
+  watchlistCount: number;
   emptyMessage: string | null;
+}
+
+export interface StModelLab {
+  available: boolean;
+  setupEvidence: { cells: Array<Record<string, unknown>>; verdict: string | null; asOf: string } | null;
+  shadow: Array<{ metrics: Record<string, unknown>; verdict: string | null }>;
+}
+
+export function getShortTermModelLab(): Promise<StModelLab> {
+  return get<StModelLab>('/api/short-term/model-lab');
+}
+
+export function runShortTermRevalidate(ticker: string): Promise<{
+  ticker: string;
+  ok: boolean;
+  referencePrice: number | null;
+  freshness: string;
+  gap: { decision: string; reason: string; gapAtr: number | null };
+  vetoes: string[];
+  recommendation: string;
+}> {
+  return post(`/api/short-term/${encodeURIComponent(ticker)}/revalidate`, {});
 }
 
 export function runShortTermScan(params: StScanParams): Promise<StScanResult> {

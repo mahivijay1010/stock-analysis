@@ -225,7 +225,7 @@ export function Header({
 
   return (
     <>
-      <aside className="app-sidebar fixed inset-y-0 left-0 z-50 hidden w-[216px] flex-col lg:flex">
+      <aside className="app-sidebar fixed inset-y-0 left-0 z-50 hidden w-[232px] flex-col lg:flex">
         <div className="desktop-sidebar-brand flex h-[76px] items-center px-5">
           <Brand />
         </div>
@@ -250,7 +250,7 @@ export function Header({
         </div>
       </aside>
 
-      <header className="workspace-topbar fixed top-0 right-0 left-[216px] z-40 hidden h-[64px] items-center justify-between px-7 lg:flex">
+      <header className="workspace-topbar fixed top-0 right-0 left-[232px] z-40 hidden h-[64px] items-center justify-between px-7 lg:flex">
         <div className="flex items-center gap-2 text-xs">
           <span className="text-slate-600">StockSense</span>
           <ChevronRight className="h-3 w-3 text-slate-700" aria-hidden />
