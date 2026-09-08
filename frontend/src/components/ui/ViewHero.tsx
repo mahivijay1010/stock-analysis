@@ -2,6 +2,7 @@
 
 import { ReactNode } from 'react';
 import clsx from 'clsx';
+import { MarketPrism, type MarketPrismState } from '@/components/market/MarketPrism';
 
 /** Compact workspace heading. Visual emphasis stays on the data below. */
 export function ViewHero({
@@ -9,6 +10,8 @@ export function ViewHero({
   subtitle,
   eyebrow,
   right,
+  visual,
+  prismState,
   className,
 }: {
   title: ReactNode;
@@ -16,6 +19,9 @@ export function ViewHero({
   /** Optional micro kicker above the title. */
   eyebrow?: ReactNode;
   right?: ReactNode;
+  /** Optional data-bearing visual; defaults to the lightweight Market Prism. */
+  visual?: ReactNode;
+  prismState?: MarketPrismState;
   className?: string;
 }) {
   return (
@@ -33,12 +39,7 @@ export function ViewHero({
         {subtitle != null && <p className="view-hero-subtitle">{subtitle}</p>}
       </div>
       <div className="view-hero-aside">
-        <div className="view-hero-object" aria-hidden>
-          <span className="view-hero-core" />
-          <span className="view-hero-orbit view-hero-orbit-a" />
-          <span className="view-hero-orbit view-hero-orbit-b" />
-          <span className="view-hero-satellite" />
-        </div>
+        {visual ?? <MarketPrism state={prismState} compact />}
         {/* min-w-0 (not shrink-0): the chip row must be allowed to shrink and
             wrap on phones — shrink-0 forced its max-content width and pushed
             the page into horizontal overflow at 375px. */}

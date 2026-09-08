@@ -119,6 +119,12 @@ function HealthStatus({ sidebar = false }: { sidebar?: boolean }) {
   );
 }
 
+/** Global context without invented quotes; NIFTY/VIX values remain on scans
+ * that actually fetched them. */
+function MarketStatusRail() {
+  return <div className="market-status-rail" aria-label="Market data and AI status"><span><small>NIFTY</small><strong>ON SCAN</strong></span><span><small>VIX</small><strong>ON SCAN</strong></span><span><small>DATA</small><strong>EOD · FREE</strong></span><span className="market-status-ai"><small>AI</small><strong>FREE-FIRST</strong></span></div>;
+}
+
 /** Small gear popover with the secondary destinations. */
 function SecondaryMenu({ tab, onChoose }: { tab: TabId; onChoose: (id: TabId) => void }) {
   const [open, setOpen] = useState(false);
@@ -257,7 +263,8 @@ export function Header({
             <span className="font-medium text-slate-300">{active?.label ?? 'Watchlist'}</span>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <MarketStatusRail />
           <div className="topbar-stock-search"><SearchBox onSelect={onOpenStock} inputId="stock-command-input-desktop" className="max-w-none" /></div>
           {tab === 'stock' && <div className="topbar-capital hidden xl:block"><AmountInput onAmountChange={onAmountChange} /></div>}
           <ThemeToggle />

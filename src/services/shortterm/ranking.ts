@@ -60,6 +60,43 @@ export function evaluateGates(opts: {
 }
 
 /**
+ * Ranking V2 (Parts 21/22) — conservative risk-adjusted utility computed AFTER
+ * all gates and AFTER affordability, so the ranking distinguishes genuinely
+ * stronger evidence rather than clustering at a setup-score cliff. Built from
+ * the EV LOWER bound (not the point estimate), expected R, tail risk, evidence
+ * tier, confirmation quality and liquidity; penalizes uncertainty, gap risk,
+ * weak participation and unvalidated setups. Raw setup score contributes only
+ * a small tie-breaker.
+ */
+export function rankingScoreV2(opts: {
+  evLowerBoundPct: number | null;
+  expectedR: number | null;
+  cvarR: number | null;
+  tier: "A" | "B" | "C" | "D";
+  confirmationSatisfied: boolean;
+  advInr: number | null;
+  slippagePct: number;
+  atrPct: number | null;
+  relVolume: number | null;
+  setupUsableForEntry: boolean;
+  setupScore: number;
+}): number {
+  const tierPts = { A: 40, B: 20, C: 5, D: 0 }[opts.tier];
+  const evLb = opts.evLowerBoundPct ?? -1; // reward only edge that survives uncertainty
+  const eR = opts.expectedR ?? 0;
+  const cvar = opts.cvarR ?? -3;
+  const liq = Math.min(1, (opts.advInr ?? 0) / 100_000_000);
+
+  let score = tierPts + evLb * 15 + eR * 20 + Math.max(-3, cvar) * 5 + liq * 5 + opts.setupScore / 20;
+  if (opts.confirmationSatisfied) score += 8;
+  if (!opts.setupUsableForEntry) score -= 15; // an unvalidated setup can never top the board
+  score -= opts.slippagePct * 10;
+  if ((opts.atrPct ?? 0) > 4) score -= ((opts.atrPct ?? 0) - 4) * 3;
+  if ((opts.relVolume ?? 1) < 0.7) score -= 4;
+  return Math.round(score * 100) / 100;
+}
+
+/**
  * Ranking objective for PASSING candidates only: risk-adjusted EV with
  * explicit penalties. Descriptive weights, versioned; not a probability.
  */

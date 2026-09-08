@@ -126,7 +126,20 @@ export function classifySetup(
     reasons.push(
       `Oversold mean-reversion: RSI ${f.rsi14?.toFixed(0)}, ${Math.abs(f.drawdownFrom20dHighPct ?? 0).toFixed(1)}% off the 20d high, ${f.supportDistPct?.toFixed(1)}% above swing support.`
     );
-    return { setupType: "MEAN_REVERSION", setupScore: 45, reasons };
+    // V2 (ranking-cliff fix): the score VARIES with pattern strength instead of
+    // pinning every mean-reversion to exactly the gate floor. It is a
+    // DESCRIPTIVE strength only — entry eligibility is decided by the setup
+    // EVIDENCE tier + EV lower bound, never by this number reaching a gate.
+    let score = 30;
+    const rsi = f.rsi14 ?? 30;
+    if (rsi < 25) score += 8; // deeper oversold
+    else if (rsi < 28) score += 4;
+    if ((f.supportDistPct ?? 9) < 2) score += 8; // right at structural support
+    else if ((f.supportDistPct ?? 9) < 3) score += 4;
+    if ((f.relNifty5 ?? -1) > 0) score += 6; // short-term RS already turning up
+    if ((f.relVolume ?? 0) >= 1) score += 4; // participation returning
+    if ((f.drawdownFrom20dHighPct ?? 0) < -14) score -= 4; // falling-knife penalty
+    return { setupType: "MEAN_REVERSION", setupScore: Math.max(20, Math.min(58, score)), reasons };
   }
 
   return {

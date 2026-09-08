@@ -146,7 +146,9 @@ export interface ShortTermCandidateView {
   sector: string;
   currentPrice: number | null;
   freshness: FreshnessReport;
-  action: ShortTermAction;
+  /** V2: freshness semantics (LIVE/DELAYED_INTRADAY/EOD_FINAL/STALE). */
+  freshnessV2: string;
+  action: string; // ShortTermActionV2 (kept as string to avoid a type cycle with actionStates)
   state: CandidateState;
   setupType: SetupType;
   setupScore: number;
@@ -163,6 +165,22 @@ export interface ShortTermCandidateView {
   gates: GateResult;
   rankingScore: number | null;
   aiSummary: { text: string; provider: string; model: string } | null;
+  // ── V2 qualification-integrity fields ──────────────────────────────────
+  /** Evidence tier A/B/C/D — decides Qualified vs Research Watchlist. */
+  tier: string;
+  /** True only for a genuinely actionable, affordable, tier-A confirmed entry. */
+  qualified: boolean;
+  /** Geometry-derived action before ceilings (ZONE_REACHED etc.). */
+  geometryAction: string;
+  /** The deterministic ceiling and why it binds. */
+  ceilingReasons: string[];
+  /** Plain "why this is NOT entry-confirmed" bullets. */
+  whyNotEntry: string[];
+  confirmation: { satisfied: boolean; met: string[]; unmet: string[] } | null;
+  contradictions: Array<{ code: string; message: string; cap: string }>;
+  ev: Record<string, unknown> | null;
+  setupEvidence: Record<string, unknown> | null;
+  plausibility: Record<string, unknown> | null;
 }
 
 export interface ScanParams {

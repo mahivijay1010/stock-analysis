@@ -142,22 +142,25 @@ const ST_SCHEMA = strictSchema("short_term_review", {
   dataTimestamp: { type: "string" },
 });
 
-/** Map the deterministic radar action into the analyst's ceiling. */
-function ceilingFor(action: ShortTermAction): (typeof ST_ACTIONS)[number] {
+/** Map the deterministic radar action (V2 states) into the analyst's ceiling. */
+function ceilingFor(action: string): (typeof ST_ACTIONS)[number] {
   switch (action) {
-    case "ENTRY_ZONE":
-    case "BREAKOUT_CONFIRMATION":
+    case "ENTRY_CONFIRMED":
       return "ENTRY_READY";
-    case "WAIT_FOR_ENTRY":
+    case "ZONE_REACHED":
+    case "WAIT_FOR_CONFIRMATION":
       return "WAIT_FOR_ENTRY";
-    case "WATCH":
+    case "SETUP_DETECTED":
+    case "RESEARCH_WATCH":
       return "WATCH";
-    case "HOLD":
+    case "ACTIVE_POSITION":
       return "HOLD";
-    case "TAKE_PARTIAL_PROFIT":
+    case "TAKE_PARTIAL":
       return "TAKE_PARTIAL";
-    case "TRAIL_STOP":
+    case "TRAIL":
       return "TRAIL";
+    case "EXIT":
+      return "EXIT";
     default:
       return "NO_TRADE";
   }

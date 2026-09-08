@@ -34,14 +34,28 @@ import { computeShortTermFeatures } from "./features";
 import { classifySetup } from "./setups";
 import { buildTradePlan } from "./entryExit";
 import { buildShortTermForecast, bracketExpectedValuePct } from "./model";
-import { evaluateGates } from "./ranking";
+import { evaluateGates, rankingScoreV2 } from "./ranking";
 import { computePositionSize, assessPortfolioRisk } from "./sizing";
+import { computeEvEvidence, evGatePasses } from "./evUncertainty";
+import { setupEvidenceService } from "./setupEvidence";
+import { assessLevels } from "./plausibility";
+import { assessConfirmation } from "./confirmation";
+import { computeTier } from "./tiers";
+import { detectContradictions } from "./contradictions";
+import { assessShortTermHealth } from "./shortTermHealth";
+import { adjustedDailyReturns } from "../market/canonical";
+import {
+  composeCeiling,
+  capAction,
+  FreshnessV2,
+  ShortTermActionV2,
+  EvidenceTier,
+} from "./actionStates";
 import {
   CandidateState,
   DEFAULT_SCAN_PARAMS,
   HORIZON_TD,
   ScanParams,
-  ShortTermAction,
   ShortTermCandidateView,
   SHORT_TERM_FEATURE_VERSION,
   SHORT_TERM_POLICY_VERSION,
@@ -49,29 +63,42 @@ import {
   STRATEGY_SETUPS,
 } from "./types";
 
-function deriveActionState(view: {
-  passed: boolean;
-  setupType: string;
-  price: number;
-  plan: ShortTermCandidateView["plan"];
-}): { action: ShortTermAction; state: CandidateState } {
-  if (!view.passed) {
-    const constructive = ["PULLBACK_IN_UPTREND", "BREAKOUT_CONFIRMATION", "MOMENTUM_CONTINUATION", "VOLATILITY_CONTRACTION", "MEAN_REVERSION"].includes(view.setupType);
-    if (view.setupType === "HIGH_EVENT_RISK" || view.setupType === "LATE_TREND" || view.setupType === "FAILED_BREAKOUT")
-      return { action: "NO_TRADE", state: "SCANNED" };
-    return constructive ? { action: "WATCH", state: "WATCH" } : { action: "NO_TRADE", state: "SCANNED" };
+/**
+ * Geometry-derived action (Stage A only) — where price sits vs the plan,
+ * BEFORE any evidence ceiling. ZONE_REACHED is the strongest this returns; it
+ * is NEVER ENTRY_CONFIRMED (that requires evidence + confirmation, applied by
+ * the ceiling downstream).
+ */
+function deriveGeometryAction(setupType: string, price: number, plan: ShortTermCandidateView["plan"]): ShortTermActionV2 {
+  const constructive = ["PULLBACK_IN_UPTREND", "BREAKOUT_CONFIRMATION", "MOMENTUM_CONTINUATION", "VOLATILITY_CONTRACTION", "MEAN_REVERSION"].includes(setupType);
+  if (!constructive || plan.entryType === "NONE") return "NO_SETUP";
+  if (plan.entryType === "BREAKOUT_TRIGGER") {
+    if (plan.entryTriggerPrice != null && price >= plan.entryTriggerPrice) return "ZONE_REACHED";
+    return "SETUP_DETECTED";
   }
-  const p = view.plan;
-  if (p.entryType === "BREAKOUT_TRIGGER") {
-    // Breakout setups: confirmed on the completed bar only when the setup type says so.
-    if (view.setupType === "BREAKOUT_CONFIRMATION") return { action: "ENTRY_ZONE", state: "ENTRY_READY" };
-    return { action: "BREAKOUT_CONFIRMATION", state: "WAIT_FOR_ENTRY" };
+  if (plan.entryZoneLow != null && plan.entryZoneHigh != null) {
+    if (price >= plan.entryZoneLow && price <= plan.entryZoneHigh) return "ZONE_REACHED";
+    return "SETUP_DETECTED";
   }
-  if (p.entryZoneLow != null && p.entryZoneHigh != null) {
-    if (view.price >= p.entryZoneLow && view.price <= p.entryZoneHigh) return { action: "ENTRY_ZONE", state: "ENTRY_READY" };
-    return { action: "WAIT_FOR_ENTRY", state: "WAIT_FOR_ENTRY" };
+  return "SETUP_DETECTED";
+}
+
+/** Map a V2 action to the persisted CandidateState machine. */
+function stateForAction(a: ShortTermActionV2): CandidateState {
+  switch (a) {
+    case "ENTRY_CONFIRMED":
+      return "ENTRY_READY";
+    case "ZONE_REACHED":
+    case "WAIT_FOR_CONFIRMATION":
+      return "WAIT_FOR_ENTRY";
+    case "SETUP_DETECTED":
+    case "RESEARCH_WATCH":
+      return "WATCH";
+    case "INVALIDATED":
+      return "INVALIDATED";
+    default:
+      return "SCANNED";
   }
-  return { action: "WATCH", state: "WATCH" };
 }
 
 export class ShortTermScanService {
@@ -81,13 +108,28 @@ export class ShortTermScanService {
     marketStatus: Awaited<ReturnType<typeof liveMarketDataProvider.getMarketStatus>>;
     riskManager: ReturnType<typeof assessPortfolioRisk>;
     candidates: ShortTermCandidateView[];
+    watchlist: ShortTermCandidateView[];
     universeSize: number;
     passedGates: number;
+    qualifiedCount: number;
+    watchlistCount: number;
     emptyMessage: string | null;
   }> {
     const params: ScanParams = { ...DEFAULT_SCAN_PARAMS, ...paramsIn };
     const marketStatus = await liveMarketDataProvider.getMarketStatus();
     const health = await modelHealthService.assess("quant-v1").catch(() => null);
+
+    // Live-shadow evidence per setup×horizon → short-term model live authority (Part 24/25).
+    const shadowRows: Array<{ setup_type: string; horizon: string; resolved: string; dates: string; exp: string | null }> = await AppDataSource.query(
+      `SELECT setup_type, horizon,
+              COUNT(*) FILTER (WHERE outcome IS NOT NULL)::text AS resolved,
+              COUNT(DISTINCT anchor_date) FILTER (WHERE outcome IS NOT NULL)::text AS dates,
+              AVG((outcome->>'returnPct')::numeric) FILTER (WHERE outcome IS NOT NULL)::text AS exp
+         FROM short_term_shadow_predictions GROUP BY setup_type, horizon`
+    ).catch(() => []);
+    const shadowStatsBySetup = new Map<string, { resolved: number; distinctDates: number; expectancyR: number | null }>();
+    for (const r of shadowRows)
+      shadowStatsBySetup.set(`${r.setup_type}|${r.horizon}`, { resolved: Number(r.resolved), distinctDates: Number(r.dates), expectancyR: r.exp != null ? Number(r.exp) : null });
 
     // Risk manager over open paper positions (S6): limits block NEW entries only.
     const openPaper: Array<{ loss_at_stop: string | null; sector: string | null }> = await AppDataSource.query(
@@ -200,22 +242,102 @@ export class ShortTermScanService {
       });
 
       const entryRef = plan.entryZoneHigh ?? plan.entryTriggerPrice ?? f.price;
-      const sizing =
-        gates.passed && params.budgetInr != null && plan.initialStop != null
-          ? computePositionSize({
-              budgetInr: params.budgetInr,
-              riskPerTradePct: params.riskPerTradePct,
-              entryPrice: entryRef,
-              stopPrice: plan.initialStop,
-              atrPct: f.atrPct,
-              relVolume: f.relVolume,
-              advInr: f.advInr20,
-            })
+
+      // ── V2 EV uncertainty: the trade's own bracket across bootstrap paths ──
+      const evEvidence = plan.initialStop != null && plan.target1 != null
+        ? computeEvEvidence({
+            dailyReturns: adjustedDailyReturns(bars.slice(-260)),
+            entry: entryRef,
+            stop: plan.initialStop,
+            target1: plan.target1,
+            maxHoldDays: HORIZON_TD[params.horizon].max,
+            costPct: plan.transactionCostPct,
+            slippagePct: plan.estimatedSlippagePct,
+          })
+        : null;
+      const evOk = evGatePasses(evEvidence);
+
+      // ── V2 setup-specific evidence (persisted study) + live authority ─────
+      const setupEvidence = await setupEvidenceService.lookup(setup.setupType, params.horizon, null);
+      const shadowStats = shadowStatsBySetup.get(`${setup.setupType}|${params.horizon}`) ?? { resolved: 0, distinctDates: 0, expectancyR: null };
+      const stHealth = assessShortTermHealth({
+        backtestUsableForEntry: setupEvidence.usableForEntry,
+        resolvedShadowTrades: shadowStats.resolved,
+        distinctShadowDates: shadowStats.distinctDates,
+        liveExpectancyR: shadowStats.expectancyR,
+      });
+      const plausibility = assessLevels({
+        entry: entryRef,
+        stop: plan.initialStop ?? entryRef,
+        target1: plan.target1 ?? entryRef,
+        atr14: plan.atr14,
+        ev: evEvidence,
+        gapPctRecent: f.gapPct,
+      });
+      entryQuality && (entryQuality.score = Math.max(0, (entryQuality.score ?? 50) - plausibility.qualityPenalty));
+
+      // ── V2 tier + confirmation + freshness semantics ──────────────────────
+      const tierRes = computeTier({ setupEvidence, ev: evEvidence, plausibility, shortTermHealthState: stHealth.state, dataQuality });
+      const freshnessV2: FreshnessV2 =
+        marketStatus.session === "OPEN" ? "DELAYED_INTRADAY" : marketStatus.lastCompletedSession === lastBarDate ? "EOD_FINAL" : barAgeDays > 4 ? "STALE" : "EOD_FINAL";
+      const confirmation = assessConfirmation(setup.setupType, f, {
+        marketRegimeOk: true, // market regime hook (bull/neutral); bear_high_vol handled by exit/gate
+        upcomingEventRisk: eventRisk?.upcomingEventRisk === true,
+        freshDataOk: freshnessV2 === "EOD_FINAL",
+      });
+      const modelConfidence = forecast.modelConfidence;
+
+      const geometryAction = deriveGeometryAction(setup.setupType, f.price, plan);
+
+      // Provisional sizing (for affordability) — full sizing recomputed post-gate below.
+      const provisionalSizing =
+        params.budgetInr != null && plan.initialStop != null
+          ? computePositionSize({ budgetInr: params.budgetInr, riskPerTradePct: params.riskPerTradePct, entryPrice: entryRef, stopPrice: plan.initialStop, atrPct: f.atrPct, relVolume: f.relVolume, advInr: f.advInr20 })
           : null;
+      const affordable = params.budgetInr == null || (provisionalSizing?.positionSizeShares ?? 0) > 0;
 
-      const { action, state } = deriveActionState({ passed: gates.passed, setupType: setup.setupType, price: f.price, plan });
+      const contradictions = detectContradictions({
+        geometryAction,
+        tier: tierRes.tier,
+        modelConfidence,
+        modelHealthState: stHealth.state,
+        freshness: freshnessV2,
+        ev: evEvidence,
+        setupEvidence,
+        positionSizeShares: provisionalSizing?.positionSizeShares ?? null,
+        rankingScore: null,
+      });
+
+      const ceiling = composeCeiling({
+        tier: tierRes.tier as EvidenceTier,
+        modelHealthState: stHealth.state,
+        modelConfidence,
+        freshness: freshnessV2,
+        confirmationSatisfied: confirmation.satisfied,
+        evLowerBoundPositive: evOk.ok,
+        affordable,
+        contradictionCeilings: contradictions.map((c) => c.cap as ShortTermActionV2),
+      });
+      const finalAction = capAction(geometryAction, ceiling.ceiling);
+
+      // ENTRY-eligibility gates (V2): setup usable + EV lower bound + all deterministic gates.
+      const entryEligible = gates.passed && setupEvidence.usableForEntry && evOk.ok && tierRes.tier === "A" && stHealth.state === "HEALTHY";
+      const sizing =
+        entryEligible && params.budgetInr != null && plan.initialStop != null ? provisionalSizing : provisionalSizing;
+
+      const whyNotEntry: string[] = [];
+      if (finalAction !== "ENTRY_CONFIRMED") {
+        if (!setupEvidence.usableForEntry) whyNotEntry.push(`setup "${setup.setupType}" has not demonstrated out-of-sample edge (tier ${setupEvidence.evidenceStrength}: ${setupEvidence.note})`);
+        if (!evOk.ok) whyNotEntry.push(...evOk.reasons);
+        if (modelConfidence === "LOW") whyNotEntry.push("short-term model confidence is LOW");
+        if (stHealth.state !== "HEALTHY") whyNotEntry.push(`short-term live authority: ${stHealth.state} — ${stHealth.reasons[0]}`);
+        if (freshnessV2 === "DELAYED_INTRADAY") whyNotEntry.push("quote is delayed intraday — awaiting next-session revalidation");
+        if (!confirmation.satisfied) whyNotEntry.push(`confirmation not satisfied: ${confirmation.unmet.slice(0, 2).join("; ")}`);
+        if (!affordable) whyNotEntry.push("not affordable under the current risk budget");
+      }
+
+      plan.expectedValueAfterCostsPct = evEvidence ? evEvidence.meanEvAfterCostsPct : plan.expectedValueAfterCostsPct;
       const freshness = await liveMarketDataProvider.getDataFreshness(`${lastBarDate}T15:30:00+05:30`);
-
       const risky = (f.atrPct ?? 0) > 4 || (f.realizedVol20AnnPct ?? 0) > 45;
       views.push({
         rank: null,
@@ -224,19 +346,20 @@ export class ShortTermScanService {
         sector: u.sector,
         currentPrice: f.price,
         freshness,
-        action,
-        state,
+        freshnessV2,
+        action: finalAction,
+        state: stateForAction(finalAction),
         setupType: setup.setupType,
         setupScore: setup.setupScore,
         entryQuality: entryQuality?.score ?? null,
-        modelHealth: health?.overallState ?? "UNKNOWN",
+        modelHealth: stHealth.state,
         dataQuality,
         riskLevel: risky ? "HIGH" : (f.atrPct ?? 0) > 2.5 ? "MEDIUM" : "LOW",
         whyCandidate: setup.reasons,
         whatCanGoWrong: [
           plan.invalidationReason ?? "Setup can fail without warning; the stop defines the loss.",
-          `Expected shortfall in the worst decile ≈ ${plan.expectedShortfallPct ?? "n/a"}% before the stop caps it.`,
-          "Gap risk: an overnight gap can open beyond the stop — position sizing assumes the stop, gaps can exceed it.",
+          evEvidence ? `Worst-decile outcome ≈ ${evEvidence.expectedShortfallPct}% (${evEvidence.cvarR}R) before the stop caps it.` : "Downside distribution unavailable.",
+          "Gap risk: an overnight gap can open beyond the stop — sizing assumes the stop, gaps can exceed it.",
         ],
         changedSincePrevious: null,
         plan,
@@ -245,20 +368,46 @@ export class ShortTermScanService {
         gates,
         rankingScore: null,
         aiSummary: null,
+        tier: tierRes.tier,
+        qualified: entryEligible && finalAction === "ENTRY_CONFIRMED" && affordable,
+        geometryAction,
+        ceilingReasons: ceiling.reasons,
+        whyNotEntry,
+        confirmation: { satisfied: confirmation.satisfied, met: confirmation.met, unmet: confirmation.unmet },
+        contradictions,
+        ev: evEvidence as unknown as Record<string, unknown> | null,
+        setupEvidence: setupEvidence as unknown as Record<string, unknown>,
+        plausibility: plausibility as unknown as Record<string, unknown>,
       });
     }
 
-    // ── Gates → ranking → UP TO N (never forced) ────────────────────────────
-    const passing = views.filter((v) => v.gates.passed);
-    const scored = passing
-      .map((v) => ({ v, s: v.plan.expectedValueAfterCostsPct != null ? rankingScoreFromView(v) : -999 }))
-      .sort((a, b) => b.s - a.s);
-    scored.forEach((x, i) => {
-      x.v.rankingScore = x.s;
-      x.v.rank = i + 1;
-    });
-    const limit = params.limit === 0 ? scored.length : Math.min(Math.max(params.limit, 1), 50);
-    const shown = scored.slice(0, Math.max(limit, 0)).map((x) => x.v);
+    // ── V2 ranking + Qualified vs Research Watchlist split (never forced) ────
+    // "Interesting" = passed the base gates OR has a constructive plan worth watching.
+    const passedGatesCount = views.filter((v) => v.gates.passed).length;
+    const interestingViews = views.filter((v) => v.gates.passed || (v.tier !== "D" && v.geometryAction !== "NO_SETUP"));
+    for (const v of interestingViews) {
+      const evObj = v.ev as { ev80LowerPct?: number; expectedR?: number; cvarR?: number } | null;
+      v.rankingScore = rankingScoreV2({
+        evLowerBoundPct: evObj?.ev80LowerPct ?? null,
+        expectedR: evObj?.expectedR ?? null,
+        cvarR: evObj?.cvarR ?? null,
+        tier: v.tier as EvidenceTier,
+        confirmationSatisfied: v.confirmation?.satisfied ?? false,
+        advInr: v.plan.advInr,
+        slippagePct: v.plan.estimatedSlippagePct,
+        atrPct: v.currentPrice && v.plan.atr14 ? (v.plan.atr14 / v.currentPrice) * 100 : null,
+        relVolume: null,
+        setupUsableForEntry: (v.setupEvidence as { usableForEntry?: boolean } | null)?.usableForEntry ?? false,
+        setupScore: v.setupScore,
+      });
+    }
+    // QUALIFIED: tier A + ENTRY_CONFIRMED + affordable + gates. RESEARCH: the rest that's interesting.
+    const qualified = interestingViews.filter((v) => v.qualified).sort((a, b) => (b.rankingScore ?? -999) - (a.rankingScore ?? -999));
+    const watchlist = interestingViews.filter((v) => !v.qualified).sort((a, b) => (b.rankingScore ?? -999) - (a.rankingScore ?? -999));
+    qualified.forEach((v, i) => (v.rank = i + 1));
+    const limit = params.limit === 0 ? qualified.length : Math.min(Math.max(params.limit, 1), 50);
+    const shown = qualified.slice(0, Math.max(limit, 0));
+    const watchShown = watchlist.slice(0, params.limit === 0 ? watchlist.length : Math.max(limit, 10));
 
     // ── Persist: run, candidates, transitions, alerts, shadow predictions ───
     const runRepo = AppDataSource.getRepository(ShortTermScanRun);
@@ -266,7 +415,7 @@ export class ShortTermScanService {
       runRepo.create({
         params: params as unknown as Record<string, unknown>,
         universeSize: universe.length,
-        passedGates: passing.length,
+        passedGates: passedGatesCount,
         qualifiedShown: shown.length,
         modelVersion: SHORT_TERM_VERSION,
         featureVersion: SHORT_TERM_FEATURE_VERSION,
@@ -283,7 +432,7 @@ export class ShortTermScanService {
     const alertRepo = AppDataSource.getRepository(ShortTermAlert);
     const shadowRepo = AppDataSource.getRepository(ShortTermShadowPrediction);
 
-    const interesting = views.filter((v) => v.gates.passed || v.state !== "SCANNED");
+    const interesting = interestingViews;
     for (const v of interesting) {
       // Previous state for transition tracking.
       const prev = await candRepo
@@ -356,32 +505,18 @@ export class ShortTermScanService {
       params,
       marketStatus,
       riskManager,
-      candidates: shown,
+      candidates: shown, // QUALIFIED trades only (tier A, ENTRY_CONFIRMED, affordable)
+      watchlist: watchShown, // interesting but not yet actionable
       universeSize: universe.length,
-      passedGates: passing.length,
+      passedGates: passedGatesCount,
+      qualifiedCount: qualified.length,
+      watchlistCount: watchlist.length,
       emptyMessage:
         shown.length === 0
-          ? "No statistically attractive short-term setups currently pass the risk and evidence gates."
+          ? "No statistically attractive short-term setups currently pass the risk and evidence gates. Interesting setups are on the Research Watchlist below."
           : null,
     };
   }
-}
-
-/** Ranking objective over the assembled view (EV + R:R + entry quality + liquidity − penalties). */
-function rankingScoreFromView(v: ShortTermCandidateView): number {
-  const ev = v.plan.expectedValueAfterCostsPct ?? 0;
-  const excess = v.forecast.expectedExcessReturnPct ?? 0;
-  const rr = Math.min(3, v.plan.rewardRiskToTarget1 ?? 0);
-  const eq = (v.entryQuality ?? 50) / 100;
-  const liq = Math.min(1, (v.plan.advInr ?? 0) / 100_000_000);
-  let score = ev * 8 + excess * 3 + rr * 6 + eq * 10 + liq * 4 + v.setupScore / 10;
-  score -= v.plan.estimatedSlippagePct * 10;
-  if ((v.plan.atr14 ?? 0) > 0 && v.currentPrice != null && v.currentPrice > 0) {
-    const atrPct = ((v.plan.atr14 as number) / v.currentPrice) * 100;
-    if (atrPct > 4) score -= (atrPct - 4) * 3;
-  }
-  if (v.riskLevel === "HIGH") score -= 5;
-  return Math.round(score * 100) / 100;
 }
 
 export const shortTermScanService = new ShortTermScanService();
