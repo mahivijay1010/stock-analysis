@@ -18,7 +18,7 @@
 import { QuantAnalysis } from "../quant/types";
 import { Fundamentals } from "../market/types";
 
-export const ENTRY_QUALITY_VERSION = "entry-quality-v2";
+export const ENTRY_QUALITY_VERSION = "entry-quality-v2.1";
 
 export interface EntryQualityInputs {
   /** The v1 entry-timing score (base 50 + measured deltas), or null. */
@@ -30,6 +30,8 @@ export interface EntryQualityInputs {
   intervalWidthPct30: number | null;
   /** (p90−anchor)/(anchor−p10) from the stored issuance, null when undefined. */
   rewardRiskRatio: number | null;
+  /** Phase 4: market regime (regimeEngine) — hostile regimes penalize entries. */
+  marketRegime?: string | null;
 }
 
 export interface EntryQuality {
@@ -109,6 +111,13 @@ export function assessEntryQuality(i: EntryQualityInputs): EntryQuality {
   // 7. Negative divergence: price strength without volume participation.
   if (t.volumeRatio20d != null && r60 != null && r60 >= 15 && t.volumeRatio20d < 0.7) {
     add(-5, `+${r60.toFixed(0)}% in 60 days on fading volume (${t.volumeRatio20d.toFixed(2)}× the 20d average)`);
+  }
+
+  // 8. Hostile market regime (v2.1): entering against a high-vol bear tape.
+  if (i.marketRegime === "bear_high_vol") {
+    add(-8, "market regime is bear_high_vol — entries fight both trend and volatility");
+  } else if (i.marketRegime === "bear_low_vol") {
+    add(-4, "market regime is bearish — new entries face a falling tape");
   }
 
   const score = Math.round(clamp(base + adjustments.reduce((s, a) => s + a.delta, 0), 0, 100) * 10) / 10;

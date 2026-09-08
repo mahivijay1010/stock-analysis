@@ -35,7 +35,7 @@ const base = (over?: Partial<PolicyInputs>): PolicyInputs => ({
 
 describe("decision policy v1", () => {
   test("policy version is pinned", () => {
-    expect(DECISION_POLICY_VERSION).toBe("decision-policy-v3");
+    expect(DECISION_POLICY_VERSION).toBe("decision-policy-v4");
   });
 
   test("no issuance → INSUFFICIENT_EVIDENCE", () => {

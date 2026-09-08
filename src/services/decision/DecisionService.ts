@@ -29,6 +29,7 @@ import { computeExpectedValue, ExpectedValueReport } from "./expectedValue";
 import { assessEntryQuality } from "../framework/entryQuality";
 import { analyzeBars } from "../quant/engine";
 import { analysisCloses } from "../market/canonical";
+import { assessRegime, RegimeAssessment } from "./regimeEngine";
 import { marketDataService } from "../market/MarketDataService";
 import { fundamentalsService } from "../market/FundamentalsService";
 import { newsService } from "../market/NewsService";
@@ -137,6 +138,7 @@ export class DecisionService {
     let horizonSuitability: Record<string, unknown> | null = null;
     let scoreCard: ScoreCard | null = null;
     let evReport: ExpectedValueReport | null = null;
+    let regime: RegimeAssessment | null = null;
     try {
       const barsResult = await marketDataService.getDailyBarsWithSource(instrument.yahooTicker, "1y");
       const bars = barsResult.bars;
@@ -229,14 +231,40 @@ export class DecisionService {
         }
       }
 
+      // Phase 4: regime assessment — NIFTY/VIX cached bars + the stock's own
+      // bars. Failure ⇒ null (never blocks; can only have made things stricter).
+      try {
+        const [niftyBars, vixBars] = await Promise.all([
+          marketDataService.getNiftyBars("1y").catch(() => null),
+          marketDataService.getIndiaVixBars("1y").catch(() => null),
+        ]);
+        const vixLevel =
+          vixBars && vixBars.length > 0 ? vixBars[vixBars.length - 1].close : null;
+        let vixPercentile1y: number | null = null;
+        if (vixBars && vixBars.length >= 60 && vixLevel != null) {
+          const below = vixBars.filter((b) => b.close < vixLevel).length;
+          vixPercentile1y = (below / vixBars.length) * 100;
+        }
+        regime = assessRegime({
+          niftyBars,
+          vixLevel,
+          vixPercentile1y,
+          stockBars: bars,
+          sectorRelativeStrength20pp: null, // point-in-time sector aggregate not available on this path
+        });
+      } catch {
+        regime = null;
+      }
+
       const entryQuality = analysis
         ? assessEntryQuality({
-            baseTimingScore: null, // nightly path has no news/regime context — base 50, penalties only
+            baseTimingScore: null, // nightly path has no news context — base 50, penalties only
             price: closes[closes.length - 1],
             technicals: analysis.technicals,
             fundamentals,
             intervalWidthPct30,
             rewardRiskRatio,
+            marketRegime: regime?.marketRegime ?? null,
           })
         : null;
 
@@ -275,6 +303,7 @@ export class DecisionService {
       horizonSuitability = horizonSuitability ?? null;
       scoreCard = null;
       evReport = null;
+      regime = null;
     }
 
     // Re-evaluate the gate WITH the v3 inputs (the first evaluation above only
@@ -289,6 +318,7 @@ export class DecisionService {
       forecastConfidenceScore: scoreCard?.forecastConfidence.score ?? null,
       entryQualityScore: scoreCard?.entryTimingScore ?? null,
       evAfterCostsPct: evReport?.evAfterCostsPct ?? null,
+      regime: regime ? { marketRegime: regime.marketRegime, entryRegime: regime.entryRegime } : null,
     });
     const holder = evaluateHolderPolicy(decisionV3, {
       ticker: instrument.yahooTicker,
@@ -323,6 +353,7 @@ export class DecisionService {
           measured,
           afterMarketClose,
           lastObservedSession: lastObserved,
+          regime: regime as unknown as Record<string, unknown> | null,
         },
         asOf: now,
         validUntil,

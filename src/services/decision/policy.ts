@@ -22,6 +22,11 @@
  * gate only RESTRICTS — loosening any of them requires validation evidence
  * recorded next to the constant.
  *
+ * v4 (2026-09-08): regime caps (completion Phase 4) — a hostile market
+ * regime (bear_high_vol) or an extended/late/high-event-risk entry regime
+ * caps the decision at WATCH with its own unmet gate. Regime can only cap,
+ * never boost (Rule 6).
+ *
  * v2 (2026-09-06): overlap-adjusted sample sizes after the BHEL mirage
  * (79.5% over 39 daily-logged 30d windows ≈ 1 independent observation).
  *
@@ -29,7 +34,7 @@
  * a new-entry caution is never a sell instruction.
  */
 
-export const DECISION_POLICY_VERSION = "decision-policy-v3";
+export const DECISION_POLICY_VERSION = "decision-policy-v4";
 
 export const POLICY_THRESHOLDS = {
   minMaturedSamples: 30, // fewer matured 30d predictions ⇒ INSUFFICIENT_EVIDENCE
@@ -92,6 +97,11 @@ export interface PolicyInputs {
   entryQualityScore?: number | null;
   /** Expected value AFTER round-trip costs, % (expectedValue.ts), null = not assessed. */
   evAfterCostsPct?: number | null;
+  /** Phase 4 regime assessment (regimeEngine.ts), null = not assessed. */
+  regime?: {
+    marketRegime: string;
+    entryRegime: string;
+  } | null;
 }
 
 export interface PolicyDecision {
@@ -292,6 +302,20 @@ export function evaluateEntryPolicy(inputs: PolicyInputs): PolicyDecision {
       `Expected value after round-trip costs is ${inputs.evAfterCostsPct.toFixed(2)}% — a scenario frequency above 50% does not justify BUY when the expected P&L net of fees is not positive.`,
       { gate: "expected value", current: `${inputs.evAfterCostsPct.toFixed(2)}% after costs`, required: "> 0%" }
     );
+  }
+  if (inputs.regime) {
+    if (inputs.regime.marketRegime === "bear_high_vol") {
+      cap(
+        "Market regime is bear_high_vol — new entries are capped at WATCH regardless of the setup (regime caps, never boosts).",
+        { gate: "market regime", current: inputs.regime.marketRegime, required: "not bear_high_vol" }
+      );
+    }
+    if (["extended_uptrend", "late_trend", "high_event_risk"].includes(inputs.regime.entryRegime)) {
+      cap(
+        `Entry regime is ${inputs.regime.entryRegime} — chasing extension/late trends or entering into event risk is capped at WATCH.`,
+        { gate: "entry regime", current: inputs.regime.entryRegime, required: "healthy/neutral/breakout entry regime" }
+      );
+    }
   }
 
   if (capped) {
