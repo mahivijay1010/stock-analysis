@@ -111,7 +111,13 @@ export class RankService {
           u.ticker,
           "6mo"
         );
-        momentum = momentum60d(bars.map((b) => b.close));
+        momentum = momentum60d(
+          bars.map((b) =>
+            b.adjustedClose != null && Number.isFinite(b.adjustedClose) && b.adjustedClose > 0
+              ? b.adjustedClose
+              : b.close
+          )
+        );
         if (source === "yahoo") await sleep(YAHOO_THROTTLE_MS);
       } catch (err) {
         console.warn(`⚠️ rank momentum skipped ${u.ticker}:`, (err as Error).message);

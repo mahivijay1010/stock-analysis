@@ -46,6 +46,18 @@ export class StockHistory {
   @Column({ name: "close_price", type: "decimal", precision: 12, scale: 4 })
   closePrice: number;
 
+  /** Completion Phase 1: Yahoo split/dividend-adjusted close; null pre-feature. */
+  @Column({ name: "adjusted_close", type: "decimal", precision: 12, scale: 4, nullable: true })
+  adjustedClose?: number | null;
+
+  /** Split factor effective THIS ex-date (e.g. 5 for a 1:5 split); null otherwise. */
+  @Column({ name: "split_factor", type: "decimal", precision: 12, scale: 6, nullable: true })
+  splitFactor?: number | null;
+
+  /** Dividend amount (₹/share) with THIS ex-date; null otherwise. */
+  @Column({ name: "dividend", type: "decimal", precision: 12, scale: 4, nullable: true })
+  dividend?: number | null;
+
   @Column({ name: "previous_close", type: "decimal", precision: 12, scale: 4, nullable: true })
   previousClose?: number;
 

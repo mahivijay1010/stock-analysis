@@ -11,6 +11,8 @@ export interface Bar {
   low: number;
   close: number;
   volume: number;
+  /** Phase 1: split/dividend-adjusted close when available (analytics use adjustedClose ?? close). */
+  adjustedClose?: number | null;
 }
 
 export interface Quote {

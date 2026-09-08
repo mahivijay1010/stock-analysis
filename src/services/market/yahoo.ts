@@ -54,9 +54,18 @@ export interface YahooChartMeta {
   marketState?: string;
 }
 
+export interface YahooCorporateEvents {
+  /** ex-date (YYYY-MM-DD IST) → split factor (e.g. 5 for a 1:5 split where numerator/denominator = 5/1). */
+  splits: Record<string, number>;
+  /** ex-date → dividend amount (₹ per share). */
+  dividends: Record<string, number>;
+}
+
 export interface YahooChartResult {
   bars: Bar[];
   meta: YahooChartMeta;
+  /** Phase 1: corporate-action events from Yahoo (empty maps when none). */
+  events: YahooCorporateEvents;
 }
 
 export interface YahooSearchQuote {
@@ -142,9 +151,11 @@ export async function fetchChart(
   range: YahooRange,
   interval: "1d" = "1d"
 ): Promise<YahooChartResult> {
+  // Phase 1: request split/dividend events and the adjusted-close series so
+  // analytics can compute corporate-action-safe returns.
   const url = `${BASE_URL}/v8/finance/chart/${encodeURIComponent(
     ticker
-  )}?range=${range}&interval=${interval}`;
+  )}?range=${range}&interval=${interval}&events=div%2Csplit`;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data = await getJson<any>(url);
 
@@ -163,6 +174,8 @@ export async function fetchChart(
     ? result.timestamp
     : [];
   const quote = result.indicators?.quote?.[0] ?? {};
+  const adj = result.indicators?.adjclose?.[0]?.adjclose;
+  const adjcloses: unknown[] = Array.isArray(adj) ? adj : [];
   const opens: unknown[] = Array.isArray(quote.open) ? quote.open : [];
   const highs: unknown[] = Array.isArray(quote.high) ? quote.high : [];
   const lows: unknown[] = Array.isArray(quote.low) ? quote.low : [];
@@ -182,14 +195,38 @@ export async function fetchChart(
     }
     // Indices (e.g. ^NSEI) report null/0 volume; treat missing volume as 0.
     const volume = toFiniteNumber(volumes[i]) ?? 0;
+    const adjustedClose = toFiniteNumber(adjcloses[i]); // null when Yahoo omits it
     const date = unixToISTDateString(ts);
-    barsByDate.set(date, { date, open, high, low, close, volume });
+    barsByDate.set(date, { date, open, high, low, close, volume, adjustedClose });
   }
 
   const bars = Array.from(barsByDate.values()).sort((a, b) =>
     a.date < b.date ? -1 : a.date > b.date ? 1 : 0
   );
-  return { bars, meta };
+
+  // Corporate-action events (ex-dates in IST). Absent sections ⇒ empty maps.
+  const events: YahooCorporateEvents = { splits: {}, dividends: {} };
+  const evSplits = result.events?.splits ?? {};
+  for (const key of Object.keys(evSplits)) {
+    const e = evSplits[key];
+    const ts = toFiniteNumber(e?.date);
+    const num = toFiniteNumber(e?.numerator);
+    const den = toFiniteNumber(e?.denominator);
+    if (ts !== null && num !== null && den !== null && den > 0) {
+      events.splits[unixToISTDateString(ts)] = num / den;
+    }
+  }
+  const evDivs = result.events?.dividends ?? {};
+  for (const key of Object.keys(evDivs)) {
+    const e = evDivs[key];
+    const ts = toFiniteNumber(e?.date);
+    const amount = toFiniteNumber(e?.amount);
+    if (ts !== null && amount !== null && amount > 0) {
+      events.dividends[unixToISTDateString(ts)] = amount;
+    }
+  }
+
+  return { bars, meta, events };
 }
 
 /** Raw Yahoo search (no filtering here — caller filters to Indian exchanges). */

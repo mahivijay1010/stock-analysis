@@ -108,9 +108,17 @@ export function analyzeBars(bars: Bar[], opts?: { niftyBars?: Bar[] }): QuantAna
     );
   }
 
-  const closes = bars.map((b) => b.close);
+  // Phase 1 (completion directive): ONE adjustment policy — every analytic
+  // series (returns, momentum, SMA/vol/drawdown) uses adjustedClose ?? close
+  // so corporate actions stop fabricating jumps; the displayed price stays
+  // the actual last close (identical on the latest bar by construction).
+  const closes = bars.map((b) =>
+    b.adjustedClose != null && Number.isFinite(b.adjustedClose) && b.adjustedClose > 0
+      ? b.adjustedClose
+      : b.close
+  );
   const volumes = bars.map((b) => b.volume);
-  const price = closes[closes.length - 1];
+  const price = bars[bars.length - 1].close;
 
   // --- Distribution parameters: last 250 daily returns ---
   const rets = dailyReturns(closes.slice(-251));

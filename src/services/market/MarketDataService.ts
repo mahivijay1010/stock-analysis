@@ -143,6 +143,7 @@ interface RawHistoryRow {
   high: string;
   low: string;
   close: string;
+  adjclose: string | null;
   volume: string;
 }
 
@@ -329,12 +330,12 @@ export class MarketDataService {
     }
 
     try {
-      const { bars, meta } = await fetchChart(t, range);
+      const { bars, meta, events } = await fetchChart(t, range);
       this.recentBarFetchAttempts.set(t, Date.now());
       if (bars.length === 0) {
         throw new Error(`Yahoo returned no bars for ${t} (range ${range})`);
       }
-      await this.persistBars(t, bars, meta);
+      await this.persistBars(t, bars, meta, events);
       // T3 fix (risk-spec audit §9.2): the partial-today-bar guard used to run
       // only at persist time, so intraday callers (backtests, prediction logs,
       // forecast issuances, outcome grading) treated a mid-session price as a
@@ -587,6 +588,7 @@ export class MarketDataService {
       .addSelect("h.high_price", "high")
       .addSelect("h.low_price", "low")
       .addSelect("h.close_price", "close")
+      .addSelect("h.adjusted_close", "adjclose")
       .addSelect("h.volume", "volume")
       .where("h.stock_id = :stockId", { stockId })
       .andWhere("h.trading_date >= :since", { since })
@@ -602,6 +604,7 @@ export class MarketDataService {
       const close = Number.parseFloat(row.close);
       const volume = Number.parseInt(row.volume, 10);
       if (![open, high, low, close].every(Number.isFinite)) continue;
+      const adjParsed = row.adjclose != null ? Number.parseFloat(row.adjclose) : NaN;
       byDate.set(row.date, {
         date: row.date,
         open,
@@ -609,6 +612,7 @@ export class MarketDataService {
         low,
         close,
         volume: Number.isFinite(volume) ? volume : 0,
+        adjustedClose: Number.isFinite(adjParsed) && adjParsed > 0 ? adjParsed : null,
       });
     }
     return Array.from(byDate.values()).sort((a, b) =>
@@ -676,7 +680,8 @@ export class MarketDataService {
   private async persistBars(
     ticker: string,
     bars: Bar[],
-    meta?: YahooChartMeta
+    meta?: YahooChartMeta,
+    events?: { splits: Record<string, number>; dividends: Record<string, number> }
   ): Promise<void> {
     await this.ensureDb();
     const stock = await this.upsertStock(ticker, meta);
@@ -693,6 +698,10 @@ export class MarketDataService {
         highPrice: bar.high,
         lowPrice: bar.low,
         closePrice: bar.close,
+        // Phase 1: adjusted close + per-ex-date corporate-action facts.
+        adjustedClose: bar.adjustedClose ?? undefined,
+        splitFactor: events?.splits[bar.date] ?? undefined,
+        dividend: events?.dividends[bar.date] ?? undefined,
         previousClose: prevClose ?? undefined,
         volume: bar.volume,
         priceChange:

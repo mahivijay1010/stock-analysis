@@ -10,6 +10,13 @@ export interface Bar {
   low: number;
   close: number;
   volume: number;
+  /**
+   * Phase 1 (completion directive): Yahoo's split/dividend-adjusted close,
+   * when available. Analytics compute returns from adjustedClose ?? close so
+   * corporate actions stop fabricating return jumps. Null on rows persisted
+   * before this feature (heals on the next fetch of the range).
+   */
+  adjustedClose?: number | null;
 }
 
 export interface Quote {

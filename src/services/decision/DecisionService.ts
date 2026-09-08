@@ -28,6 +28,7 @@ import { buildScoreCard, ScoreCard } from "./scorecard";
 import { computeExpectedValue, ExpectedValueReport } from "./expectedValue";
 import { assessEntryQuality } from "../framework/entryQuality";
 import { analyzeBars } from "../quant/engine";
+import { analysisCloses } from "../market/canonical";
 import { marketDataService } from "../market/MarketDataService";
 import { fundamentalsService } from "../market/FundamentalsService";
 import { newsService } from "../market/NewsService";
@@ -139,7 +140,9 @@ export class DecisionService {
     try {
       const barsResult = await marketDataService.getDailyBarsWithSource(instrument.yahooTicker, "1y");
       const bars = barsResult.bars;
-      const closes = bars.map((b) => b.close);
+      // Phase 1: analytics on the adjusted series; the break detector now only
+      // fires on jumps that even the adjusted series cannot explain.
+      const closes = analysisCloses(bars);
       const rets: number[] = [];
       let suspectedCorporateActionBreak = false;
       for (let i = 1; i < closes.length; i++) {

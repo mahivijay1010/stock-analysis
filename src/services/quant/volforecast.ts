@@ -437,7 +437,12 @@ export function forecastVolatility(bars: Bar[], vix?: VixPoint[]): VolForecastRe
     'Caveat: true HAR-RV uses intraday realized volatility; this daily-return proxy is much noisier, ' +
     'so these R² values are expected to be modest — they are measured, not promised.';
 
-  const closes = bars.map((b) => b.close);
+  // Phase 1: realized vol from the adjusted series (CA-safe).
+  const closes = bars.map((b) =>
+    b.adjustedClose != null && Number.isFinite(b.adjustedClose) && b.adjustedClose > 0
+      ? b.adjustedClose
+      : b.close
+  );
   const rv = dailyRvSeries(closes);
 
   const empty: VolForecastResult = {

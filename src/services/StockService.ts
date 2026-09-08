@@ -35,6 +35,7 @@ import {
 import { simulateBootstrap } from "./quant/montecarlo";
 import { backtestBars, isDirectionHit, PROB_BUCKET_EDGES } from "./quant/backtest";
 import { dailyReturns, smaSeries } from "./quant/indicators";
+import { adjustedDailyReturns } from "./market/canonical";
 import { CronExecutionLog } from "../entities/CronExecutionLog";
 import {
   AccuracyPerStock,
@@ -281,7 +282,7 @@ export class StockService {
     // V5: seeded bootstrap Monte Carlo from the SAME real bars' daily returns.
     let monteCarlo: MonteCarloForecast;
     try {
-      monteCarlo = simulateBootstrap(dailyReturns(bars.map((b) => b.close)));
+      monteCarlo = simulateBootstrap(adjustedDailyReturns(bars));
     } catch (err) {
       // Only possible with <61 bars (we already require 60) — surface honestly.
       throw new HttpError(

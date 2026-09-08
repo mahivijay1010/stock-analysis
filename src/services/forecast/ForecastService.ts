@@ -19,6 +19,7 @@ import { AppDataSource } from "../../config/database";
 import { ForecastOutcome, ForecastPoint, ForecastRun, Instrument } from "../../entities";
 import { marketDataService } from "../market/MarketDataService";
 import { Bar } from "../market/types";
+import { adjustedDailyReturns } from "../market/canonical";
 import { simulateDailyQuantiles } from "../quant/montecarlo";
 import { HttpError } from "../../types";
 import { sessionCalendarService, ResolvedDay } from "./SessionCalendarService";
@@ -696,12 +697,8 @@ export class ForecastService {
   }
 
   private dailyReturns(bars: Bar[]): number[] {
-    const rets: number[] = [];
-    for (let i = 1; i < bars.length; i++) {
-      const prev = bars[i - 1].close;
-      if (prev > 0) rets.push(bars[i].close / prev - 1);
-    }
-    return rets;
+    // Phase 1: corporate-action-safe returns (adjustedClose ?? close).
+    return adjustedDailyReturns(bars);
   }
 }
 
