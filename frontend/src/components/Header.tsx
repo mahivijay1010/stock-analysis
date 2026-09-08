@@ -16,8 +16,7 @@ import {
   Menu,
   Settings,
   X,
-  type LucideIcon,
-} from 'lucide-react';
+  type LucideIcon, Zap } from 'lucide-react';
 import { getHealth } from '@/lib/api';
 import { SearchBox } from '@/components/analyze/SearchBox';
 import { AmountInput } from '@/components/analyze/AmountInput';
@@ -26,6 +25,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 export type TabId =
   | 'watchlist'
   | 'discover'
+  | 'short-term'
   | 'track-record'
   | 'stock'
   | 'sandbox'
@@ -37,6 +37,7 @@ type NavItem = { id: TabId; label: string; short: string; description: string; i
 const PRIMARY: NavItem[] = [
   { id: 'watchlist', label: 'Watchlist', short: 'Watch', description: 'Follow & own in one place — forecasts, decisions, your ledger', icon: Eye },
   { id: 'discover', label: 'Discover', short: 'Discover', description: 'Search & rank the covered NSE universe', icon: Compass },
+  { id: 'short-term', label: 'Short-Term', short: 'Short', description: 'Risk-gated positional setups (1–21 sessions) — up to 5, never forced', icon: Zap },
   { id: 'track-record', label: 'Track Record', short: 'Record', description: 'Measured forecast performance — not marketing', icon: Gauge },
 ];
 

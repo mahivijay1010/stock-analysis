@@ -6,6 +6,7 @@ import { Header, type TabId } from '@/components/Header';
 import { TabPanel } from '@/components/motion';
 import { PortfolioView } from '@/components/portfolio/PortfolioView';
 import { DiscoverView } from '@/components/DiscoverView';
+import { ShortTermView } from '@/components/shortterm/ShortTermView';
 import { TrackRecordView } from '@/components/TrackRecordView';
 import { StockDetailView } from '@/components/analyze/AnalyzeView';
 import { SandboxView } from '@/components/admin/AdminView';
@@ -16,6 +17,7 @@ const PENDING_PURCHASE_KEY = 'stocksense.pendingPurchase';
 const CANONICAL_TABS: readonly TabId[] = [
   'watchlist',
   'discover',
+  'short-term',
   'track-record',
   'stock',
   'sandbox',
@@ -174,6 +176,7 @@ export default function Home() {
                 />
               )}
               {tab === 'discover' && <DiscoverView onOpenStock={openStock} />}
+              {tab === 'short-term' && <ShortTermView />}
               {tab === 'track-record' && <TrackRecordView />}
               {tab === 'diagnostics' && <TrackRecordView diagnosticsOpen />}
               {tab === 'stock' && (

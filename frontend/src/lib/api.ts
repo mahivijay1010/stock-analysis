@@ -511,3 +511,128 @@ export interface AiRoleRow {
 export function getAiRoles(ticker: string): Promise<{ roles: Record<string, AiRoleRow | null> }> {
   return get<{ roles: Record<string, AiRoleRow | null> }>(`/api/ai/${encodeURIComponent(ticker)}`);
 }
+
+/* ---- Short-Term Trade Radar ---- */
+
+export interface StScanParams {
+  budgetInr?: number | null;
+  priceMin?: number | null;
+  priceMax?: number | null;
+  horizon?: '1-3d' | '3-5d' | '5-10d' | '10-21d';
+  riskPerTradePct?: number;
+  strategy?: 'ALL' | 'PULLBACK' | 'BREAKOUT' | 'MOMENTUM' | 'MEAN_REVERSION';
+  sector?: string | null;
+  aiDepth?: 'AUTO' | 'LOCAL_ONLY' | 'LOW_COST' | 'DEEP_REVIEW';
+  limit?: number;
+}
+
+export interface StCandidate {
+  rank: number | null;
+  ticker: string;
+  name: string;
+  sector: string;
+  currentPrice: number | null;
+  freshness: { state: 'LIVE' | 'DELAYED' | 'STALE'; lastUpdate: string | null; providerNote: string };
+  action: string;
+  state: string;
+  setupType: string;
+  setupScore: number;
+  entryQuality: number | null;
+  modelHealth: string;
+  dataQuality: number;
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  whyCandidate: string[];
+  whatCanGoWrong: string[];
+  changedSincePrevious: string[] | null;
+  plan: Record<string, number | string | null> & {
+    entryType: string;
+    entryZoneLow: number | null;
+    entryZoneHigh: number | null;
+    entryTrigger: string | null;
+    initialStop: number | null;
+    stopBasis: string | null;
+    target1: number | null;
+    target2: number | null;
+    rewardRiskToTarget1: number | null;
+    expectedValueAfterCostsPct: number | null;
+    expectedHoldingDays: number;
+    invalidationReason: string | null;
+    transactionCostPct: number;
+    estimatedSlippagePct: number;
+  };
+  sizing: {
+    riskAmount: number;
+    riskPerShare: number | null;
+    positionSizeShares: number;
+    capitalRequired: number;
+    capitalRemaining: number;
+    constraintsApplied: string[];
+    lossAtStop: number | null;
+  } | null;
+  forecast: {
+    expectedExcessReturnPct: number | null;
+    p10Pct: number | null;
+    p50Pct: number | null;
+    p90Pct: number | null;
+    probabilityTargetBeforeStop: number | null;
+    probabilityStatement: string;
+    modelConfidence: string;
+  };
+  gates: { passed: boolean; failures: Array<{ gate: string; current: string; required: string }> };
+  rankingScore: number | null;
+}
+
+export interface StScanResult {
+  scanRunId: string;
+  params: Required<StScanParams>;
+  marketStatus: { session: string; istTime: string; lastCompletedSession: string | null };
+  riskManager: { newEntriesAllowed: boolean; reasons: string[]; openRiskInr: number; openPositions: number };
+  candidates: StCandidate[];
+  universeSize: number;
+  passedGates: number;
+  emptyMessage: string | null;
+}
+
+export function runShortTermScan(params: StScanParams): Promise<StScanResult> {
+  return post<StScanResult>('/api/short-term/scan', params);
+}
+
+export function getShortTermDetail(ticker: string): Promise<{
+  candidate: StCandidate;
+  state: string;
+  evaluatedAt: string;
+  transitions: Array<{ fromState: string; toState: string; reason: string; createdAt: string }>;
+}> {
+  return get(`/api/short-term/${encodeURIComponent(ticker)}`);
+}
+
+export interface StAiReview {
+  state: string;
+  confidence: string;
+  whyCandidate: string[];
+  whyNotCandidate: string[];
+  entrySummary: string;
+  exitSummary: string;
+  riskSummary: string;
+  missingEvidence: string[];
+  whatWouldImproveSetup: string[];
+  whatWouldInvalidateSetup: string[];
+  provider: string;
+  model: string;
+  clamped: boolean;
+  clampNote: string | null;
+}
+
+export function runShortTermReview(
+  ticker: string,
+  body: { depth?: string; question?: string; budgetInr?: number; riskPerTradePct?: number }
+): Promise<{ review: StAiReview }> {
+  return post(`/api/short-term/${encodeURIComponent(ticker)}/review`, body);
+}
+
+export function getShortTermAiUsage(): Promise<{
+  usage: { todayUsd: number; monthUsd: number; dailyBudgetUsd: number; monthlyBudgetUsd: number; calls: Record<string, number>; cacheHitPct: number | null };
+  mode: string;
+}> {
+  return get('/api/short-term/ai-usage');
+}
