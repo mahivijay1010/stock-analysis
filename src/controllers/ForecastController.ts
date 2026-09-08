@@ -6,6 +6,7 @@
  */
 import { NextFunction, Request, Response } from "express";
 import { forecastService } from "../services/forecast/ForecastService";
+import { forecastDriftService } from "../services/forecast/ForecastDriftService";
 import { decisionService } from "../services/decision/DecisionService";
 import { portfolioOverviewService } from "../services/portfolio/PortfolioOverviewService";
 import { latestExperiments, runLiveBaselineExperiment } from "../services/experiments/runner";
@@ -14,6 +15,8 @@ import { modelHealthService } from "../services/monitoring/ModelHealthService";
 import { roleOrchestrator } from "../services/ai/RoleOrchestrator";
 import { LedgerService } from "../services/ledger/LedgerService";
 import { HttpError } from "../types";
+import { AppDataSource } from "../config/database";
+import { StructuredMarketEvent } from "../entities";
 
 function ok(res: Response, data: unknown, status = 200): void {
   res.status(status).json({ success: true, data });
@@ -81,6 +84,15 @@ export class ForecastController {
       }
       const run = await forecastService.issueMonth(req.params.ticker, req.params.period, { refresh: true });
       ok(res, { view: await forecastService.toView(run) }, 201);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/forecast/:ticker/vintage — original vs current vintage + drift state (Parts 10/11). */
+  vintage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      ok(res, await forecastDriftService.assess(req.params.ticker));
     } catch (err) {
       next(err);
     }
@@ -164,6 +176,34 @@ export class ForecastController {
       };
       const { review, result } = await reasoningService.review(req.params.ticker, body);
       ok(res, { review, clamped: result.clamped, clampNotes: result.clampNotes }, 201);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/events/:ticker — point-in-time structured events, newest first (read-only). */
+  events = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const t = req.params.ticker.trim().toUpperCase().replace(/\.(NS|BO)$/, "");
+      const rows = await AppDataSource.getRepository(StructuredMarketEvent)
+        .createQueryBuilder("e")
+        .where("e.ticker = :t", { t })
+        .andWhere("e.announced_at <= now()")
+        .orderBy("e.announced_at", "DESC")
+        .limit(30)
+        .getMany();
+      ok(res, {
+        events: rows.map((e) => ({
+          id: e.id,
+          eventType: e.eventType,
+          eventDate: e.eventDate,
+          announcedAt: e.announcedAt.toISOString(),
+          source: e.source,
+          sourceTier: e.sourceTier,
+          headline: e.headline ?? null,
+          url: e.url ?? null,
+        })),
+      });
     } catch (err) {
       next(err);
     }

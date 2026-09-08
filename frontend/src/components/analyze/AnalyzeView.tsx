@@ -36,6 +36,9 @@ import { AccuracyStrip } from './AccuracyStrip';
 import { PriceChartCard } from './PriceChartCard';
 import { DailyForecastCard } from './DailyForecastCard';
 import { CanonicalDecisionCard } from './CanonicalDecisionCard';
+import { ForecastVintageCard } from './ForecastVintageCard';
+import { MaterialEventsCard } from './MaterialEventsCard';
+import { AiSynthesisCard } from './AiSynthesisCard';
 import { CommitteeCard } from './CommitteeCard';
 import { FrameworkPanel } from './FrameworkPanel';
 import { TradePlanCard } from './TradePlanCard';
@@ -242,6 +245,7 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
 
               {section === 'forecast' && (
                 <div className="space-y-5">
+                  <ForecastVintageCard ticker={data.ticker} />
                   <DailyForecastCard ticker={data.ticker} />
                   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
                     <ForecastChart bars={data.chart.bars} predictions={data.analysis.predictions} />
@@ -254,6 +258,7 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
 
               {section === 'research' && (
                 <div className="space-y-4">
+                  <MaterialEventsCard ticker={data.ticker} />
                   {data.news !== undefined && <NewsPanel news={data.news} />}
                   {data.framework && <FrameworkPanel framework={data.framework} />}
                   <InvestmentBriefCard key={`brief-${data.ticker}`} ticker={data.ticker} />
@@ -263,6 +268,7 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
 
               {section === 'technicals' && (
                 <div className="space-y-4">
+                  <AiSynthesisCard ticker={data.ticker} />
                   <TechnicalsGrid technicals={data.analysis.technicals} quote={data.quote} />
                 </div>
               )}

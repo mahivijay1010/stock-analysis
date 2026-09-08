@@ -73,6 +73,9 @@ export const createStockRoutes = (): Router => {
   // GETs read stored issuances only; POSTs (auth) create NEW immutable
   // issuances — nothing here ever updates a forecast in place.
   router.get("/forecast/:ticker/daily", forecastController.daily); //                 GET  /api/forecast/:t/daily
+  // Vintages (Parts 10/11): original stays immutable; current is a separate
+  // issuance; drift = NORMAL/DRIFTING/INVALIDATED with reasons.
+  router.get("/forecast/:ticker/vintage", forecastController.vintage); //              GET  /api/forecast/:t/vintage
   router.get("/forecast/:ticker/month/:period", forecastController.month); //         GET  /api/forecast/:t/month/2026-09
   router.post("/forecast/:ticker/issue", requireAuth, forecastController.issue); //   POST /api/forecast/:t/issue
   router.post(
@@ -98,6 +101,7 @@ export const createStockRoutes = (): Router => {
   router.post("/jobs/forecast-maintenance", requireAuthOrAdminKey, forecastController.maintenance); // POST /api/jobs/forecast-maintenance
   // OpenAI multi-role AI pipeline (O2/O3): evidence graph -> analysts ->
   // critic -> committee; advisory + cap-only; honest 503 without a key.
+  router.get("/events/:ticker", forecastController.events); //                          GET  /api/events/:t
   router.get("/ai/:ticker", forecastController.aiLatest); //                            GET  /api/ai/:t
   router.post("/ai/:ticker/analyze", requireAuth, forecastController.aiAnalyze); //     POST /api/ai/:t/analyze
   // Phase 13 live model monitoring: rolling Brier/coverage over resolved

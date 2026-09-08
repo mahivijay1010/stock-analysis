@@ -1053,6 +1053,8 @@ export interface DecisionScoreCard {
     brierSkill: number | null;
     effectiveSamples: number | null;
     reasons: string[];
+    /** Part 18: machine-readable uncertainty decomposition (points lost per source). */
+    contributions?: Array<{ factor: string; earned: number; max: number; shortfall: number; detail: string }>;
   };
   overallOpportunityScore: number | null;
   caption: string;

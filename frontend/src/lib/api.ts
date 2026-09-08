@@ -448,3 +448,66 @@ export function runCommitteeReview(
 ): Promise<unknown> {
   return post<unknown>(`/api/decision/${encodeURIComponent(ticker)}/committee`, userContext ?? {});
 }
+
+/* ---- OpenAI-first upgrade (O8/O9): vintages, drift, events, AI roles ---- */
+
+export interface VintageSummaryView {
+  runId: string;
+  issuedAt: string;
+  anchorSessionDate: string;
+  anchorPrice: number;
+  medianAtToday: number | null;
+  p10AtToday: number | null;
+  p90AtToday: number | null;
+  medianReturnPct30: number | null;
+  insideBand80: boolean | null;
+  errorPct: number | null;
+}
+
+export interface DriftAssessmentView {
+  version: string;
+  ticker: string;
+  asOf: string;
+  currentPrice: number | null;
+  original: VintageSummaryView | null;
+  current: VintageSummaryView | null;
+  drift: {
+    state: 'NORMAL' | 'DRIFTING' | 'INVALIDATED';
+    reasons: string[];
+    distanceAtr: number | null;
+    distanceSigma: number | null;
+    regimeChanged: boolean;
+    materialEventArrived: boolean;
+    volumeAnomaly: boolean;
+  } | null;
+}
+
+export function getForecastVintage(ticker: string): Promise<DriftAssessmentView> {
+  return get<DriftAssessmentView>(`/api/forecast/${encodeURIComponent(ticker)}/vintage`);
+}
+
+export interface StructuredEventView {
+  id: string;
+  eventType: string;
+  eventDate: string;
+  announcedAt: string;
+  source: string;
+  sourceTier: number;
+  headline: string | null;
+  url: string | null;
+}
+
+export function getStructuredEvents(ticker: string): Promise<{ events: StructuredEventView[] }> {
+  return get<{ events: StructuredEventView[] }>(`/api/events/${encodeURIComponent(ticker)}`);
+}
+
+export interface AiRoleRow {
+  response: Record<string, unknown>;
+  createdAt: string;
+  model: string;
+  validationResult: string | null;
+}
+
+export function getAiRoles(ticker: string): Promise<{ roles: Record<string, AiRoleRow | null> }> {
+  return get<{ roles: Record<string, AiRoleRow | null> }>(`/api/ai/${encodeURIComponent(ticker)}`);
+}

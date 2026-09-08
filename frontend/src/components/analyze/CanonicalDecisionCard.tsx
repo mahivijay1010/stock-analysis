@@ -73,6 +73,21 @@ function TruthPanel({ s }: { s: DecisionSnapshotView }) {
         value={`${fc.band} · ${fc.score}/100`}
         hint={fc.reasons[0]}
       />
+      {fc.contributions && fc.contributions.length > 0 && (
+        <div className="border-b border-white/[0.04] py-1.5 sm:col-span-2">
+          <p className="text-[10px] tracking-wide text-slate-600 uppercase">Why confidence is {fc.band} (points lost per source)</p>
+          <div className="mt-1 grid grid-cols-2 gap-x-6 gap-y-0.5 sm:grid-cols-4">
+            {fc.contributions.map((c) => (
+              <span key={c.factor} className="text-[11px] text-slate-500" title={c.detail}>
+                {c.factor.replace(/\s*\(.*\)/, '')}{' '}
+                <span className={c.shortfall < 0 ? 'font-semibold text-amber-300 tabular-nums' : 'text-slate-400 tabular-nums'}>
+                  {c.shortfall < 0 ? c.shortfall : '✓'}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       <ScoreRow
         label="Data quality"
         value={`${sc.dataQuality.score}/100`}

@@ -101,3 +101,60 @@ function toBatchModel(model: string): ExternalBatchModel {
 export function pythonWorkerModels(): ExternalBatchModel[] {
   return [toBatchModel("elastic-net"), toBatchModel("logistic"), toBatchModel("hgb-regressor"), toBatchModel("hgb-classifier")];
 }
+
+// ── Panel endpoint (upgrade Parts 6/7): cross-sectional fit-predict ──────────
+
+export interface PanelPredictRow {
+  id: string;
+  date: string;
+  features: Record<string, number | null>;
+}
+
+export interface PanelTrainRow extends PanelPredictRow {
+  target: number;
+}
+
+export interface PanelPrediction {
+  id: string;
+  score: number;
+  prob: number | null;
+}
+
+/** One panel fit-predict call; throws on worker error (caller records skips). */
+export async function panelFitPredict(opts: {
+  model: string;
+  featureNames: string[];
+  train: PanelTrainRow[];
+  eval: PanelPredictRow[];
+  timeoutMs?: number;
+}): Promise<{ predictions: PanelPrediction[]; trainingEndDate: string; version: string }> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), opts.timeoutMs ?? 600_000);
+  try {
+    const res = await fetch(`${WORKER_URL}/panel-fit-predict`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: opts.model,
+        featureNames: opts.featureNames,
+        train: opts.train,
+        eval: opts.eval,
+      }),
+    });
+    const body = (await res.json()) as {
+      error?: string;
+      predictions?: PanelPrediction[];
+      trainingEndDate?: string;
+      version?: string;
+    };
+    if (!res.ok || body.error) throw new Error(`panel worker ${opts.model}: ${body.error ?? res.status}`);
+    return {
+      predictions: body.predictions ?? [],
+      trainingEndDate: body.trainingEndDate ?? "",
+      version: body.version ?? "unknown",
+    };
+  } finally {
+    clearTimeout(t);
+  }
+}

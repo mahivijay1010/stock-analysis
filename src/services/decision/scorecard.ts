@@ -141,6 +141,8 @@ export interface ForecastConfidence {
   brierSkill: number | null; // 0.25 − brier; ≤0 means no edge over a coin flip
   effectiveSamples: number | null;
   reasons: string[];
+  /** Part 18: machine-readable WHY — points lost per uncertainty source. */
+  contributions: Array<{ factor: string; earned: number; max: number; shortfall: number; detail: string }>;
 }
 
 /**
@@ -161,6 +163,9 @@ export function computeForecastConfidence(i: ForecastConfidenceInputs): Forecast
       brierSkill: null,
       effectiveSamples: null,
       reasons: ["No measured out-of-sample record — forecast confidence cannot exceed LOW."],
+      contributions: [
+        { factor: "measured evidence", earned: 0, max: 100, shortfall: -100, detail: "no out-of-sample record at all" },
+      ],
     };
   }
   const brierSkill = Math.round((0.25 - i.brier) * 10_000) / 10_000;
@@ -181,12 +186,19 @@ export function computeForecastConfidence(i: ForecastConfidenceInputs): Forecast
   if (i.stabilityDelta == null) reasons.push("Model stability unmeasured (needs two evaluation windows).");
 
   const score = round1(clamp(skillPts + samplePts + coveragePts + stabilityPts, 0, 100));
+  const contributions = [
+    { factor: "calibration (Brier skill)", earned: round1(skillPts), max: 40, shortfall: round1(skillPts - 40), detail: `Brier skill ${brierSkill.toFixed(4)} (full credit at ≥0.05)` },
+    { factor: "effective sample size", earned: round1(samplePts), max: 30, shortfall: round1(samplePts - 30), detail: `~${effN} independent obs after ${i.overlapDays}d overlap adjustment (full at 100)` },
+    { factor: "band coverage", earned: round1(coveragePts), max: 20, shortfall: round1(coveragePts - 20), detail: i.bandCoveragePct != null ? `80%-band coverage ${i.bandCoveragePct.toFixed(1)}% (nominal 80%)` : "coverage unmeasured" },
+    { factor: "model stability", earned: round1(stabilityPts), max: 10, shortfall: round1(stabilityPts - 10), detail: i.stabilityDelta != null ? `stability delta ${i.stabilityDelta}` : "unmeasured — needs two evaluation windows" },
+  ];
   return {
     score,
     band: score < 40 ? "LOW" : score < 65 ? "MEDIUM" : "HIGH",
     brierSkill,
     effectiveSamples: effN,
     reasons,
+    contributions,
   };
 }
 
