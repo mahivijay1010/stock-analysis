@@ -260,9 +260,13 @@ export function simulateDailyQuantiles(
  * (wrapping). Partially preserves autocorrelation and volatility clustering
  * that i.i.d. resampling destroys.
  *
- * EXPERIMENTAL: not wired to any product surface. It must beat the i.i.d.
- * simulator on out-of-sample interval scores in the experiment registry
- * before an issuance may use it (risk-spec Rule 4/10).
+ * VALIDATED AND NOT PROMOTED (completion Phase 11): experiment
+ * mc-block-vs-iid (ExperimentRun 3a591851, 429 non-overlapping anchors ×
+ * 40 tickers, pool strictly pre-anchor) — at 21td the i.i.d. simulator's 80%
+ * band coverage (78.6%) is CLOSER to nominal than block5 (77.9%) or block10
+ * (76.0%); CRPS identical to 4 decimals. Pre-registered rule says KEEP iid.
+ * This function stays available for future re-validation only; no product
+ * surface may call it (risk-spec Rule 4/10).
  */
 export function simulateDailyQuantilesBlock(
   dailyReturns: number[],
