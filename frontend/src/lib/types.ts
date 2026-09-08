@@ -1091,6 +1091,16 @@ export interface DecisionSnapshotView {
   existingHolderAction?: 'HOLD' | 'REVIEW' | 'INSUFFICIENT_DATA' | null;
   holderReasons?: string[] | null;
   unmetGates?: Array<{ gate: string; current: string; required: string }> | null;
+  /** Phase 7: calibrated-or-refused direction probability (never a raw prob dressed as calibrated). */
+  inputs?: {
+    directionProbability?: {
+      horizonDays: number;
+      calibratedProbability: number | null;
+      calibratorType: string | null;
+      status: 'calibrated' | 'unavailable';
+      statement: string;
+    } | null;
+  } | null;
   asOf: string;
   validUntil: string;
   modelVersion: string;

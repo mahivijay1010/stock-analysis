@@ -36,6 +36,10 @@ import { newsService } from "../market/NewsService";
 import { IntelligenceRepository } from "../intelligence/IntelligenceRepository";
 import { intelligenceQualityScore } from "../quant/intelligenceQuality";
 import { calendarDaysBetween as daysBetween } from "../forecast/dates";
+import {
+  DirectionProbabilityStatement,
+  resolveDirectionProbability,
+} from "../research/calibratorRegistry";
 
 export class DecisionService {
   /** Latest published snapshot (may be expired — expiry is reported, not hidden). */
@@ -139,6 +143,7 @@ export class DecisionService {
     let scoreCard: ScoreCard | null = null;
     let evReport: ExpectedValueReport | null = null;
     let regime: RegimeAssessment | null = null;
+    let directionProbability: DirectionProbabilityStatement | null = null;
     try {
       const barsResult = await marketDataService.getDailyBarsWithSource(instrument.yahooTicker, "1y");
       const bars = barsResult.bars;
@@ -229,6 +234,10 @@ export class DecisionService {
           });
           rewardRiskRatio = evReport.rewardRiskRatio;
         }
+        // Phase 7 display path: a probability may only be SHOWN as a direction
+        // probability if a PROMOTED calibrator for (champion, 30d) transforms
+        // it. Otherwise the snapshot carries the mandatory unavailable text.
+        directionProbability = await resolveDirectionProbability("champion-quant-v1", 30, last?.pop ?? null);
       }
 
       // Phase 4: regime assessment — NIFTY/VIX cached bars + the stock's own
@@ -306,6 +315,12 @@ export class DecisionService {
       regime = null;
     }
 
+    // The statement must exist even when issuance/analysis failed — absence of
+    // evidence renders as the mandatory "unavailable" text, never as a blank.
+    if (!directionProbability) {
+      directionProbability = await resolveDirectionProbability("champion-quant-v1", 30, null);
+    }
+
     // Re-evaluate the gate WITH the v3 inputs (the first evaluation above only
     // covered v2 evidence; scorecard fields can only cap further).
     const decisionV3 = evaluateEntryPolicy({
@@ -354,6 +369,7 @@ export class DecisionService {
           afterMarketClose,
           lastObservedSession: lastObserved,
           regime: regime as unknown as Record<string, unknown> | null,
+          directionProbability: directionProbability as unknown as Record<string, unknown> | null,
         },
         asOf: now,
         validUntil,

@@ -65,3 +65,6 @@ export { ExperimentRun } from "./ExperimentRun";
 
 // Risk-spec T4 — AI committee audit trail
 export { AiReview } from "./AiReview";
+
+// Completion Phase 7 — calibrator registry
+export { CalibratorRecord } from "./CalibratorRecord";

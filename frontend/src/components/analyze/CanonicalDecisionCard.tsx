@@ -63,6 +63,7 @@ function TruthPanel({ s }: { s: DecisionSnapshotView }) {
   if (!sc) return null;
   const fc = sc.forecastConfidence;
   const calibrated = fc.brierSkill != null && fc.brierSkill > 0 && (fc.effectiveSamples ?? 0) >= 10;
+  const dp = s.inputs?.directionProbability;
   return (
     <div className="mt-3 grid grid-cols-1 gap-x-8 rounded-xl border border-white/8 bg-white/3 px-4 py-2.5 sm:grid-cols-2">
       <ScoreRow label="Setup (technical description, not a probability)" value={sc.setupScore != null ? `${sc.setupScore}/100` : '—'} />
@@ -96,6 +97,20 @@ function TruthPanel({ s }: { s: DecisionSnapshotView }) {
             : undefined
         }
       />
+      {dp?.status === 'calibrated' && dp.calibratedProbability != null ? (
+        <ScoreRow
+          label="Directional probability (30d)"
+          value={`${(dp.calibratedProbability * 100).toFixed(1)}% (calibrated · ${dp.calibratorType})`}
+          hint={dp.statement}
+        />
+      ) : (
+        <div className="flex items-baseline justify-between gap-3 border-b border-white/[0.04] py-1.5 last:border-0">
+          <span className="text-xs text-slate-500">Directional probability (30d)</span>
+          <span className="text-right text-[11px] leading-snug text-slate-400">
+            Directional probability unavailable — insufficient calibrated evidence
+          </span>
+        </div>
+      )}
       <ScoreRow
         label="Opportunity (descriptive blend, evidence-capped)"
         value={sc.overallOpportunityScore != null ? `${sc.overallOpportunityScore}/100` : '—'}
