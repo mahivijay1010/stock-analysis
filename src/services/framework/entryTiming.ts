@@ -201,13 +201,13 @@ export function computeEntryTiming(input: EntryTimingInput): EntryTiming {
 
   let action: EntryAction;
   if (input.recommendation === "AVOID") action = "AVOID_ENTRY";
-  else if (score >= 62) action = "BUY_TODAY";
+  else if (score >= 62) action = "TIMING_OK";
   else if (score >= 40) action = "WAIT";
   else action = "AVOID_ENTRY";
 
   // ── waitFor: the single biggest negative contributor, phrased concretely ──
   let waitFor: string | null = null;
-  if (action !== "BUY_TODAY") {
+  if (action !== "TIMING_OK") {
     const blockers = contributions
       .filter((c) => c.delta < 0 && c.waitFor)
       .sort((a, b) => a.delta - b.delta);

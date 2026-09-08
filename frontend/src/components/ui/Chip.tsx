@@ -119,7 +119,7 @@ export function RiskChip({ risk }: { risk: RiskLevel }) {
 // Risk-spec Rule 7/17: entry timing is a TIMING description — 'BUY TODAY' was
 // retired because only the evidence-gated decision may use buy vocabulary.
 export const ENTRY_META: Record<EntryAction, { label: string; short: string; tone: Tone }> = {
-  BUY_TODAY: { label: 'TIMING OK', short: 'TIMING OK', tone: 'buy' },
+  TIMING_OK: { label: 'TIMING OK', short: 'TIMING OK', tone: 'buy' },
   WAIT: { label: 'TIMING: WAIT', short: 'WAIT', tone: 'wait' },
   AVOID_ENTRY: { label: 'POOR TIMING', short: 'POOR TIMING', tone: 'sell' },
 };

@@ -65,7 +65,7 @@ export interface NewsSummary {
 
 // ── V5: Entry timing (Module N3) ────────────────────────────────────────────
 
-export type EntryAction = "BUY_TODAY" | "WAIT" | "AVOID_ENTRY";
+export type EntryAction = "TIMING_OK" | "WAIT" | "AVOID_ENTRY";
 
 export interface EntryTiming {
   action: EntryAction;

@@ -42,7 +42,7 @@ const RECOMMENDATION_COPY: Record<Recommendation, { eyebrow: string; headline: s
 };
 
 const ENTRY_LABEL: Record<EntryAction, string> = {
-  BUY_TODAY: 'Timing OK',
+  TIMING_OK: 'Timing OK',
   WAIT: 'Timing: wait',
   AVOID_ENTRY: 'Timing poor',
 };
@@ -118,7 +118,7 @@ export function DecisionSummary({ data }: { data: AnalyzeResponse }) {
   const rec = RECOMMENDATION_COPY[analysis.recommendation];
   const primaryReason = entryTiming?.reasons[0] ?? analysis.reasons.positive[0] ?? analysis.reasons.negative[0] ?? rec.summary;
   const timingLabel = entryTiming ? ENTRY_LABEL[entryTiming.action] : 'Not available';
-  const timingClass = entryTiming?.action === 'BUY_TODAY' ? 'decision-action-buy' : entryTiming?.action === 'WAIT' ? 'decision-action-wait' : 'decision-action-avoid';
+  const timingClass = entryTiming?.action === 'TIMING_OK' ? 'decision-action-buy' : entryTiming?.action === 'WAIT' ? 'decision-action-wait' : 'decision-action-avoid';
 
   return (
     <div className="decision-3d-shell">

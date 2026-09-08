@@ -32,7 +32,7 @@ import {
 const signTone = (v: number) => (v > 0 ? 'text-buy' : v < 0 ? 'text-sell' : 'text-slate-400');
 
 /** Sort orders: best-first under ascending sort. */
-const ENTRY_ORDER: Record<EntryAction, number> = { BUY_TODAY: 0, WAIT: 1, AVOID_ENTRY: 2 };
+const ENTRY_ORDER: Record<EntryAction, number> = { TIMING_OK: 0, WAIT: 1, AVOID_ENTRY: 2 };
 const REC_ORDER: Record<Recommendation, number> = { BUY: 0, HOLD: 1, AVOID: 2 };
 
 function Dash() {

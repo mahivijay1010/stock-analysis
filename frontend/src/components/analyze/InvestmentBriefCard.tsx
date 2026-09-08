@@ -17,7 +17,7 @@ import { Button, Card, Chip, Drawer, EmptyState, ErrorState, Skeleton } from '@/
 type Tone = 'buy' | 'sell' | 'wait' | 'zinc';
 
 const REC_TONES: Record<string, Tone> = { BUY: 'buy', HOLD: 'wait', AVOID: 'sell' };
-const ENTRY_TONES: Record<string, Tone> = { BUY_TODAY: 'buy', WAIT: 'wait', AVOID_ENTRY: 'sell' };
+const ENTRY_TONES: Record<string, Tone> = { TIMING_OK: 'buy', WAIT: 'wait', AVOID_ENTRY: 'sell' };
 const RISK_TONES: Record<string, Tone> = { LOW: 'buy', MEDIUM: 'wait', HIGH: 'sell' };
 
 function toneOf(map: Record<string, Tone>, key: string | undefined | null): Tone {

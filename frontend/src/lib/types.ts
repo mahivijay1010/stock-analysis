@@ -175,7 +175,7 @@ export interface MonteCarloForecast {
   note: string;
 }
 
-export type EntryAction = 'BUY_TODAY' | 'WAIT' | 'AVOID_ENTRY';
+export type EntryAction = 'TIMING_OK' | 'WAIT' | 'AVOID_ENTRY';
 
 export interface EntryTiming {
   action: EntryAction;

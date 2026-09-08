@@ -409,7 +409,7 @@ export default function UiShowcasePage() {
             <RiskChip risk="HIGH" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <EntryChip action="BUY_TODAY" />
+            <EntryChip action="TIMING_OK" />
             <EntryChip action="WAIT" />
             <EntryChip action="AVOID_ENTRY" />
             <DataStatusChip status="live" />

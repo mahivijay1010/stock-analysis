@@ -8,6 +8,22 @@ Run: `npm run dev` (backend :5101) · `cd frontend && npx next dev -p 3001` (UI 
 
 Educational tool — not SEBI-registered investment advice. Markets are uncertain; measured past accuracy does not guarantee future results.
 
+## Completion state (2026-09-08 — Rules 1–20 finished)
+
+All twenty rules of `docs/risk-spec.md` are **VERIFIED** (one runtime item —
+the live Claude committee call — is BLOCKED_EXTERNAL until `ANTHROPIC_API_KEY`
+is configured; the code path is complete and tested). The full acceptance
+matrix with evidence lives in `docs/final-implementation-report.md`; the
+research verdicts in `docs/forecast-before-after.md`; the promotion decision
+("no challenger qualifies — champion kept, a successful result") in
+`docs/promotion-policy.md`; the point-in-time failure-case replay in
+`docs/bhel-regression-final.md`. Measured bottom line, stated on every
+surface: **no model — champion, statistical, or ML — demonstrates a validated
+out-of-sample directional edge**; the product ships calibrated RANGES, refuses
+direction claims (the mandatory "Directional probability unavailable —
+insufficient calibrated evidence" text), and answers WATCH / WAIT until edge
+is earned in the experiment registry.
+
 ## Decision methodology (2026-09 risk-spec remediation)
 
 StockSense's highest priority is **calibrated uncertainty and preventing false

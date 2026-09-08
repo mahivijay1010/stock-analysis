@@ -58,7 +58,7 @@ describe("assessEntryQuality v2", () => {
     // wide interval 20% (−6); reward/risk 0.9 (−10).
     const q = assessEntryQuality(
       inputs({
-        baseTimingScore: 62, // v1 said "BUY_TODAY" at exactly this score
+        baseTimingScore: 62, // v1 said "TIMING_OK" at exactly this score
         price: 431,
         technicals: calmTechnicals({
           sma50: 370,
