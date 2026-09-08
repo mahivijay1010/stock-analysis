@@ -15,12 +15,44 @@
  * out-of-sample evidence — currently none do, and that is stated.
  */
 
+import { AppDataSource } from "../../config/database";
 import { adjustedDailyReturns } from "../market/canonical";
 import { simulateDailyQuantiles } from "../quant/montecarlo";
 import { Bar } from "../market/types";
 import { HORIZON_TD, ShortTermForecast, ShortTermHorizon, SHORT_TERM_VERSION } from "./types";
 import { SetupClassification } from "./setups";
 import { TradePlan } from "./types";
+
+/**
+ * Hazard-informed expected holding time (Cycle 5, descriptive): per-setup
+ * median resolution day from the persisted survival study. Falls back to the
+ * horizon midpoint when no study row exists. Cached per process.
+ */
+let hazardMedians: Map<string, number> | null = null;
+export async function expectedHoldingDaysFor(setupType: string, fallback: number): Promise<number> {
+  if (hazardMedians == null) {
+    hazardMedians = new Map();
+    try {
+      const rows: Array<{ metrics: { hazardTables?: Record<string, Array<{ day: number; cumTargetPct: number; cumStopPct: number }>> } }> =
+        await AppDataSource.query(
+          `SELECT metrics FROM short_term_model_performance WHERE model_name = 'st-survival-competing-risks' ORDER BY created_at DESC LIMIT 1`
+        );
+      const tables = rows[0]?.metrics?.hazardTables ?? {};
+      for (const [setup, table] of Object.entries(tables)) {
+        // median resolution day = first day where cumulative resolution ≥ half of total resolution
+        const final = table[table.length - 1];
+        const totalResolved = final.cumTargetPct + final.cumStopPct;
+        if (totalResolved < 20) continue; // too few resolutions to inform timing
+        const half = totalResolved / 2;
+        const med = table.find((r) => r.cumTargetPct + r.cumStopPct >= half)?.day ?? null;
+        if (med != null) hazardMedians.set(setup, med);
+      }
+    } catch {
+      /* no study yet — fallback applies */
+    }
+  }
+  return hazardMedians.get(setupType) ?? fallback;
+}
 
 const GRID: Array<{ p: number; w: number }> = [
   { p: 5, w: 0.1 },

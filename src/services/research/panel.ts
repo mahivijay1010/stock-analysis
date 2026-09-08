@@ -20,7 +20,7 @@ import { alignReturns, buildSectorIndex, forwardExcessTargets, rollingBeta, Alig
 import { Bar } from "../market/types";
 import { analysisCloses } from "../market/canonical";
 
-export const PANEL_VERSION = "panel-v1";
+export const PANEL_VERSION = "panel-v2";
 export const PANEL_HORIZONS_TD = [1, 5, 10, 21] as const;
 
 export interface PanelRow {
@@ -179,6 +179,47 @@ export async function buildPanelDataset(opts?: {
     sectorIndexBySector.set(sector, buildSectorIndex(memberBars));
   }
 
+  // panel-v2: universe breadth + advance/decline per DATE (point-in-time —
+  // each date's value uses only that date's and prior closes).
+  const breadthByDate = new Map<string, { above: number; total: number }>();
+  const advDecByDate = new Map<string, { adv: number; dec: number }>();
+  for (const [, bars] of barsByTicker) {
+    const closes = analysisCloses(bars);
+    let rollingSum = 0;
+    for (let i = 0; i < bars.length; i++) {
+      rollingSum += closes[i];
+      if (i >= 50) rollingSum -= closes[i - 50];
+      if (i >= 49) {
+        const sma50 = rollingSum / 50;
+        const b = breadthByDate.get(bars[i].date) ?? { above: 0, total: 0 };
+        b.total++;
+        if (closes[i] > sma50) b.above++;
+        breadthByDate.set(bars[i].date, b);
+      }
+      if (i >= 1 && closes[i - 1] > 0) {
+        const a = advDecByDate.get(bars[i].date) ?? { adv: 0, dec: 0 };
+        if (closes[i] > closes[i - 1]) a.adv++;
+        else if (closes[i] < closes[i - 1]) a.dec++;
+        advDecByDate.set(bars[i].date, a);
+      }
+    }
+  }
+  const breadthAt = (date: string): number | null => {
+    const b = breadthByDate.get(date);
+    return b && b.total >= 20 ? b.above / b.total : null;
+  };
+  const advDeclineAt = (dates: string[], endIdx: number): number | null => {
+    let adv = 0;
+    let dec = 0;
+    for (let k = Math.max(0, endIdx - 4); k <= endIdx; k++) {
+      const a = advDecByDate.get(dates[k]);
+      if (!a) return null;
+      adv += a.adv;
+      dec += a.dec;
+    }
+    return dec > 0 ? adv / dec : adv > 0 ? 5 : null;
+  };
+
   // Point-in-time event counts (announcedAt ≤ anchor close) per ticker.
   const eventRows: Array<{ ticker: string; event_type: string; announced_on: string }> = await AppDataSource.query(
     `SELECT ticker, event_type, to_char(announced_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD') AS announced_on
@@ -222,6 +263,8 @@ export async function buildPanelDataset(opts?: {
       const d30 = new Date(new Date(date).getTime() - 30 * 86400_000).toISOString().slice(0, 10);
       features.eventCount10d = events.filter((e) => e.on <= date && e.on > d10).length;
       features.orderWinCount30d = events.filter((e) => e.type === "order_win" && e.on <= date && e.on > d30).length;
+      features.breadthAboveSma50 = breadthAt(date);
+      features.advDecline5 = advDeclineAt(aligned.dates, i);
 
       const targets: PanelRow["targets"] = {};
       for (const h of PANEL_HORIZONS_TD) {

@@ -83,6 +83,17 @@ export class CronService {
         expression: "15 20 * * 6",
         run: () => this.weeklyIntelligenceRefresh(),
       },
+      // Part V (autonomous directive): prospective research jobs — idempotent.
+      {
+        name: "evening-resolve-shadow-outcomes",
+        expression: "45 18 * * 1-5",
+        run: () => this.resolveShadowOutcomes(),
+      },
+      {
+        name: "monthly-governance-review",
+        expression: "0 21 1 * *",
+        run: () => this.monthlyGovernanceReview(),
+      },
     ];
 
     for (const job of jobs) {
@@ -118,6 +129,21 @@ export class CronService {
   }
 
   // ── Job bodies ─────────────────────────────────────────────────────────────
+
+  /** 18:45 IST weekdays — resolve matured short-term shadow predictions (idempotent). */
+  private async resolveShadowOutcomes(): Promise<void> {
+    const { researchJobsService } = await import("./research/ResearchJobsService");
+    const r = await researchJobsService.resolveShadowOutcomes();
+    console.log(`🧪 [CRON] shadow outcomes: resolved ${r.resolved}, still pending ${r.pending}`);
+  }
+
+  /** 21:00 IST on the 1st — live-shadow snapshot + pre-registered demotions (never promotes). */
+  private async monthlyGovernanceReview(): Promise<void> {
+    const { researchJobsService } = await import("./research/ResearchJobsService");
+    const r = await researchJobsService.monthlyGovernanceReview();
+    console.log(`🏛️ [CRON] governance review: ${r.snapshots} snapshots, ${r.transitions} demotions`);
+  }
+
 
   /** 08:45 IST — refresh universe bars, then scan + log predictions. */
   private async morningRefreshAndScan(): Promise<void> {

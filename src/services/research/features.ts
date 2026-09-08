@@ -16,7 +16,7 @@
 import { Bar } from "../market/types";
 import { analysisCloses } from "../market/canonical";
 
-export const FEATURE_VERSION = "features-v1";
+export const FEATURE_VERSION = "features-v2";
 
 export interface FeatureValue {
   value: number | null;
@@ -159,6 +159,13 @@ export function buildFeatures(
   put("atr14_pct", atrPct(bars));
   const vol20 = stdev(rets.slice(-20));
   put("realized_vol20_ann_pct", vol20 != null ? vol20 * Math.sqrt(252) * 100 : null);
+  // HAR-RV components (daily/weekly/monthly realized vol, annualized %) —
+  // inputs for the HAR-RV distribution baseline (Part F).
+  put("rv_1d_ann_pct", rets.length >= 1 ? Math.abs(rets[rets.length - 1]) * Math.sqrt(252) * 100 : null);
+  const vol5 = stdev(rets.slice(-5));
+  put("rv_5d_ann_pct", vol5 != null ? vol5 * Math.sqrt(252) * 100 : null);
+  const vol22 = stdev(rets.slice(-22));
+  put("rv_22d_ann_pct", vol22 != null ? vol22 * Math.sqrt(252) * 100 : null);
 
   // Bollinger %B (20, 2σ)
   const sd20 = stdev(closes.slice(-20));

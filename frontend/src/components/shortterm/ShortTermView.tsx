@@ -17,6 +17,8 @@ import {
 } from '@/lib/api';
 import { fmtDateTime, inr, signedPct } from '@/lib/format';
 import { Button, Card, Chip, ErrorState, Input, Select, ViewHero } from '@/components/ui';
+import { TradeRadarOrb } from '@/components/market/TradeRadarOrb';
+import { AIEvidenceProgress } from '@/components/market/AIEvidenceProgress';
 
 /*
  * SHORT-TERM TRADE RADAR V2 — qualification integrity. Two sections:
@@ -53,12 +55,29 @@ const TIER_TONE: Record<string, 'buy' | 'cyan' | 'amber' | 'zinc'> = { A: 'buy',
 const TIER_LABEL: Record<string, string> = { A: 'A / VALIDATED', B: 'B / PROMISING', C: 'C / UNPROVEN', D: 'D / REJECTED' };
 const FRESH_TONE: Record<string, 'buy' | 'amber' | 'sell'> = { LIVE: 'buy', EOD_FINAL: 'cyan' as never, DELAYED_INTRADAY: 'amber', STALE: 'sell' };
 
+type DetailTab = 'overview' | 'entry' | 'exit' | 'ai' | 'track';
+
+function DetailTabButton({ id, label, active, onSelect }: { id: DetailTab; label: string; active: DetailTab; onSelect: (id: DetailTab) => void }) {
+  return <button type="button" onClick={() => onSelect(id)} className={clsx('cockpit-tab', active === id && 'cockpit-tab-active')}>{label}</button>;
+}
+
+function TradeLevelMap({ c }: { c: StCandidate }) {
+  const p = c.plan;
+  const values = [p.initialStop, p.entryZoneLow, p.entryZoneHigh, c.currentPrice, p.target1, p.target2].filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  if (values.length < 2) return null;
+  const min = Math.min(...values); const max = Math.max(...values); const span = Math.max(max - min, 1);
+  const pos = (v: number) => `${Math.max(1, Math.min(99, ((v - min) / span) * 100))}%`;
+  const left = p.entryZoneLow != null ? Number.parseFloat(pos(p.entryZoneLow)) : null;
+  const right = p.entryZoneHigh != null ? Number.parseFloat(pos(p.entryZoneHigh)) : null;
+  return <div className="trade-level-map" aria-label="Entry, stop, current price and target map"><div className="trade-level-axis" aria-hidden>{left != null && right != null && <span className="trade-entry-zone" style={{ left: `${left}%`, width: `${Math.max(right - left, 2)}%` }} />}{p.initialStop != null && <i className="trade-marker trade-marker-stop" style={{ left: pos(p.initialStop) }} />}{c.currentPrice != null && <i className="trade-marker trade-marker-price" style={{ left: pos(c.currentPrice) }} />}{p.target1 != null && <i className="trade-marker trade-marker-target" style={{ left: pos(p.target1) }} />}{p.target2 != null && <i className="trade-marker trade-marker-target-2" style={{ left: pos(p.target2) }} />}</div><div className="trade-level-legend"><span><i className="level-stop" />Stop <b>{p.initialStop != null ? inr(p.initialStop) : '—'}</b></span><span><i className="level-entry" />Entry <b>{p.entryZoneLow != null ? `${inr(p.entryZoneLow)}–${inr(p.entryZoneHigh ?? p.entryZoneLow)}` : p.entryTrigger ?? '—'}</b></span><span><i className="level-price" />Now <b>{c.currentPrice != null ? inr(c.currentPrice) : '—'}</b></span><span><i className="level-target" />Target <b>{p.target1 != null ? inr(p.target1) : '—'}</b></span></div></div>;
+}
+
 function CandidateCard({ c, onOpen }: { c: StCandidate; onOpen: (t: string) => void }) {
   const p = c.plan;
   const tier = c.tier ?? 'C';
   const se = c.setupEvidence;
   return (
-    <Card className="p-4">
+    <Card className={clsx('market-depth-candidate p-5', c.qualified ? 'market-depth-candidate-qualified' : 'market-depth-candidate-watch')}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -101,6 +120,7 @@ function CandidateCard({ c, onOpen }: { c: StCandidate; onOpen: (t: string) => v
       )}
 
       <div className="glass-inset mt-3 px-3.5 py-2.5 text-xs leading-relaxed">
+        <TradeLevelMap c={c} />
         <p className="text-slate-400">
           <span className="text-slate-500">{p.entryType === 'BREAKOUT_TRIGGER' ? 'Trigger:' : 'Entry zone:'}</span>{' '}
           {p.entryType === 'BREAKOUT_TRIGGER' ? p.entryTrigger : p.entryZoneLow != null ? `₹${p.entryZoneLow} – ₹${p.entryZoneHigh}` : '—'}
@@ -136,7 +156,7 @@ function ModelLabPanel() {
   if (q.isPending || q.isError || !q.data?.available || !q.data.setupEvidence) return null;
   const cells = q.data.setupEvidence.cells as Array<Record<string, unknown>>;
   return (
-    <Card className="p-4">
+    <Card className="model-lab-panel p-5">
       <p className="flex items-center gap-2 text-xs font-medium text-slate-400">
         <FlaskConical className="h-4 w-4 text-cyan-300" aria-hidden /> Short-Term Model Lab — per-setup realized-R evidence
       </p>
@@ -177,7 +197,7 @@ function ModelLabPanel() {
 }
 
 function DetailPanel({ ticker, onBack, budget, riskPct }: { ticker: string; onBack: () => void; budget: number | null; riskPct: number }) {
-  const [tab, setTab] = useState<'overview' | 'entry' | 'exit' | 'ai' | 'track'>('overview');
+  const [tab, setTab] = useState<DetailTab>('overview');
   const [question, setQuestion] = useState('');
   const q = useQuery({ queryKey: ['st-detail', ticker], queryFn: () => getShortTermDetail(ticker), staleTime: 60_000, retry: 1 });
   const review = useMutation({ mutationFn: (body: { depth?: string; question?: string }) => runShortTermReview(ticker, { ...body, budgetInr: budget ?? undefined, riskPerTradePct: riskPct }) });
@@ -187,17 +207,11 @@ function DetailPanel({ ticker, onBack, budget, riskPct }: { ticker: string; onBa
   if (q.isError) return <ErrorState message={q.error instanceof Error ? q.error.message : 'failed'} onRetry={() => q.refetch()} />;
   const c = q.data!.candidate;
   const p = c.plan;
-  const TabBtn = ({ id, label }: { id: typeof tab; label: string }) => (
-    <button type="button" onClick={() => setTab(id)} className={clsx('rounded-lg px-3 py-1.5 text-xs font-semibold', tab === id ? 'bg-white/10 text-cyan-300' : 'text-slate-400 hover:text-slate-200')}>{label}</button>
-  );
-
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="short-cockpit space-y-4">
+      <div className="short-cockpit-toolbar flex flex-wrap items-center justify-between gap-2">
         <Button variant="secondary" size="sm" onClick={onBack}><ArrowLeft className="h-3.5 w-3.5" aria-hidden /> Back to radar</Button>
-        <div className="inline-flex flex-wrap gap-1 rounded-xl border border-white/8 bg-white/4 p-1">
-          <TabBtn id="overview" label="Overview" /><TabBtn id="entry" label="Entry" /><TabBtn id="exit" label="Exit" /><TabBtn id="ai" label="AI Review" /><TabBtn id="track" label="Track Record" />
-        </div>
+        <nav aria-label="Short-term detail sections"><DetailTabButton id="overview" label="Overview" active={tab} onSelect={setTab} /><DetailTabButton id="entry" label="Entry" active={tab} onSelect={setTab} /><DetailTabButton id="exit" label="Exit" active={tab} onSelect={setTab} /><DetailTabButton id="ai" label="AI Review" active={tab} onSelect={setTab} /><DetailTabButton id="track" label="Track Record" active={tab} onSelect={setTab} /></nav>
       </div>
       <CandidateCard c={c} onOpen={() => undefined} />
 
@@ -244,12 +258,13 @@ function DetailPanel({ ticker, onBack, budget, riskPct }: { ticker: string; onBa
         </Card>
       )}
       {tab === 'ai' && (
-        <Card className="p-4">
+        <Card className="cockpit-ai-card p-5">
           <div className="flex flex-wrap items-center gap-2">
             <Input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder='"Why is this not entry-confirmed?" · "What if my budget is ₹20,000?"' className="min-w-64 flex-1" />
             <Button size="sm" onClick={() => review.mutate({ depth: 'AUTO', question: question || undefined })} disabled={review.isPending}>{review.isPending ? 'Reviewing…' : 'Ask (free-first)'}</Button>
             <Button size="sm" variant="secondary" onClick={() => review.mutate({ depth: 'DEEP_REVIEW', question: question || undefined })} disabled={review.isPending}>Deep review</Button>
           </div>
+          {review.isPending && <AIEvidenceProgress />}
           {review.data && (
             <div className="mt-3 space-y-2 text-xs leading-relaxed text-slate-400">
               <div className="flex flex-wrap gap-1.5">
@@ -289,6 +304,7 @@ export function ShortTermView() {
   const usage = useQuery({ queryKey: ['st-ai-usage'], queryFn: getShortTermAiUsage, staleTime: 60_000, retry: 1 });
   const scan = useMutation({ mutationFn: (p: StScanParams) => runShortTermScan(p), onSuccess: setResult });
   const params = useMemo<StScanParams>(() => ({ budgetInr: budget ? Number(budget) : null, priceMin: priceMin ? Number(priceMin) : null, priceMax: priceMax ? Number(priceMax) : null, horizon, riskPerTradePct: risk, strategy, limit: 5 }), [budget, priceMin, priceMax, horizon, risk, strategy]);
+  const riskAmount = budget ? (Number(budget) * risk) / 100 : null;
 
   if (openTicker) {
     return (
@@ -300,16 +316,27 @@ export function ShortTermView() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="short-term-page">
       <ViewHero
-        eyebrow="Qualified trades vs research — a zone is not an entry"
-        title="Short-Term"
+        eyebrow="Risk-adjusted opportunities · 1–21 trading sessions"
+        title="Short-Term Trade Radar"
         subtitle={<>An entry becomes actionable only when the data is usable, the setup is validated out-of-sample, the entry is confirmed, the downside is defined, and the edge survives costs and uncertainty. Otherwise: <span className="font-medium text-slate-300">wait</span>.</>}
+        visual={<TradeRadarOrb regime={result?.marketStatus.session ?? 'not scanned'} participation={result ? `${result.passedGates}/${result.universeSize}` : 'pending'} quality={result?.qualifiedCount ? `${result.qualifiedCount} qualified` : 'no signal'} active={scan.isPending} />}
         right={usage.data ? <Chip tone="zinc"><Zap className="h-3.5 w-3.5" aria-hidden /> AI {usage.data.mode} · today ${usage.data.usage.todayUsd.toFixed(2)}/{usage.data.usage.dailyBudgetUsd}</Chip> : undefined}
       />
 
-      <Card className="p-4">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <div className="short-market-strip" aria-label="Short-term market context">
+        <div className="radar-metric"><span>Market</span><strong>{result?.marketStatus.session ?? 'Not scanned'}</strong></div>
+        <div className="radar-metric"><span>Data</span><strong>{result?.marketStatus.lastCompletedSession ?? 'On demand'}</strong></div>
+        <div className="radar-metric radar-metric-positive"><span>Qualified</span><strong>{result?.qualifiedCount ?? '—'}</strong></div>
+        <div className="radar-metric"><span>Watching</span><strong>{result?.watchlistCount ?? '—'}</strong></div>
+        <div className="radar-metric"><span>Open risk</span><strong>{result ? inr(result.riskManager.openRiskInr) : '—'}</strong></div>
+        <div className={clsx('radar-metric', result && !result.riskManager.newEntriesAllowed && 'radar-metric-warning')}><span>New entries</span><strong>{result ? (result.riskManager.newEntriesAllowed ? 'Allowed' : 'Disabled') : 'Not checked'}</strong></div>
+      </div>
+
+      <Card className="short-command-bar">
+        <div className="short-command-heading"><div><span>Scan parameters</span><h3>Define loss before looking for upside</h3></div><div className="short-risk-readout"><small>Risk amount</small><strong>{riskAmount != null ? inr(riskAmount) : '—'}</strong></div></div>
+        <div className="short-command-grid">
           <label className="text-xs text-slate-500">Budget ₹<Input value={budget} onChange={(e) => setBudget(e.target.value.replace(/[^\d]/g, ''))} placeholder="50000" className="mt-1" /></label>
           <label className="text-xs text-slate-500">Min price ₹<Input value={priceMin} onChange={(e) => setPriceMin(e.target.value.replace(/[^\d]/g, ''))} placeholder="—" className="mt-1" /></label>
           <label className="text-xs text-slate-500">Max price ₹<Input value={priceMax} onChange={(e) => setPriceMax(e.target.value.replace(/[^\d]/g, ''))} placeholder="—" className="mt-1" /></label>
@@ -317,34 +344,36 @@ export function ShortTermView() {
           <label className="text-xs text-slate-500">Risk per trade<Select value={String(risk)} onChange={(v) => setRisk(Number(v))} options={RISKS.map((r) => ({ value: String(r), label: `${r}%` }))} className="mt-1" /></label>
           <label className="text-xs text-slate-500">Strategy<Select value={strategy} onChange={(v) => setStrategy(v as never)} options={STRATEGIES.map((s) => ({ value: s, label: s.replace(/_/g, ' ') }))} className="mt-1" /></label>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button onClick={() => scan.mutate(params)} disabled={scan.isPending}><RefreshCw className={clsx('h-3.5 w-3.5', scan.isPending && 'animate-spin')} aria-hidden />{scan.isPending ? 'Scanning 151 stocks…' : 'Refresh'}</Button>
+        <div className="short-command-actions">
+          <Button onClick={() => scan.mutate(params)} disabled={scan.isPending}><RefreshCw className="h-3.5 w-3.5" aria-hidden />{scan.isPending ? 'Evaluating evidence…' : 'Run market scan'}</Button>
           {result && <span className="text-[11px] text-slate-500">{result.marketStatus.session === 'OPEN' ? 'Market open (delayed intraday)' : 'Market closed (EOD final)'} · {result.universeSize} scanned · {result.passedGates} passed base gates · qualified {result.qualifiedCount} · watchlist {result.watchlistCount} · risk mgr {result.riskManager.newEntriesAllowed ? 'entries allowed' : 'NEW ENTRIES DISABLED'}</span>}
         </div>
         {result && !result.riskManager.newEntriesAllowed && <p className="mt-2 text-xs text-amber-300">{result.riskManager.reasons.join(' · ')} — the radar stays visible, entries are disabled.</p>}
       </Card>
 
+      {scan.isPending && <div className="short-scan-progress" role="status"><span /><span /><span /><p>Measuring setups, confirmation, after-cost expectancy and risk gates…</p></div>}
+
       {scan.isError && <ErrorState message={scan.error instanceof Error ? scan.error.message : 'Scan failed'} onRetry={() => scan.mutate(params)} />}
 
       {result == null && !scan.isPending && (
-        <Card className="p-5"><p className="text-sm leading-relaxed text-slate-400">Set your budget and constraints, then <span className="font-medium text-slate-200">Refresh</span>. Qualified trades require validated setup evidence, a confirmed entry, and an EV edge that survives its own uncertainty — often that is zero stocks, and that is the correct answer.</p></Card>
+        <section className="short-intentional-empty"><TradeRadarOrb compact /><div><span>Radar ready</span><h2>Start with the risk you can absorb.</h2><p>Set your constraints and run the scan. Qualified trades require validated setup evidence, a confirmed entry, and an EV edge that survives uncertainty—often zero stocks, and that is the correct answer.</p></div></section>
       )}
 
       {result && (
         <>
-          <section className="space-y-3">
+          <section className="short-results-section">
             <div className="flex items-center gap-2">
               <ShieldCheck className="h-4 w-4 text-buy" aria-hidden />
               <h2 className="font-display text-sm font-semibold tracking-wide text-slate-200">Qualified short-term trades <span className="text-slate-500">— up to 5</span></h2>
             </div>
             {result.candidates.length === 0 ? (
-              <Card className="p-5"><p className="text-sm font-medium leading-relaxed text-slate-300">{result.emptyMessage}</p><p className="mt-1 text-xs text-slate-500">Tier A + confirmed entry + positive EV lower bound + affordable + live authority. None today — see the Research Watchlist.</p></Card>
+              <section className="short-intentional-empty short-no-qualified"><TradeRadarOrb compact regime={result.marketStatus.session} quality="none qualified" /><div><span>No qualified short-term trades</span><h2>Discipline is also a position.</h2><p>{result.emptyMessage} Tier A, confirmed entry, positive EV lower bound, affordability and live authority are all required.</p></div></section>
             ) : (
               result.candidates.map((c) => <CandidateCard key={c.ticker} c={c} onOpen={setOpenTicker} />)
             )}
           </section>
 
-          <section className="space-y-3">
+          <section className="short-results-section short-watch-section">
             <h2 className="font-display text-sm font-semibold tracking-wide text-slate-400">Research watchlist <span className="text-slate-600">— interesting, not yet actionable</span></h2>
             {result.watchlist.length === 0 ? (
               <Card className="p-5"><p className="text-xs text-slate-500">No interesting setups today.</p></Card>

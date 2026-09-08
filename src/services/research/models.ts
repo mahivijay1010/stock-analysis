@@ -479,10 +479,231 @@ export class LogisticModel implements ForecastModel {
   }
 }
 
+
+/**
+ * EWMA baseline (Part F): exponentially-weighted mean of the momentum ladder
+ * (λ chosen a priori ≈ RiskMetrics 0.94 ⇒ ~11-session half-life). No fitting
+ * beyond the residual σ — a mandatory dumb-but-honest challenger.
+ */
+export class EwmaModel implements ForecastModel {
+  readonly name = "stat-ewma";
+  private sigma = 0.05;
+  private trainEnd = "";
+  version(): string {
+    return "v1";
+  }
+  metadata(): Record<string, unknown> {
+    return { kind: "statistical", note: "EWMA(λ=0.94-equivalent) drift from the return ladder; σ from train residuals" };
+  }
+  private mu(row: { features: Record<string, number | null> }, h: number): number {
+    // Exponential weights over per-day means of the trailing 1/3/5/10/20d returns.
+    const ladder: Array<[string, number]> = [
+      ["ret_1d", 1],
+      ["ret_3d", 3],
+      ["ret_5d", 5],
+      ["ret_10d", 10],
+      ["ret_20d", 20],
+    ];
+    let wSum = 0;
+    let acc = 0;
+    for (const [k, n] of ladder) {
+      const v = row.features[k];
+      if (v == null || !Number.isFinite(v)) continue;
+      const w = Math.pow(0.94, n); // older windows weigh less
+      acc += w * (v / n);
+      wSum += w;
+    }
+    const dailyDrift = wSum > 0 ? acc / wSum : 0;
+    return dailyDrift * h;
+  }
+  fit(train: TrainRow[]): void {
+    this.trainEnd = train.length ? train[train.length - 1].date : "";
+    const resid = train
+      .map((r) => r.targetReturn - this.mu(r, 1) /* h folded into target scale below */)
+      .filter((x) => Number.isFinite(x));
+    // σ straight from target dispersion (drift is tiny relative to noise).
+    if (train.length >= 30) {
+      const ys = train.map((r) => r.targetReturn);
+      const m = ys.reduce((a, b) => a + b, 0) / ys.length;
+      this.sigma = Math.max(1e-6, Math.sqrt(ys.reduce((a, y) => a + (y - m) ** 2, 0) / (ys.length - 1)));
+    }
+    void resid;
+  }
+  predict(row: PredictRow, h: number): ModelOutput {
+    const mu = this.mu(row, hToTradingDays(h));
+    return {
+      ...base(this.name, "v1", h, row, this.trainEnd),
+      expectedReturn: mu,
+      medianReturn: mu,
+      quantiles: { p10: mu - Z90 * this.sigma, p50: mu, p90: mu + Z90 * this.sigma },
+      rawDirectionProbability: PHI(mu / this.sigma),
+    };
+  }
+}
+
+/**
+ * HAR-RV distribution baseline (Part F): μ = 0; σ̂ for the horizon regressed
+ * (OLS) on the daily/weekly/monthly realized-vol components (Corsi 2009
+ * shape). Tests whether better VOLATILITY forecasting alone improves CRPS /
+ * coverage — it never claims direction (prob = 0.5).
+ */
+export class HarRvModel implements ForecastModel {
+  readonly name = "stat-har-rv";
+  private b0 = 0;
+  private b1 = 0;
+  private b5 = 0;
+  private b22 = 0;
+  private fallbackSigma = 0.05;
+  private trainEnd = "";
+  version(): string {
+    return "v1";
+  }
+  metadata(): Record<string, unknown> {
+    return { kind: "statistical", note: "HAR-RV σ forecast (rv_1d/rv_5d/rv_22d, ann%) → h-day quantiles; μ=0, prob=0.5" };
+  }
+  fit(train: TrainRow[]): void {
+    this.trainEnd = train.length ? train[train.length - 1].date : "";
+    // Target: |h-day return| as the realized-vol proxy for the horizon.
+    const rows = train
+      .map((r) => ({
+        y: Math.abs(r.targetReturn),
+        x1: r.features["rv_1d_ann_pct"],
+        x5: r.features["rv_5d_ann_pct"],
+        x22: r.features["rv_22d_ann_pct"],
+      }))
+      .filter((r): r is { y: number; x1: number; x5: number; x22: number } =>
+        r.x1 != null && r.x5 != null && r.x22 != null && Number.isFinite(r.y)
+      );
+    const ys = train.map((r) => r.targetReturn);
+    if (ys.length >= 30) {
+      const m = ys.reduce((a, b) => a + b, 0) / ys.length;
+      this.fallbackSigma = Math.max(1e-6, Math.sqrt(ys.reduce((a, y) => a + (y - m) ** 2, 0) / (ys.length - 1)));
+    }
+    if (rows.length < 60) return;
+    // OLS via normal equations on [1, x1, x5, x22].
+    const X = rows.map((r) => [1, r.x1, r.x5, r.x22]);
+    const Y = rows.map((r) => r.y);
+    const XtX: number[][] = Array.from({ length: 4 }, () => new Array(4).fill(0));
+    const XtY = new Array(4).fill(0);
+    for (let i = 0; i < X.length; i++) {
+      for (let a = 0; a < 4; a++) {
+        XtY[a] += X[i][a] * Y[i];
+        for (let b = 0; b < 4; b++) XtX[a][b] += X[i][a] * X[i][b];
+      }
+    }
+    for (let a = 0; a < 4; a++) XtX[a][a] += 1e-6; // ridge jitter for stability
+    const beta = solveLinear(XtX, XtY);
+    if (beta) {
+      this.b0 = beta[0];
+      this.b1 = beta[1];
+      this.b5 = beta[2];
+      this.b22 = beta[3];
+    }
+  }
+  predict(row: PredictRow, h: number): ModelOutput {
+    const x1 = row.features["rv_1d_ann_pct"];
+    const x5 = row.features["rv_5d_ann_pct"];
+    const x22 = row.features["rv_22d_ann_pct"];
+    let sigma = this.fallbackSigma;
+    if (x1 != null && x5 != null && x22 != null && (this.b1 !== 0 || this.b5 !== 0 || this.b22 !== 0)) {
+      // |ret| ≈ σ·sqrt(2/π) for a normal ⇒ σ = E|ret| / 0.7979.
+      const absHat = this.b0 + this.b1 * x1 + this.b5 * x5 + this.b22 * x22;
+      if (Number.isFinite(absHat) && absHat > 0) sigma = Math.max(1e-6, absHat / 0.7979);
+    }
+    return {
+      ...base(this.name, "v1", h, row, this.trainEnd),
+      expectedReturn: 0,
+      medianReturn: 0,
+      quantiles: { p10: -Z90 * sigma, p50: 0, p90: Z90 * sigma },
+      rawDirectionProbability: 0.5,
+    };
+  }
+}
+
+/**
+ * ARX baseline (Part F "AR models / ARIMAX where justified"): OLS on the full
+ * momentum ladder (a finite-lag AR approximation with exogenous windows).
+ */
+export class ArxModel implements ForecastModel {
+  readonly name = "stat-arx";
+  private beta: number[] | null = null;
+  private sigma = 0.05;
+  private trainEnd = "";
+  private static LAGS = ["ret_1d", "ret_2d", "ret_3d", "ret_5d", "ret_10d", "ret_20d"];
+  version(): string {
+    return "v1";
+  }
+  metadata(): Record<string, unknown> {
+    return { kind: "statistical", note: "OLS AR-with-exogenous-windows on the return ladder (ridge-jittered normal equations)" };
+  }
+  fit(train: TrainRow[]): void {
+    this.trainEnd = train.length ? train[train.length - 1].date : "";
+    const rows = train
+      .map((r) => ({ y: r.targetReturn, x: ArxModel.LAGS.map((k) => r.features[k]) }))
+      .filter((r): r is { y: number; x: number[] } => r.x.every((v) => v != null && Number.isFinite(v)));
+    if (rows.length < 100) return;
+    const d = ArxModel.LAGS.length + 1;
+    const XtX: number[][] = Array.from({ length: d }, () => new Array(d).fill(0));
+    const XtY = new Array(d).fill(0);
+    for (const r of rows) {
+      const xi = [1, ...r.x];
+      for (let a = 0; a < d; a++) {
+        XtY[a] += xi[a] * r.y;
+        for (let b = 0; b < d; b++) XtX[a][b] += xi[a] * xi[b];
+      }
+    }
+    for (let a = 0; a < d; a++) XtX[a][a] += 1e-4;
+    this.beta = solveLinear(XtX, XtY);
+    if (this.beta) {
+      const resid = rows.map((r) => r.y - [1, ...r.x].reduce((acc, v, i) => acc + v * (this.beta as number[])[i], 0));
+      this.sigma = Math.max(1e-6, Math.sqrt(resid.reduce((a, e) => a + e * e, 0) / Math.max(1, resid.length - 1)));
+    }
+  }
+  predict(row: PredictRow, h: number): ModelOutput {
+    let mu = 0;
+    if (this.beta) {
+      const x = ArxModel.LAGS.map((k) => row.features[k]);
+      if (x.every((v) => v != null && Number.isFinite(v))) {
+        mu = [1, ...(x as number[])].reduce((acc, v, i) => acc + v * (this.beta as number[])[i], 0);
+      }
+    }
+    return {
+      ...base(this.name, "v1", h, row, this.trainEnd),
+      expectedReturn: mu,
+      medianReturn: mu,
+      quantiles: { p10: mu - Z90 * this.sigma, p50: mu, p90: mu + Z90 * this.sigma },
+      rawDirectionProbability: PHI(mu / this.sigma),
+    };
+  }
+}
+
+/** Calendar horizon → trading days (matches the harness H_TD map). */
+function hToTradingDays(h: number): number {
+  return h <= 1 ? 1 : h <= 3 ? 2 : h <= 7 ? 5 : h <= 15 ? 10 : 21;
+}
+
+/** Gaussian elimination with partial pivoting; null when singular. */
+function solveLinear(A: number[][], b: number[]): number[] | null {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let piv = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
+    if (Math.abs(M[piv][col]) < 1e-12) return null;
+    [M[col], M[piv]] = [M[piv], M[col]];
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const f = M[r][col] / M[col][col];
+      for (let c = col; c <= n; c++) M[r][c] -= f * M[col][c];
+    }
+  }
+  return M.map((row, i) => row[n] / M[i][i]);
+}
+
 export function tsBaselineModels(): ForecastModel[] {
   return [new Constant50Model(), new ZeroReturnModel(), new HistoricalMeanModel(), new BaseRateModel(), new MomentumModel()];
 }
 
 export function tsStatisticalModels(): ForecastModel[] {
-  return [new Ar1Model(), new RidgeModel(10), new LogisticModel(1)];
+  return [new Ar1Model(), new RidgeModel(10), new LogisticModel(1), new EwmaModel(), new HarRvModel(), new ArxModel()];
 }

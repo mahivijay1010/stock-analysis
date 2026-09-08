@@ -33,7 +33,7 @@ import { liveMarketDataProvider } from "./LiveMarketDataProvider";
 import { computeShortTermFeatures } from "./features";
 import { classifySetup } from "./setups";
 import { buildTradePlan } from "./entryExit";
-import { buildShortTermForecast, bracketExpectedValuePct } from "./model";
+import { buildShortTermForecast, bracketExpectedValuePct, expectedHoldingDaysFor } from "./model";
 import { evaluateGates, rankingScoreV2 } from "./ranking";
 import { computePositionSize, assessPortfolioRisk } from "./sizing";
 import { computeEvEvidence, evGatePasses } from "./evUncertainty";
@@ -43,6 +43,7 @@ import { assessConfirmation } from "./confirmation";
 import { computeTier } from "./tiers";
 import { detectContradictions } from "./contradictions";
 import { assessShortTermHealth } from "./shortTermHealth";
+import { assessPortfolioContext } from "./portfolioContext";
 import { adjustedDailyReturns } from "../market/canonical";
 import {
   composeCeiling,
@@ -211,6 +212,8 @@ export class ShortTermScanService {
         price: f.price,
         calibratedTargetProb: null, // no meta-label model has passed calibration (study-verified)
       });
+      forecast.expectedHoldingDays = await expectedHoldingDaysFor(setup.setupType, forecast.expectedHoldingDays);
+      plan.expectedHoldingDays = forecast.expectedHoldingDays;
       const ev = bracketExpectedValuePct(forecast, plan, f.price);
       plan.expectedValueAfterCostsPct = ev.evAfterCostsPct;
       plan.expectedShortfallPct = ev.expectedShortfallPct;
@@ -401,6 +404,40 @@ export class ShortTermScanService {
         setupScore: v.setupScore,
       });
     }
+    // Part O: portfolio context — when open paper positions exist, penalize
+    // candidates that add correlated / concentrated exposure (marginal risk).
+    if (openPaper.length > 0) {
+      const openTickers: Array<{ ticker: string; sector: string; capitalInr: number }> = await AppDataSource.query(
+        `SELECT ticker, COALESCE(plan->>'sector', 'UNKNOWN') AS sector, COALESCE((metrics->>'capitalRequired')::numeric, 0) AS capital
+           FROM short_term_paper_trades WHERE status = 'OPEN'`
+      ).then((rows: Array<{ ticker: string; sector: string; capital: string }>) =>
+        rows.map((r) => ({ ticker: r.ticker, sector: r.sector, capitalInr: Number(r.capital) }))
+      ).catch(() => []);
+      const openSeries: Array<{ ticker: string; sector: string; capitalInr: number; returns: number[] }> = [];
+      for (const op of openTickers) {
+        const bars = barsByTicker.get(op.ticker);
+        if (bars) openSeries.push({ ...op, returns: adjustedDailyReturns(bars.slice(-130)) });
+      }
+      if (openSeries.length > 0) {
+        for (const v of interestingViews) {
+          const bars = barsByTicker.get(v.ticker);
+          if (!bars || v.rankingScore == null) continue;
+          const ctxRes = assessPortfolioContext({
+            candidateTicker: v.ticker,
+            candidateSector: v.sector,
+            candidateReturns: adjustedDailyReturns(bars.slice(-130)),
+            candidateBeta60: null,
+            openPositions: openSeries,
+            candidateCapitalInr: v.sizing?.capitalRequired ?? 0,
+          });
+          if (ctxRes.rankingPenalty > 0) {
+            v.rankingScore = Math.round((v.rankingScore - ctxRes.rankingPenalty) * 100) / 100;
+            v.whatCanGoWrong.push(...ctxRes.notes.filter((n) => !n.startsWith("no adverse")));
+          }
+        }
+      }
+    }
+
     // QUALIFIED: tier A + ENTRY_CONFIRMED + affordable + gates. RESEARCH: the rest that's interesting.
     const qualified = interestingViews.filter((v) => v.qualified).sort((a, b) => (b.rankingScore ?? -999) - (a.rankingScore ?? -999));
     const watchlist = interestingViews.filter((v) => !v.qualified).sort((a, b) => (b.rankingScore ?? -999) - (a.rankingScore ?? -999));

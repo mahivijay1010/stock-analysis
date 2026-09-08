@@ -134,6 +134,47 @@ export const EASE = {
 /** Named keyframes declared in globals.css (also Tailwind animate-* utilities). */
 export const KEYFRAMES = ['fade-in', 'slide-up', 'scale-in', 'pulse-live'] as const;
 
+/** One semantic chart contract for Recharts, SVG and future chart engines. */
+export const CHART_THEME = {
+  surface: 'var(--chart-surface)',
+  grid: 'var(--chart-grid)',
+  axis: 'var(--chart-axis)',
+  tick: 'var(--chart-tick)',
+  actual: 'var(--chart-ink)',
+  forecast: 'var(--chart-sky)',
+  forecastBand80: 'color-mix(in srgb, var(--chart-sky) 18%, transparent)',
+  forecastBand90: 'color-mix(in srgb, var(--chart-violet) 9%, transparent)',
+  entry: '#55A7FF',
+  stop: '#FF5C70',
+  target: '#2BD99F',
+  volume: '#677384',
+  event: '#9A7CFF',
+  support: '#40D9FF',
+  resistance: '#F4B860',
+} as const;
+
+/** Shared motion language; durations are deliberately conservative. */
+export const MOTION_TOKENS = {
+  fast: { duration: 0.15, ease: EASE.standard },
+  normal: { duration: 0.24, ease: EASE.standard },
+  slow: { duration: 0.5, ease: EASE.spring },
+  pageTransition: { duration: 0.3, ease: EASE.standard },
+  numberChange: { duration: 0.46, ease: EASE.spring },
+  statusChange: { duration: 0.22, ease: EASE.standard },
+  stagger: 0.075,
+} as const;
+
+export const STATUS_COLOR = {
+  entryConfirmed: COLOR.accent.buy,
+  waitForConfirmation: COLOR.accent.amber,
+  watch: COLOR.accent.cyan,
+  noTrade: COLOR.ink.tertiary,
+  invalidated: COLOR.accent.sell,
+  insufficientData: '#8B96A7',
+  modelDegraded: COLOR.accent.amber,
+  modelSuspended: COLOR.accent.sell,
+} as const;
+
 /* ------------------------------ z-index ------------------------------ */
 
 /** Shared stacking contract (matches component library + existing chrome). */
@@ -157,6 +198,9 @@ export const DESIGN_TOKENS = {
   duration: DURATION,
   ease: EASE,
   keyframes: KEYFRAMES,
+  chart: CHART_THEME,
+  motion: MOTION_TOKENS,
+  status: STATUS_COLOR,
   zIndex: Z_INDEX,
 } as const;
 
