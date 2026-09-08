@@ -69,3 +69,13 @@ export { AiReview } from "./AiReview";
 // Completion Phase 7 — calibrator registry
 export { CalibratorRecord } from "./CalibratorRecord";
 export { StructuredMarketEvent } from "./StructuredMarketEvent";
+export {
+  ShortTermScanRun,
+  ShortTermCandidate,
+  ShortTermTransition,
+  ShortTermShadowPrediction,
+  ShortTermPaperTrade,
+  ShortTermModelPerformance,
+  ShortTermAlert,
+  ShortTermPreference,
+} from "./ShortTerm";

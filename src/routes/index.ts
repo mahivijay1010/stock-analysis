@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   StockController,
+  ShortTermController,
   PortfolioController,
   IntelligenceController,
   QuantController,
@@ -45,6 +46,7 @@ export const createStockRoutes = (): Router => {
   const authController = new AuthController();
   const ledgerController = new LedgerController();
   const forecastController = new ForecastController();
+  const shortTermController = new ShortTermController();
 
   // ── Auth (Phase B2, spec §12) ─────────────────────────────────────────────
   // Session cookie: httpOnly + SameSite=Strict; CSRF = custom X-Requested-With
@@ -99,6 +101,16 @@ export const createStockRoutes = (): Router => {
   router.get("/decision/:ticker/committee", forecastController.committeeLatest); //     GET  /api/decision/:t/committee
   router.post("/decision/:ticker/committee", requireAuth, forecastController.committeeRun); // POST /api/decision/:t/committee
   router.post("/jobs/forecast-maintenance", requireAuthOrAdminKey, forecastController.maintenance); // POST /api/jobs/forecast-maintenance
+  // SHORT-TERM TRADE RADAR (free-first; OpenAI only as governed escalation).
+  // Static paths BEFORE :ticker so "latest"/"alerts" are never captured.
+  router.post("/short-term/scan", requireAuth, shortTermController.scan); //            POST /api/short-term/scan
+  router.get("/short-term/latest", shortTermController.latest); //                      GET  /api/short-term/latest
+  router.get("/short-term/alerts", shortTermController.alerts); //                      GET  /api/short-term/alerts
+  router.get("/short-term/ai-usage", shortTermController.aiUsage); //                   GET  /api/short-term/ai-usage
+  router.get("/short-term/preferences", requireAuth, shortTermController.getPreferences); // GET /api/short-term/preferences
+  router.put("/short-term/preferences", requireAuth, shortTermController.putPreferences); // PUT /api/short-term/preferences
+  router.get("/short-term/:ticker", shortTermController.detail); //                     GET  /api/short-term/:t
+  router.post("/short-term/:ticker/review", requireAuth, shortTermController.review); //POST /api/short-term/:t/review
   // OpenAI multi-role AI pipeline (O2/O3): evidence graph -> analysts ->
   // critic -> committee; advisory + cap-only; honest 503 without a key.
   router.get("/events/:ticker", forecastController.events); //                          GET  /api/events/:t
