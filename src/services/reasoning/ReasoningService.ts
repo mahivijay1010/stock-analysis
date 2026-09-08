@@ -53,7 +53,11 @@ export class ReasoningService {
       purchasePrice?: number | null;
       investmentHorizon?: string | null;
       riskTolerance?: string | null;
-    } | null
+    } | null,
+    extras?: {
+      roleFindings?: Record<string, unknown> | null;
+      aiDisagreement?: { score: number; reasons: string[] } | null;
+    }
   ): Promise<{ review: AiReview; result: CommitteeResult }> {
     if (!this.provider.isAvailable()) {
       throw new HttpError(
@@ -85,6 +89,8 @@ export class ReasoningService {
       snapshot,
       userContext ? { ...userContext, holdsPosition: userContext.holdsPosition === true } : null
     );
+    if (extras?.roleFindings) context.roleFindings = extras.roleFindings;
+    if (extras?.aiDisagreement) context.aiDisagreement = extras.aiDisagreement;
     const result =
       userContext?.holdsPosition === true
         ? await this.provider.evaluateExistingPosition(context)

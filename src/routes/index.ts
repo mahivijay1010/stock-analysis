@@ -96,6 +96,10 @@ export const createStockRoutes = (): Router => {
   router.get("/decision/:ticker/committee", forecastController.committeeLatest); //     GET  /api/decision/:t/committee
   router.post("/decision/:ticker/committee", requireAuth, forecastController.committeeRun); // POST /api/decision/:t/committee
   router.post("/jobs/forecast-maintenance", requireAuthOrAdminKey, forecastController.maintenance); // POST /api/jobs/forecast-maintenance
+  // OpenAI multi-role AI pipeline (O2/O3): evidence graph -> analysts ->
+  // critic -> committee; advisory + cap-only; honest 503 without a key.
+  router.get("/ai/:ticker", forecastController.aiLatest); //                            GET  /api/ai/:t
+  router.post("/ai/:ticker/analyze", requireAuth, forecastController.aiAnalyze); //     POST /api/ai/:t/analyze
   // Phase 13 live model monitoring: rolling Brier/coverage over resolved
   // prediction_logs → HEALTHY/DEGRADED/SUSPENDED/INSUFFICIENT_HISTORY.
   // SUSPENDED hard-caps BUY in decision-policy-v5.

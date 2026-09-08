@@ -11,6 +11,7 @@ import { portfolioOverviewService } from "../services/portfolio/PortfolioOvervie
 import { latestExperiments, runLiveBaselineExperiment } from "../services/experiments/runner";
 import { reasoningService } from "../services/reasoning/ReasoningService";
 import { modelHealthService } from "../services/monitoring/ModelHealthService";
+import { roleOrchestrator } from "../services/ai/RoleOrchestrator";
 import { LedgerService } from "../services/ledger/LedgerService";
 import { HttpError } from "../types";
 
@@ -140,7 +141,7 @@ export class ForecastController {
         review,
         note: reasoningService.available()
           ? "The committee is advisory and cap-only — it can never raise an action past the evidence gate."
-          : "AI committee unavailable (no ANTHROPIC_API_KEY configured). The deterministic evidence-gated decision is unaffected.",
+          : "AI review unavailable (no provider key configured — set OPENAI_API_KEY). The deterministic evidence-gated decision remains active.",
       });
     } catch (err) {
       next(err);
@@ -163,6 +164,29 @@ export class ForecastController {
       };
       const { review, result } = await reasoningService.review(req.params.ticker, body);
       ok(res, { review, clamped: result.clamped, clampNotes: result.clampNotes }, 201);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/ai/:ticker — latest stored AI role outputs (read-only, no OpenAI calls). */
+  aiLatest = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      ok(res, { roles: await roleOrchestrator.latest(req.params.ticker) });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** POST /api/ai/:ticker/analyze — run the multi-role AI pipeline (auth). */
+  aiAnalyze = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const body = (req.body ?? {}) as { positionContext?: Record<string, unknown>; force?: boolean };
+      const report = await roleOrchestrator.analyze(req.params.ticker, {
+        positionContext: body.positionContext ?? null,
+        force: body.force === true,
+      });
+      ok(res, { report }, 201);
     } catch (err) {
       next(err);
     }

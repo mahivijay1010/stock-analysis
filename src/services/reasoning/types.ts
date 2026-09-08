@@ -76,6 +76,10 @@ export interface CommitteeContext {
     unmetGates: Array<{ gate: string; current: string; required: string }>;
     decisionPolicyVersion: string;
   };
+  /** Part 13: structured findings from the specialist AI roles (validated JSON, never prose). */
+  roleFindings?: Record<string, unknown> | null;
+  /** Part 13: deterministic 0-100 conflict measure between role findings, with reasons. */
+  aiDisagreement?: { score: number; reasons: string[] } | null;
 }
 
 export const COMMITTEE_ACTIONS = [
