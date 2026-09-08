@@ -1,10 +1,12 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ArrowRight, IndianRupee, RefreshCw, Wallet } from 'lucide-react';
 import { getTopPicks } from '@/lib/api';
+import { DecisionGateChips, useDecisionBatch } from '@/components/DecisionGateChips';
+import type { DecisionBatchEntry } from '@/lib/api';
 import type { Horizon, TopPick } from '@/lib/types';
 import { fmtDateTime, inr, inrSmart, plain, signedPct } from '@/lib/format';
 import { COLOR } from '@/lib/design-tokens';
@@ -227,9 +229,16 @@ function BudgetProjection({ pick, budget }: { pick: TopPick; budget: number | nu
 
 /* ------------------------------------------------------------------ */
 /* Pick card — large interactive-tilt glass card (hero = rank #1)      */
+/* Published-gate lookup key: scan rows use bare symbols, snapshots .NS. */
 /* ------------------------------------------------------------------ */
 
+function gateKey(ticker: string): string {
+  const t = ticker.trim().toUpperCase();
+  return /\.(NS|BO)$/.test(t) ? t : `${t}.NS`;
+}
+
 function PickCard({
+  gate,
   pick,
   budget,
   hero,
@@ -240,6 +249,7 @@ function PickCard({
   /** Rank-1 treatment: full-row card with a horizontal split on xl. */
   hero: boolean;
   onAnalyze: (ticker: string) => void;
+  gate?: DecisionBatchEntry;
 }) {
   const entryTitle =
     pick.entryScore != null
@@ -267,6 +277,9 @@ function PickCard({
           <RecBadge rec={pick.recommendation} />
           {pick.entryAction && <EntryChip action={pick.entryAction} title={entryTitle} />}
           <RiskChip risk={pick.riskLevel} />
+        </div>
+        <div className="mt-2">
+          <DecisionGateChips entry={gate} />
         </div>
       </div>
       <ScoreDonut
@@ -370,6 +383,20 @@ export function TopPicksView({ onAnalyze }: { onAnalyze: (ticker: string) => voi
     placeholderData: keepPreviousData,
   });
 
+  // Phase 14: published-gate summaries for every pick shown (one batched read).
+  const allPickTickers = useMemo(() => {
+    const b = data?.buckets;
+    const all = [
+      ...(b?.bestNewEntries ?? []),
+      ...(b?.strongButExtended ?? []),
+      ...(b?.watchForPullback ?? []),
+      ...(b?.highRiskMomentum ?? []),
+    ];
+    return Array.from(new Set(all.map((p) => gateKey(p.ticker))));
+  }, [data]);
+  const gateBatch = useDecisionBatch(allPickTickers);
+  const decisions = gateBatch.data?.decisions ?? {};
+
   const filtered = data?.maxPrice != null;
 
   return (
@@ -467,6 +494,7 @@ export function TopPicksView({ onAnalyze }: { onAnalyze: (ticker: string) => voi
             onAnalyze={onAnalyze}
             isFetching={isFetching}
             tone="buy"
+            decisions={decisions}
           />
           <BucketSection
             title="Strong but extended"
@@ -475,6 +503,7 @@ export function TopPicksView({ onAnalyze }: { onAnalyze: (ticker: string) => voi
             budget={data.maxPrice ?? budget}
             onAnalyze={onAnalyze}
             isFetching={isFetching}
+            decisions={decisions}
           />
           <BucketSection
             title="Watch for pullback"
@@ -483,6 +512,7 @@ export function TopPicksView({ onAnalyze }: { onAnalyze: (ticker: string) => voi
             budget={data.maxPrice ?? budget}
             onAnalyze={onAnalyze}
             isFetching={isFetching}
+            decisions={decisions}
           />
           <BucketSection
             title="High-risk momentum"
@@ -491,6 +521,7 @@ export function TopPicksView({ onAnalyze }: { onAnalyze: (ticker: string) => voi
             budget={data.maxPrice ?? budget}
             onAnalyze={onAnalyze}
             isFetching={isFetching}
+            decisions={decisions}
           />
           {data.buckets && (
             <p className="px-1 text-[11px] leading-relaxed text-slate-500">
@@ -514,6 +545,7 @@ function BucketSection({
   onAnalyze,
   isFetching,
   tone = 'zinc',
+  decisions = {},
 }: {
   title: string;
   explain: string;
@@ -524,6 +556,7 @@ function BucketSection({
   onAnalyze: (ticker: string) => void;
   isFetching: boolean;
   tone?: 'buy' | 'zinc';
+  decisions?: Record<string, DecisionBatchEntry>;
 }) {
   if (picks.length === 0 && !emptyBanner) return null;
   return (
@@ -548,7 +581,7 @@ function BucketSection({
         <Stagger className={clsx('grid grid-cols-1 gap-4 transition-opacity xl:grid-cols-2', isFetching && 'opacity-60')}>
           {picks.map((pick) => (
             <StaggerItem key={pick.ticker} className="h-full">
-              <PickCard pick={pick} hero={false} budget={budget} onAnalyze={onAnalyze} />
+              <PickCard pick={pick} hero={false} budget={budget} onAnalyze={onAnalyze} gate={decisions[gateKey(pick.ticker)]} />
             </StaggerItem>
           ))}
         </Stagger>

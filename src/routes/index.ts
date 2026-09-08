@@ -87,6 +87,8 @@ export const createStockRoutes = (): Router => {
   // Canonical evidence-gated decisions (spec §9) — ONE service, every surface
   // reads the same published snapshot. BUY_CANDIDATE requires a VALIDATED
   // directional edge; today's measured record has none, stated honestly.
+  // Phase 14: batch row-chip summaries — MUST precede the :ticker param route.
+  router.get("/decision/batch", forecastController.decisionBatch); //                   GET  /api/decision/batch?tickers=A,B
   router.get("/decision/:ticker", forecastController.decision); //                     GET  /api/decision/:t
   router.post("/decision/:ticker/publish", requireAuth, forecastController.publishDecision); // POST /api/decision/:t/publish
   // AI Investment Committee (risk-spec Rule 13): advisory + cap-only; audit-

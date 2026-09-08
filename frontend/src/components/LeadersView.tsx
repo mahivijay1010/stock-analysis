@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ArrowRight, ArrowUp, BrainCircuit, Trophy } from 'lucide-react';
 import { ApiError, getRankUniverse } from '@/lib/api';
+import { DecisionGateChips, useDecisionBatch } from '@/components/DecisionGateChips';
 import type { RankComponents, RankRow, RankUniverseResponse } from '@/lib/types';
 import { fmtDate, fmtDateTime, plain } from '@/lib/format';
 import {
@@ -241,7 +242,12 @@ function ZBar({ value }: { value: number | null | undefined }) {
   );
 }
 
-function ExpandedBreakdown({ row, onAnalyze }: { row: RankRow; onAnalyze: (ticker: string) => void }) {
+function leaderGateKey(ticker: string): string {
+  const t = ticker.trim().toUpperCase();
+  return /\.(NS|BO)$/.test(t) ? t : `${t}.NS`;
+}
+
+function ExpandedBreakdown({ row, onAnalyze, gate }: { row: RankRow; onAnalyze: (ticker: string) => void; gate?: import('@/lib/api').DecisionBatchEntry }) {
   const quality = qualitySourceInfo(row);
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
@@ -271,6 +277,10 @@ function ExpandedBreakdown({ row, onAnalyze }: { row: RankRow; onAnalyze: (ticke
       <div className="space-y-2 text-xs leading-relaxed text-slate-400 lg:w-80 lg:shrink-0">
         <QualitySourceChip row={row} />
         <p>{quality.title}</p>
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-slate-600">
+          Published gate
+          <DecisionGateChips entry={gate} />
+        </div>
         <Button variant="secondary" size="sm" onClick={() => onAnalyze(row.ticker)}>
           Full analysis
           <ArrowRight className="h-3.5 w-3.5" aria-hidden />
@@ -456,6 +466,14 @@ export function LeadersView({ onAnalyze }: { onAnalyze: (ticker: string) => void
     retry: (failureCount, err) => !(err instanceof ApiError && err.status === 404) && failureCount < 2,
   });
 
+  // Phase 14: published-gate summaries for expanded rows (one batched read).
+  const leaderTickers = useMemo(
+    () => Array.from(new Set(((data?.rows ?? []) as RankRow[]).map((r) => leaderGateKey(r.ticker)))),
+    [data],
+  );
+  const gateBatch = useDecisionBatch(leaderTickers);
+  const decisions = gateBatch.data?.decisions ?? {};
+
   const [q, setQ] = useState('');
 
   // Stable universe ranks (by percentile desc) assigned BEFORE search filtering,
@@ -631,7 +649,7 @@ export function LeadersView({ onAnalyze }: { onAnalyze: (ticker: string) => void
                 rowKey={(r) => r.ticker}
                 initialSort={{ id: 'rank', dir: 'asc' }}
                 onRowClick={(r) => onAnalyze(r.ticker)}
-                renderExpanded={(r) => <ExpandedBreakdown row={r} onAnalyze={onAnalyze} />}
+                renderExpanded={(r) => <ExpandedBreakdown row={r} onAnalyze={onAnalyze} gate={decisions[leaderGateKey(r.ticker)]} />}
                 expandLabel="Component breakdown"
                 maxHeight="40rem"
                 empty={<EmptyState glyph="slash" title="No stocks match the current filter" />}

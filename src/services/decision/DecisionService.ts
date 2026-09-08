@@ -434,6 +434,75 @@ export class DecisionService {
     );
   }
 
+  /**
+   * Phase 14: latest published snapshot per ticker, summarized for row chips.
+   * Read-only; tickers with no published decision are simply absent — the UI
+   * states "not published" instead of inventing a verdict.
+   */
+  async batchSummaries(tickers: string[]): Promise<
+    Record<
+      string,
+      {
+        decisionStatus: string;
+        evidenceStatus: string;
+        setupScore: number | null;
+        entryQualityScore: number | null;
+        confidenceBand: string | null;
+        confidenceScore: number | null;
+        modelHealthState: string | null;
+        unmetGateCount: number;
+        asOf: string;
+        expired: boolean;
+      }
+    >
+  > {
+    const list = Array.from(
+      new Set(
+        tickers
+          .map((t) => t.trim().toUpperCase())
+          .filter(Boolean)
+          .map((t) => (/\.(NS|BO)$/i.test(t) ? t : `${t}.NS`))
+      )
+    ).slice(0, 200);
+    if (list.length === 0) return {};
+    const rows: Array<{
+      ticker: string;
+      decision_status: string;
+      evidence_status: string;
+      score_card: Record<string, unknown> | null;
+      inputs: Record<string, unknown> | null;
+      unmet_gates: unknown[] | null;
+      as_of: string;
+      valid_until: string;
+    }> = await AppDataSource.query(
+      `SELECT DISTINCT ON (ds.instrument_id)
+              i.yahoo_ticker AS ticker, ds.decision_status, ds.evidence_status,
+              ds.score_card, ds.inputs, ds.unmet_gates, ds.as_of, ds.valid_until
+         FROM decision_snapshots ds JOIN instruments i ON i.id = ds.instrument_id
+        WHERE i.yahoo_ticker = ANY($1)
+        ORDER BY ds.instrument_id, ds.as_of DESC`,
+      [list]
+    );
+    const out: Awaited<ReturnType<DecisionService["batchSummaries"]>> = {};
+    for (const r of rows) {
+      const sc = (r.score_card ?? null) as Record<string, any> | null;
+      const inputs = (r.inputs ?? null) as Record<string, any> | null;
+      out[r.ticker] = {
+        decisionStatus: r.decision_status,
+        evidenceStatus: r.evidence_status,
+        setupScore: sc?.setupScore ?? null,
+        entryQualityScore: sc?.entryTimingScore ?? null,
+        confidenceBand: sc?.forecastConfidence?.band ?? null,
+        confidenceScore: sc?.forecastConfidence?.score ?? null,
+        modelHealthState: inputs?.modelHealth?.overallState ?? null,
+        unmetGateCount: Array.isArray(r.unmet_gates) ? r.unmet_gates.length : 0,
+        asOf: new Date(r.as_of).toISOString(),
+        expired: new Date(r.valid_until).getTime() < Date.now(),
+      };
+    }
+    return out;
+  }
+
   /** Publish for every followed/held instrument (evening cron; idempotent enough — one snapshot per run). */
   async publishForAll(): Promise<{ published: number; failed: Array<{ ticker: string; error: string }> }> {
     const rows: Array<{ ticker: string }> = await AppDataSource.query(

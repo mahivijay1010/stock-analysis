@@ -420,6 +420,27 @@ export function getCommitteeReview(ticker: string): Promise<CommitteeLatestRespo
   return get<CommitteeLatestResponse>(`/api/decision/${encodeURIComponent(ticker)}/committee`);
 }
 
+/** Phase 14 row-chip summary of a published decision snapshot. */
+export interface DecisionBatchEntry {
+  decisionStatus: 'BUY_CANDIDATE' | 'WAIT' | 'AVOID_NEW_ENTRY' | 'INSUFFICIENT_EVIDENCE';
+  evidenceStatus: string;
+  setupScore: number | null;
+  entryQualityScore: number | null;
+  confidenceBand: string | null;
+  confidenceScore: number | null;
+  modelHealthState: string | null;
+  unmetGateCount: number;
+  asOf: string;
+  expired: boolean;
+}
+
+/** GET /api/decision/batch — latest published summaries for many tickers (absent = not published). */
+export function getDecisionBatch(tickers: string[]): Promise<{ decisions: Record<string, DecisionBatchEntry> }> {
+  return get<{ decisions: Record<string, DecisionBatchEntry> }>('/api/decision/batch', {
+    tickers: tickers.join(','),
+  });
+}
+
 /** POST /api/decision/:ticker/committee — request a fresh committee review (auth). */
 export function runCommitteeReview(
   ticker: string,

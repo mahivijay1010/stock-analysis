@@ -168,6 +168,18 @@ export class ForecastController {
     }
   };
 
+  /** GET /api/decision/batch?tickers=A,B — Phase 14 row-chip summaries (read-only). */
+  decisionBatch = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const tickers = String(req.query.tickers ?? "")
+        .split(",")
+        .filter(Boolean);
+      ok(res, { decisions: await decisionService.batchSummaries(tickers) });
+    } catch (err) {
+      next(err);
+    }
+  };
+
   /** GET /api/monitoring/model-health — Phase 13 live rolling metrics + state. */
   modelHealth = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {

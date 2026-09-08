@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ArrowUpRight } from 'lucide-react';
 import { getStocks } from '@/lib/api';
+import { DecisionGateChips, useDecisionBatch } from '@/components/DecisionGateChips';
 import type { EntryAction, Recommendation, UniverseStockRow } from '@/lib/types';
 import { fmtDateTime, inr, plain, signedPct } from '@/lib/format';
 import {
@@ -115,6 +116,12 @@ function RowDetails({ s, onAnalyze }: { s: UniverseStockRow; onAnalyze: (ticker:
   );
 }
 
+/** Universe rows use bare symbols; snapshots key by the Yahoo ticker. */
+function normalizeNs(ticker: string): string {
+  const t = ticker.trim().toUpperCase();
+  return /\.(NS|BO)$/.test(t) ? t : `${t}.NS`;
+}
+
 export function StocksView({ onAnalyze }: { onAnalyze: (ticker: string) => void }) {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ['stocks'],
@@ -145,6 +152,11 @@ export function StocksView({ onAnalyze }: { onAnalyze: (ticker: string) => void 
   }, [data, q, sector]);
 
   const scannedCount = useMemo(() => (data ?? []).filter((s) => s.score != null).length, [data]);
+
+  // Phase 14: published-gate chips per row (absent = honestly "not published").
+  const allTickers = useMemo(() => (data ?? []).map((s) => s.ticker), [data]);
+  const batch = useDecisionBatch(allTickers);
+  const decisions = batch.data?.decisions ?? {};
 
   const columns = useMemo<Array<DataTableColumn<UniverseStockRow>>>(
     () => [
@@ -205,8 +217,17 @@ export function StocksView({ onAnalyze }: { onAnalyze: (ticker: string) => void 
         sortValue: (s) => (s.recommendation ? REC_ORDER[s.recommendation] : null),
         cell: (s) => (s.recommendation ? <RecBadge rec={s.recommendation} /> : <Dash />),
       },
+      {
+        id: 'gate',
+        header: 'Published gate',
+        sortValue: (s) => {
+          const d = decisions[normalizeNs(s.ticker)];
+          return d ? d.decisionStatus : null;
+        },
+        cell: (s) => <DecisionGateChips entry={decisions[normalizeNs(s.ticker)]} />,
+      },
     ],
-    [],
+    [decisions],
   );
 
   const hero = (chips?: React.ReactNode) => (
