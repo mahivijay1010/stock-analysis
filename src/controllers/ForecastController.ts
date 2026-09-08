@@ -9,6 +9,7 @@ import { forecastService } from "../services/forecast/ForecastService";
 import { decisionService } from "../services/decision/DecisionService";
 import { portfolioOverviewService } from "../services/portfolio/PortfolioOverviewService";
 import { latestExperiments, runLiveBaselineExperiment } from "../services/experiments/runner";
+import { reasoningService } from "../services/reasoning/ReasoningService";
 import { LedgerService } from "../services/ledger/LedgerService";
 import { HttpError } from "../types";
 
@@ -124,6 +125,43 @@ export class ForecastController {
   publishDecision = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       ok(res, { snapshot: await decisionService.publish(req.params.ticker) }, 201);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/decision/:ticker/committee — latest stored AI-committee review (read-only). */
+  committeeLatest = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const review = await reasoningService.latestReview(req.params.ticker);
+      ok(res, {
+        available: reasoningService.available(),
+        review,
+        note: reasoningService.available()
+          ? "The committee is advisory and cap-only — it can never raise an action past the evidence gate."
+          : "AI committee unavailable (no ANTHROPIC_API_KEY configured). The deterministic evidence-gated decision is unaffected.",
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * POST /api/decision/:ticker/committee — run the committee against the
+   * latest published snapshot (auth). Body may carry EXPLICIT user context
+   * (holdsPosition, purchasePrice, investmentHorizon, riskTolerance) —
+   * risk tolerance is never inferred (Rule 14).
+   */
+  committeeRun = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const body = (req.body ?? {}) as {
+        holdsPosition?: boolean;
+        purchasePrice?: number | null;
+        investmentHorizon?: string | null;
+        riskTolerance?: string | null;
+      };
+      const { review, result } = await reasoningService.review(req.params.ticker, body);
+      ok(res, { review, clamped: result.clamped, clampNotes: result.clampNotes }, 201);
     } catch (err) {
       next(err);
     }

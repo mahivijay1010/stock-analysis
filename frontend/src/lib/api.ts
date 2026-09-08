@@ -9,6 +9,7 @@ import type {
   CalibrationResponse,
   ChartRange,
   ChartResponse,
+  CommitteeLatestResponse,
   DailyForecastResponse,
   DecisionResponse,
   HoldingsProjectionResponse,
@@ -412,4 +413,17 @@ export function getPortfolioOverview(): Promise<PortfolioOverviewResponse> {
 /** GET /api/decision/:ticker — the latest published evidence-gated decision snapshot. */
 export function getDecision(ticker: string): Promise<DecisionResponse> {
   return get<DecisionResponse>(`/api/decision/${encodeURIComponent(ticker)}`);
+}
+
+/** GET /api/decision/:ticker/committee — latest stored AI-committee review. */
+export function getCommitteeReview(ticker: string): Promise<CommitteeLatestResponse> {
+  return get<CommitteeLatestResponse>(`/api/decision/${encodeURIComponent(ticker)}/committee`);
+}
+
+/** POST /api/decision/:ticker/committee — request a fresh committee review (auth). */
+export function runCommitteeReview(
+  ticker: string,
+  userContext?: { holdsPosition?: boolean; purchasePrice?: number | null; investmentHorizon?: string | null; riskTolerance?: string | null },
+): Promise<unknown> {
+  return post<unknown>(`/api/decision/${encodeURIComponent(ticker)}/committee`, userContext ?? {});
 }

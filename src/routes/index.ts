@@ -89,6 +89,10 @@ export const createStockRoutes = (): Router => {
   // directional edge; today's measured record has none, stated honestly.
   router.get("/decision/:ticker", forecastController.decision); //                     GET  /api/decision/:t
   router.post("/decision/:ticker/publish", requireAuth, forecastController.publishDecision); // POST /api/decision/:t/publish
+  // AI Investment Committee (risk-spec Rule 13): advisory + cap-only; audit-
+  // trailed in ai_reviews; honest 503 when no provider key is configured.
+  router.get("/decision/:ticker/committee", forecastController.committeeLatest); //     GET  /api/decision/:t/committee
+  router.post("/decision/:ticker/committee", requireAuth, forecastController.committeeRun); // POST /api/decision/:t/committee
   router.post("/jobs/forecast-maintenance", requireAuthOrAdminKey, forecastController.maintenance); // POST /api/jobs/forecast-maintenance
   // Experiment registry (risk-spec Rule 4): champion vs naive baselines on
   // VERIFIED live predictions; append-only runs; GET is read-only.

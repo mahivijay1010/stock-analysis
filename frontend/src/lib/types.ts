@@ -1100,3 +1100,43 @@ export interface DecisionSnapshotView {
 export type DecisionResponse =
   | { available: true; expired: boolean; snapshot: DecisionSnapshotView }
   | { available: false; reason: string };
+
+/* ---- AI Investment Committee (risk-spec Rule 13): advisory + cap-only ---- */
+
+export interface CommitteeReviewView {
+  action: string;
+  newEntryAction: string;
+  existingHolderAction: string;
+  confidence: number;
+  confidenceBand: 'LOW' | 'MEDIUM' | 'HIGH';
+  setupScore: number;
+  entryScore: number;
+  topPositiveFactors: string[];
+  topNegativeFactors: string[];
+  missingCriticalEvidence: string[];
+  invalidationConditions: string[];
+  betterEntryConditions: string[];
+  riskSummary: string;
+  reasoningSummary: string;
+  modelDisagreement: string;
+  dataTimestamp: string;
+}
+
+export interface AiReviewRecord {
+  id: string;
+  ticker: string;
+  promptVersion: string;
+  modelName: string;
+  provider: string;
+  response: CommitteeReviewView;
+  clamped: boolean;
+  clampNotes: string[] | null;
+  latencyMs: number;
+  createdAt: string;
+}
+
+export interface CommitteeLatestResponse {
+  available: boolean;
+  review: AiReviewRecord | null;
+  note: string;
+}
