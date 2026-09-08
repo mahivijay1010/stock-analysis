@@ -8,6 +8,23 @@ Run: `npm run dev` (backend :5101) · `cd frontend && npx next dev -p 3001` (UI 
 
 Educational tool — not SEBI-registered investment advice. Markets are uncertain; measured past accuracy does not guarantee future results.
 
+## OpenAI-first AI layer (2026-09-08 upgrade)
+
+OpenAI is the primary reasoning provider (`AI_PROVIDER=openai`,
+`OPENAI_API_KEY` server-side only): Responses API + strict Structured Outputs,
+multi-role pipeline (fundamental/event/technical analysts on gpt-5.6-terra;
+Forecast Critic + Risk Committee on gpt-5.6-sol; extraction on gpt-5.6-luna)
+over a provenance-carrying evidence graph, with deterministic disagreement
+scoring, counterfactual "what would make this a BUY" conditions, evidence-hash
+caching, fixture evals (10/10 PASS gate for prompt changes), and a hard
+cap-only clamp — AI can explain and lower, never raise. Without a key the
+deterministic system runs identically. Research verdicts from this upgrade
+(panel GBMs, LambdaRank ranking, event reactions): consistent positive
+patterns, none significant on overlap-honest independent windows ⇒ **no
+promotion; champion and current ranking kept** (docs/model-promotion-final.md).
+Forecast vintages are immutable with a NORMAL/DRIFTING/INVALIDATED drift state
+(docs/forecast-vintage-methodology.md).
+
 ## Completion state (2026-09-08 — Rules 1–20 finished)
 
 All twenty rules of `docs/risk-spec.md` are **VERIFIED** (one runtime item —

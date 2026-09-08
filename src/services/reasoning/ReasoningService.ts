@@ -111,6 +111,8 @@ export class ReasoningService {
         latencyMs: result.latencyMs,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
+        role: "risk_committee",
+        validationResult: "valid", // review() only returns schema-validated output
       })
     );
     return { review, result };

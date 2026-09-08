@@ -2,6 +2,18 @@
 
 **Primary doc for the running system.** The v2 production upgrade is underway on branch `upgrade/product-v2` — its binding contract is `docs/upgrade-spec.md`, its evidence `docs/upgrade-audit.md`, its plan `docs/implementation-plan.md`, and its resumable state `docs/next-session.md`. Every claim below was measured live, not promised.
 
+## OpenAI-first upgrade (O1–O12 complete, 2026-09-08)
+- **Provider**: `reasoning/OpenAIProvider.ts` (SDK v7, Responses API, strict json_schema + server revalidation, never coerced), `providerRegistry.ts` (AI_PROVIDER routing; Claude preserved), audit columns on ai_reviews (role/response_id/schema_version/validation_result/meta). Models env-routed: luna extraction · terra analysts · sol critic/committee (all live-verified).
+- **Evidence graph**: `ai/EvidenceGraphService.ts` — 12 sections, per-fact provenance {source, url, authority 1-5, asOf, availableAt, retrievedAt, quality, isPrimarySource}; factual-content evidenceHash (cache key). AI never reads the DB.
+- **Roles**: `ai/RoleOrchestrator.ts` — role-scoped slices, evidence-hash cache (verified zero-call reruns), failure isolation, full audit; `ai/disagreement.ts` (deterministic 0-100), `ai/counterfactuals.ts` (conditions from the gate; AI explains validated ids only). Routes: GET/POST /api/ai/:t(, /analyze), GET /api/events/:t.
+- **Research**: `research/excessReturns.ts` (market/sector/residual, excess targets), `research/panel.ts` (stock×date, 5y adjusted, point-in-time only — Yahoo snapshot fundamentals EXCLUDED), worker v2 (/panel-fit-predict: LightGBM reg/cls/LambdaRank, XGBoost, CatBoost, ElasticNet), `scripts/panelRun.ts` (overlap-honest stride IC; select-on-val/report-test-once), `scripts/eventStudy.ts` (hierarchical floors). Verdicts: GBM ICs +0.02…+0.06 but stride-t ≤ 1.87 ⇒ NOT promoted; ranking kept; dividends show no tradable reaction (n=432); event 'other' cell confounded and discarded.
+- **Vintages/drift**: `forecast/ForecastDriftService.ts` + GET /api/forecast/:t/vintage — ORIGINAL immutable vs CURRENT, NORMAL/DRIFTING/INVALIDATED with reasons (BHEL live: DRIFTING, 1.0 ATR, inside band).
+- **Uncertainty decomposition**: forecastConfidence.contributions (points lost per source) + truth-panel breakdown.
+- **UI**: ForecastVintageCard (Forecast), MaterialEventsCard (Research — events primary, keyword sentiment secondary), AiSynthesisCard (Deep Dive: technical/fundamental/critic + counterfactuals).
+- **Evals** (`scripts/aiEvals.ts`): 10 fixtures + consistency + hallucinated-ticker scan; PASS 10/10, 0 raw cap violations (ExperimentRun 5040afa2); gate for prompt/model changes.
+- **Security**: key in gitignored .env only, server-side calls only, position context limited to explicit fields; docs/openai-security.md (owner advised to rotate the in-chat key).
+- Docs: openai-ai-architecture · ai-evals · panel-forecast-study · ranking-model-study · event-reaction-study · forecast-vintage-methodology · openai-security · bhel-ai-regression · ai-before-after · model-promotion-final.
+
 ## Completion state (Rules 1–20 finished, 2026-09-08)
 - **Acceptance**: every rule VERIFIED (live committee call BLOCKED_EXTERNAL until ANTHROPIC_API_KEY is set) — matrix + evidence in `docs/final-implementation-report.md`; research verdicts in `docs/forecast-before-after.md`; promotion decision in `docs/promotion-policy.md`; failure-case replay in `docs/bhel-regression-final.md`.
 - **Data (Phase 1)**: Yahoo chart fetched with `events=div,split`; `stock_history` carries adjusted_close/split_factor/dividend; ALL analytics run on `analysisCloses()` (adjusted ?? close); canonical layer flags unadjusted breaks, dedupes, marks stale/partial sessions (`market/canonical.ts`, `tests/canonical-data.test.ts`).
