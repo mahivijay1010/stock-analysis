@@ -36,6 +36,28 @@ The owner merged Watchlist + Holdings into ONE unified destination and asked for
 - **Stock Detail**: CanonicalDecisionCard on the overview section (same snapshot as the unified list — 13.14).
 - Also fixed this session: login field mismatch (email→username, c62d024) and ledger form field mismatch (executedAt→tradeDate, 04d96ba); owner credentials now testing@gmail.com / OWNER_PASS in .env.
 
+## RISK-SPEC REMEDIATION COMPLETE THROUGH T4 (2026-09-08)
+Owner's binding risk spec (docs/risk-spec.md, Rules 1-20) delivered in stages:
+FIRST audit (docs/decision-audit.md, 167 verified findings) -> SECOND plan
+(docs/decision-remediation-plan.md) -> THIRD T1-T4 (commits ad93119, 84d7298,
+d6041e6, 9b24c01) -> FOURTH-SIXTH final report (docs/decision-report.md, incl.
+Rules 1-20 IMPLEMENTED/VERIFIED/EXPERIMENTAL/BLOCKED table).
+Headlines: policy v3 TradeGate (Brier-skill/dataQuality/forecastConfidence/
+entryQuality/EV/risk vetoes, thresholds PROVISIONAL restrict-only); ScoreCard
+with riskScore/dataQualityScore/forecastConfidenceScore; two-decision
+snapshots (new entry vs holder); scan buckets with honest '0 best entries';
+truth panel + Why-not-Buy + unmet gates on Stock Detail; conviction/BUY TODAY
+vocabulary retired; raw-vs-independent sample counts everywhere; P0 data
+fixes (partial-bar to callers, prediction_logs unique index, brief P(up)
+substitution, model_version+recency pin, volume/prevClose nulls, NO_DATA
+verdict, getUniverse TTL); experiment registry live (first run: all horizons
+honestly SKIPPED - 743 verified rows/8 days); block bootstrap EXPERIMENTAL;
+AI committee cap-only + ai_reviews audit (honest 503 without ANTHROPIC_API_KEY).
+OPEN (see decision-report.md §6): full regime classifier, event engine,
+isotonic calibration once data suffices (~mid-Oct for 30d), TS challengers +
+Python-worker decision (owner Q5), rolling-skill dashboards, adjusted bars,
+Discover per-row gate chips.
+
 ## PHASE D IN PROGRESS (plan §6, spec §7–8)
 DONE (committed):
 - `src/services/experiments/splits.ts`: date-grouped chronological splits with PURGE (label-interval overlap dropped) + EMBARGO (post-boundary gap); dateBlockBootstrap for uncertainty (resample dates in contiguous blocks, never rows). Pure, throws on degenerate configs.
