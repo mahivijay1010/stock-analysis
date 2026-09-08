@@ -156,7 +156,7 @@ export function StocksView({ onAnalyze }: { onAnalyze: (ticker: string) => void 
   // Phase 14: published-gate chips per row (absent = honestly "not published").
   const allTickers = useMemo(() => (data ?? []).map((s) => s.ticker), [data]);
   const batch = useDecisionBatch(allTickers);
-  const decisions = batch.data?.decisions ?? {};
+  const decisions = useMemo(() => batch.data?.decisions ?? {}, [batch.data?.decisions]);
 
   const columns = useMemo<Array<DataTableColumn<UniverseStockRow>>>(
     () => [

@@ -13,14 +13,23 @@
 import { AppDataSource } from "../../config/database";
 import { AiReview, DecisionSnapshot, Instrument } from "../../entities";
 import { HttpError } from "../../types";
-import { claudeProvider } from "./ClaudeProvider";
+import { resolveProvider } from "./providerRegistry";
 import { CommitteeContext, CommitteeResult, InvestmentReasoningProvider } from "./types";
 
 export class ReasoningService {
-  constructor(private readonly provider: InvestmentReasoningProvider = claudeProvider) {}
+  constructor(private readonly injected?: InvestmentReasoningProvider) {}
+
+  /** Resolved per call so AI_PROVIDER / key changes apply without a restart. */
+  private get provider(): InvestmentReasoningProvider {
+    return this.injected ?? resolveProvider();
+  }
 
   available(): boolean {
     return this.provider.isAvailable();
+  }
+
+  providerName(): string {
+    return this.provider.name;
   }
 
   /** Latest stored review for a ticker, or null. */
@@ -49,8 +58,8 @@ export class ReasoningService {
     if (!this.provider.isAvailable()) {
       throw new HttpError(
         503,
-        "AI committee unavailable: no reasoning provider is configured (set ANTHROPIC_API_KEY). " +
-          "The deterministic evidence-gated decision remains fully functional without it."
+        "AI review unavailable: no reasoning provider is configured (set OPENAI_API_KEY, or AI_PROVIDER=claude with ANTHROPIC_API_KEY). " +
+          "The deterministic evidence-gated decision remains active and fully functional without it."
       );
     }
     const t = this.normalize(ticker);
