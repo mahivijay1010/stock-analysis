@@ -231,9 +231,11 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
           <AnimatePresence mode="wait" initial={false}>
             <TabPanel key={section}>
               {section === 'overview' && (
-                <Stagger className="space-y-4">
-                  <StaggerItem><CanonicalDecisionCard ticker={data.ticker} /></StaggerItem>
-                  <StaggerItem><CommitteeCard ticker={data.ticker} /></StaggerItem>
+                <Stagger className="analysis-section analysis-section-decision space-y-4">
+                  <div className="decision-command-deck">
+                    <StaggerItem><CanonicalDecisionCard ticker={data.ticker} /></StaggerItem>
+                    <StaggerItem><CommitteeCard ticker={data.ticker} /></StaggerItem>
+                  </div>
                   <div className="overview-command-grid">
                     <StaggerItem className="overview-command-item overview-decision-item"><DecisionSummary data={data} /></StaggerItem>
                     <StaggerItem className="overview-command-item overview-chart-item"><PriceChartCard key={`chart-${data.ticker}`} ticker={data.ticker} /></StaggerItem>
@@ -244,7 +246,7 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
               )}
 
               {section === 'forecast' && (
-                <div className="space-y-5">
+                <div className="analysis-section analysis-section-forecast space-y-5">
                   <ForecastVintageCard ticker={data.ticker} />
                   <DailyForecastCard ticker={data.ticker} />
                   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
@@ -257,7 +259,7 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
               )}
 
               {section === 'research' && (
-                <div className="space-y-4">
+                <div className="analysis-section analysis-section-research space-y-4">
                   <MaterialEventsCard ticker={data.ticker} />
                   {data.news !== undefined && <NewsPanel news={data.news} />}
                   {data.framework && <FrameworkPanel framework={data.framework} />}
@@ -267,7 +269,7 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
               )}
 
               {section === 'technicals' && (
-                <div className="space-y-4">
+                <div className="analysis-section analysis-section-technicals space-y-4">
                   <AiSynthesisCard ticker={data.ticker} />
                   <TechnicalsGrid technicals={data.analysis.technicals} quote={data.quote} />
                 </div>

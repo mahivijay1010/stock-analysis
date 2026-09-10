@@ -214,7 +214,7 @@ export interface MacroValue {
   value: number;
   unit: string;
   period: string;
-  provider: "RBI" | "MOSPI";
+  provider: "RBI" | "MOSPI" | "FRED";
   sourceUrl: string;
   publicationDate?: string | null;
   status: "RAW";

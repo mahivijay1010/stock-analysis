@@ -255,6 +255,16 @@ export class AdminService {
           atr14: analysis.technicals.atr14,
           annualVolatilityPct: analysis.technicals.annualVolatilityPct,
           recommendation: analysis.recommendation === "AVOID" ? "HOLD" : analysis.recommendation,
+          forecastConstraint: (() => {
+            const p = analysis.predictions.find((prediction) => prediction.horizonDays === 30);
+            return p && Number.isFinite(p.high80Pct) && p.high80Pct > 0
+              ? {
+                  horizonDays: 30,
+                  upperReturnPct: p.high80Pct,
+                  label: "the 80% forecast upper bound",
+                }
+              : null;
+          })(),
         });
         if (plan) {
           stopLoss = plan.stopLoss;

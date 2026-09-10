@@ -177,6 +177,19 @@ describe('indicators', () => {
   });
 });
 
+describe('quant input chronology', () => {
+  test('reversed provider rows produce the same RSI and moving averages', () => {
+    const chronological = mkBars(260, (i) => 120 + Math.sin(i / 5) * 7 + i * 0.08);
+    const ordered = analyzeBars(chronological);
+    const reversed = analyzeBars(chronological.slice().reverse());
+
+    expect(reversed.technicals.rsi14).toBeCloseTo(ordered.technicals.rsi14!, 8);
+    expect(reversed.technicals.sma20).toBeCloseTo(ordered.technicals.sma20!, 8);
+    expect(reversed.technicals.sma50).toBeCloseTo(ordered.technicals.sma50!, 8);
+    expect(reversed.technicals.sma200).toBeCloseTo(ordered.technicals.sma200!, 8);
+  });
+});
+
 // ---------- engine contract ----------
 
 describe('engine.analyzeBars', () => {

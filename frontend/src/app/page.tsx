@@ -164,10 +164,13 @@ export default function Home() {
   return (
     <div className="min-h-screen">
       <Header tab={tab} stockLabel={ticker} onTabChange={openTab} onOpenStock={openStock} onAmountChange={setAmount} />
-      <main className="workspace-main w-full px-4 pt-24 pb-28 sm:px-6 lg:ml-[248px] lg:w-[calc(100%-248px)] lg:px-9 lg:pt-[104px] lg:pb-16">
+      <main
+        className="workspace-main w-full px-4 pt-24 pb-28 sm:px-6 lg:ml-[248px] lg:w-[calc(100%-248px)] lg:px-8 lg:pt-[96px] lg:pb-16 2xl:px-10"
+        data-workspace={tab}
+      >
         {routeReady && (
           <AnimatePresence mode="wait" initial={false}>
-            <TabPanel key={tab} className="mx-auto w-full max-w-[1560px]">
+            <TabPanel key={tab} className="workspace-canvas mx-auto w-full max-w-[1520px]">
               {tab === 'watchlist' && (
                 <PortfolioView
                   pendingPurchaseTicker={pendingPurchase}

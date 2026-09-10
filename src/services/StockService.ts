@@ -327,11 +327,30 @@ export class StockService {
       bollingerLower: analysis.technicals.bollinger?.lower ?? null,
     });
 
+    const forecastUpperCandidates = [
+      (() => {
+        const p = analysis.predictions.find((prediction) => prediction.horizonDays === 30);
+        return p && Number.isFinite(p.high80Pct)
+          ? { horizonDays: 30, upperReturnPct: p.high80Pct, label: "the 80% forecast upper bound" }
+          : null;
+      })(),
+      (() => {
+        const h = monteCarlo.horizons.find((horizon) => horizon.horizonDays === 30);
+        return h && Number.isFinite(h.percentiles.p95)
+          ? { horizonDays: 30, upperReturnPct: h.percentiles.p95, label: "the bootstrap p95 upper bound" }
+          : null;
+      })(),
+    ].filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null && candidate.upperReturnPct > 0);
+    const forecastConstraint = forecastUpperCandidates.sort(
+      (a, b) => a.upperReturnPct - b.upperReturnPct
+    )[0] ?? null;
+
     const tradePlan: TradePlan | null = buildTradePlan({
       entry: quote.price,
       atr14: analysis.technicals.atr14,
       annualVolatilityPct: analysis.technicals.annualVolatilityPct,
       recommendation: analysis.recommendation,
+      forecastConstraint,
     });
 
     const sector =

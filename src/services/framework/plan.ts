@@ -42,11 +42,21 @@ export interface TradePlanInput {
   atr14: number | null;
   annualVolatilityPct: number | null;
   recommendation: "BUY" | "HOLD" | "AVOID";
+  /**
+   * Optional probabilistic upper bound for the same holding period. When
+   * present, an executable target may not sit above it. This keeps the
+   * deterministic reward:risk geometry aligned with the forecast tab.
+   */
+  forecastConstraint?: {
+    horizonDays: number;
+    upperReturnPct: number;
+    label: string;
+  } | null;
 }
 
 /** ATR/vol-based trade plan. Returns null when the recommendation is AVOID. */
 export function buildTradePlan(input: TradePlanInput): TradePlan | null {
-  const { entry, atr14, annualVolatilityPct, recommendation } = input;
+  const { entry, atr14, annualVolatilityPct, recommendation, forecastConstraint } = input;
   if (recommendation === "AVOID") return null;
   if (!(entry > 0)) return null;
 
@@ -56,12 +66,25 @@ export function buildTradePlan(input: TradePlanInput): TradePlan | null {
   const stopDist = Math.max(atrDist, entry * pctTier);
   const stopLoss = entry - stopDist;
   const stopLossPct = (stopDist / entry) * 100;
-  const targetDist = REWARD_RISK_RATIO * stopDist;
-  const target = entry + targetDist;
+  const structuralTargetDist = REWARD_RISK_RATIO * stopDist;
+  const structuralTarget = entry + structuralTargetDist;
+  const validForecastCeiling =
+    forecastConstraint &&
+    Number.isFinite(forecastConstraint.upperReturnPct) &&
+    forecastConstraint.upperReturnPct > 0
+      ? entry * (1 + forecastConstraint.upperReturnPct / 100)
+      : null;
+  const target =
+    validForecastCeiling !== null
+      ? Math.min(structuralTarget, validForecastCeiling)
+      : structuralTarget;
+  const targetDist = target - entry;
   const targetPct = (targetDist / entry) * 100;
+  const rewardRiskRatio = stopDist > 0 ? targetDist / stopDist : 0;
+  const forecastCapped = target < structuralTarget - 0.005;
 
   // Plausibility: target must fit inside +2.5σ over ~21 trading days (1 month).
-  let meetsRewardRisk = true;
+  let meetsRewardRisk = rewardRiskRatio >= REWARD_RISK_RATIO - 0.005;
   let plausibilityNote = "";
   if (vol !== null && vol > 0) {
     const sigmaDaily = vol / 100 / Math.sqrt(252);
@@ -87,17 +110,25 @@ export function buildTradePlan(input: TradePlanInput): TradePlan | null {
       ? `2×ATR14 (${inr(atrDist)})`
       : `${(pctTier * 100).toFixed(1)}% ${pctTier === BLUECHIP_STOP_PCT ? "bluechip" : "high-volatility"} floor`;
 
+  const targetBasis = forecastCapped && forecastConstraint
+    ? ` The raw 3:1 target was ${inr(structuralTarget)}, but the executable target was capped at ` +
+      `${inr(target)} by ${forecastConstraint.label} (${forecastConstraint.horizonDays}-day upper return ` +
+      `${forecastConstraint.upperReturnPct.toFixed(1)}%). The resulting reward:risk is ` +
+      `${rewardRiskRatio.toFixed(2)}:1, so this is not a qualifying 3:1 trade.`
+    : ` Target ${inr(target)} preserves the 3:1 reward:risk geometry.`;
+
   return {
     entry: round2(entry),
     stopLoss: round2(stopLoss),
     stopLossPct: round2(stopLossPct),
     target: round2(target),
     targetPct: round2(targetPct),
-    rewardRiskRatio: REWARD_RISK_RATIO,
+    rewardRiskRatio: round2(rewardRiskRatio),
     meetsRewardRisk,
     note:
       `Stop ${inr(stopLoss)} (−${stopLossPct.toFixed(1)}%) set by ${stopBasis}; ` +
-      `target ${inr(target)} (+${targetPct.toFixed(1)}%) is 3× the risk (owner's 3:1 rule).` +
+      `target ${inr(target)} (+${targetPct.toFixed(1)}%).` +
+      targetBasis +
       plausibilityNote,
   };
 }

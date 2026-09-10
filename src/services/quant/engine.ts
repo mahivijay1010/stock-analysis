@@ -83,6 +83,19 @@ interface RawSignal extends Signal {
   value: number; // -1..1, bullish positive
 }
 
+/**
+ * Defensive quant boundary: providers already promise oldest-first bars, but
+ * analytics must not silently change meaning if a new adapter returns DESC
+ * rows. Duplicate sessions keep the last supplied observation, then sort ASC.
+ */
+export function normalizeBarsChronologically(bars: Bar[]): Bar[] {
+  const byDate = new Map<string, Bar>();
+  for (const bar of bars) byDate.set(bar.date, bar);
+  return Array.from(byDate.values()).sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+  );
+}
+
 function directionOf(value: number): Signal['direction'] {
   if (value > 0.15) return 'bullish';
   if (value < -0.15) return 'bearish';
@@ -102,9 +115,10 @@ function trailingReturnPct(closes: number[], k: number): number | null {
  * Throws if fewer than 60 bars — never fabricates output from insufficient data.
  */
 export function analyzeBars(bars: Bar[], opts?: { niftyBars?: Bar[] }): QuantAnalysis {
-  if (!Array.isArray(bars) || bars.length < 60) {
+  const orderedBars = Array.isArray(bars) ? normalizeBarsChronologically(bars) : [];
+  if (orderedBars.length < 60) {
     throw new Error(
-      `analyzeBars requires at least 60 daily bars, got ${Array.isArray(bars) ? bars.length : 0}`
+      `analyzeBars requires at least 60 unique daily bars, got ${orderedBars.length}`
     );
   }
 
@@ -112,13 +126,19 @@ export function analyzeBars(bars: Bar[], opts?: { niftyBars?: Bar[] }): QuantAna
   // series (returns, momentum, SMA/vol/drawdown) uses adjustedClose ?? close
   // so corporate actions stop fabricating jumps; the displayed price stays
   // the actual last close (identical on the latest bar by construction).
-  const closes = bars.map((b) =>
+  const unscaledCloses = orderedBars.map((b) =>
     b.adjustedClose != null && Number.isFinite(b.adjustedClose) && b.adjustedClose > 0
       ? b.adjustedClose
       : b.close
   );
-  const volumes = bars.map((b) => b.volume);
-  const price = bars[bars.length - 1].close;
+  const volumes = orderedBars.map((b) => b.volume);
+  const price = orderedBars[orderedBars.length - 1].close;
+  // Express adjusted history in today's actual-price units. This preserves
+  // every adjusted return (and RSI) while making SMA levels directly
+  // comparable with the displayed raw quote after splits/dividends.
+  const latestAdjusted = unscaledCloses[unscaledCloses.length - 1];
+  const adjustmentScale = latestAdjusted > 0 ? price / latestAdjusted : 1;
+  const closes = unscaledCloses.map((close) => close * adjustmentScale);
 
   // --- Distribution parameters: last 250 daily returns ---
   const rets = dailyReturns(closes.slice(-251));
@@ -134,12 +154,12 @@ export function analyzeBars(bars: Bar[], opts?: { niftyBars?: Bar[] }): QuantAna
   const sma50 = sma(closes, 50);
   const sma200 = sma(closes, 200);
   const boll = bollinger(closes, 20, 2);
-  const atr14 = atr(bars, 14);
+  const atr14 = atr(orderedBars, 14);
   const annualVolatilityPct = sigma * Math.sqrt(252) * 100;
 
   let week52: { high: number; low: number; positionPct: number } | null = null;
-  if (bars.length >= 200) {
-    const win = bars.slice(-252);
+  if (orderedBars.length >= 200) {
+    const win = orderedBars.slice(-252);
     const high = Math.max(...win.map((b) => b.high));
     const low = Math.min(...win.map((b) => b.low));
     const positionPct = high === low ? 50 : clamp(((price - low) / (high - low)) * 100, 0, 100);
@@ -309,7 +329,7 @@ export function analyzeBars(bars: Bar[], opts?: { niftyBars?: Bar[] }): QuantAna
     let detail = 'NIFTY comparison unavailable';
     const nifty = opts?.niftyBars;
     if (nifty && nifty.length >= 21) {
-      const nCloses = nifty.map((b) => b.close);
+      const nCloses = normalizeBarsChronologically(nifty).map((b) => b.close);
       const k = Math.min(60, closes.length - 1, nCloses.length - 1);
       const sPct = trailingReturnPct(closes, k);
       const nPct = trailingReturnPct(nCloses, k);

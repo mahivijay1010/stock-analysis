@@ -13,8 +13,9 @@
  * only when the headline actually mentions the company/ticker. Irrelevant
  * headlines must never colour a stock's sentiment.
  *
- * Sentiment is a DETERMINISTIC finance keyword lexicon — crude by design and
- * said so in the caveat. No fake AI claims. Decay model: 48h half-life.
+ * Sentiment is a DETERMINISTIC finance phrase/keyword lexicon — crude by
+ * design and said so in the caveat. Research context uses a 14-day half-life;
+ * freshness remains a separate field and is required by tactical entry rules.
  */
 
 import axios from "axios";
@@ -25,13 +26,13 @@ const USER_AGENT =
 const REQUEST_TIMEOUT_MS = 10_000;
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes per ticker
 const MAX_ITEMS = 12;
-const HALF_LIFE_HOURS = 48;
+const HALF_LIFE_HOURS = 14 * 24;
 
 // ── Deterministic finance lexicon (~20 positive / ~20 negative stems) ────────
 // Stems are matched at word start (\bstem) so "surges"/"surged" hit "surge".
 const POSITIVE_STEMS = [
-  "surge", "rall", "gain", "jump", "soar", "beat", "upgrade", "outperform",
-  "bullish", "profit", "growth", "strong", "record high", "buyback", "dividend",
+  "surge", "rall", "gain", "jump", "soar", "rise", "rose", "increase", "improv",
+  "beat", "upgrade", "outperform", "bullish", "growth", "strong", "record high", "buyback", "dividend",
   "bonus issue", "expansion", "wins", "approval", "breakout", "rebound", "upbeat",
 ];
 const NEGATIVE_STEMS = [
@@ -44,13 +45,44 @@ const NEGATIVE_STEMS = [
 const POSITIVE_RES = POSITIVE_STEMS.map((s) => new RegExp(`\\b${s}`, "i"));
 const NEGATIVE_RES = NEGATIVE_STEMS.map((s) => new RegExp(`\\b${s}`, "i"));
 
+const POSITIVE_FINANCE_PHRASES = [
+  /\b(?:net\s+)?profit\b[^.!;]{0,38}\b(?:up|rise[sd]?|rose|jump(?:s|ed)?|surge[sd]?|grow(?:s|th)?|increase[sd]?|beat[sd]?)\b/i,
+  /\b(?:revenue|sales|income|margin|ebitda|eps)\b[^.!;]{0,38}\b(?:up|rise[sd]?|rose|jump(?:s|ed)?|surge[sd]?|grow(?:s|th)?|increase[sd]?|beat[sd]?)\b/i,
+  /\b(?:shares?|stock)\b[^.!;]{0,24}\b(?:surge[sd]?|rall(?:y|ies|ied)|jump(?:s|ed)?|gain(?:s|ed)?|soar(?:s|ed)?)\b/i,
+  /\b(?:wins?|bags?|secures?|receives?)\b[^.!;]{0,32}\b(?:order|contract|approval)\b/i,
+];
+
+const NEGATIVE_FINANCE_PHRASES = [
+  /\b(?:net\s+)?profit\b[^.!;]{0,38}\b(?:down|fall[\w]*|fell|drop[\w]*|declin[\w]*|miss[\w]*|slump[\w]*)\b/i,
+  /\b(?:revenue|sales|income|margin|ebitda|eps)\b[^.!;]{0,38}\b(?:down|fall[\w]*|fell|drop[\w]*|declin[\w]*|miss[\w]*|slump[\w]*)\b/i,
+  /\b(?:shares?|stock)\b[^.!;]{0,24}\b(?:fall[\w]*|fell|drop[\w]*|plunge[\w]*|slump[\w]*|crash[\w]*)\b/i,
+];
+
 /** Deterministic lexicon sentiment: (pos−neg)/max(1, pos+neg) ∈ [-1, 1]. */
 export function lexiconSentiment(title: string): number {
   let pos = 0;
   let neg = 0;
+  for (const re of POSITIVE_FINANCE_PHRASES) if (re.test(title)) pos += 2;
+  for (const re of NEGATIVE_FINANCE_PHRASES) if (re.test(title)) neg += 2;
   for (const re of POSITIVE_RES) if (re.test(title)) pos++;
   for (const re of NEGATIVE_RES) if (re.test(title)) neg++;
   return (pos - neg) / Math.max(1, pos + neg);
+}
+
+/** Material results/orders deserve more research weight than routine mentions. */
+export function headlineImpactWeight(title: string): number {
+  let weight = 1;
+  if (/\b(?:profit|revenue|sales|income|margin|ebitda|eps|results?|earnings?)\b/i.test(title)) {
+    weight += 0.75;
+  }
+  if (/\b(?:order|contract|approval|acquisition|merger|default|fraud|probe|lawsuit)\b/i.test(title)) {
+    weight += 0.5;
+  }
+  const percentages = Array.from(title.matchAll(/(?:^|\s)(\d+(?:\.\d+)?)\s*%/g), (m) => Number(m[1]));
+  const magnitude = percentages.length ? Math.max(...percentages.filter(Number.isFinite)) : 0;
+  if (magnitude >= 15) weight += 0.25;
+  if (magnitude >= 50) weight += 0.25;
+  return Math.min(2.5, weight);
 }
 
 /** Decode the handful of entities Google RSS actually emits. */
@@ -251,10 +283,17 @@ export class NewsService {
       };
     });
 
-    // Decay-weighted mean sentiment in [-1, 1] → sentimentScore in [-100, 100].
-    const wSum = items.reduce((s, i) => s + i.decayWeight, 0);
+    // Materiality × time-decay weighted mean in [-1, 1]. A 14-day half-life
+    // retains quarterly-result context without pretending it is fresh news.
+    const weightedItems = items.map((item) => ({
+      item,
+      weight: item.decayWeight * headlineImpactWeight(item.title),
+    }));
+    const wSum = weightedItems.reduce((s, row) => s + row.weight, 0);
     const weightedMean =
-      wSum > 0 ? items.reduce((s, i) => s + i.sentiment * i.decayWeight, 0) / wSum : 0;
+      wSum > 0
+        ? weightedItems.reduce((s, row) => s + row.item.sentiment * row.weight, 0) / wSum
+        : 0;
     const sentimentScore = Math.round(weightedMean * 100 * 10) / 10;
     const fresh24hCount = items.filter((i) => i.ageHours <= 24).length;
     // Hype = ABNORMAL attention, not routine coverage: liquid large caps run
@@ -270,7 +309,8 @@ export class NewsService {
       fresh24hCount,
       assessment: buildAssessment(items.length, fresh24hCount, sentimentScore, hypeTemperature),
       caveat:
-        "Sentiment here is a crude deterministic keyword count over headlines — it can be " +
+        "Sentiment here is a deterministic finance phrase score, weighted by materiality and a 14-day " +
+        "research half-life — it can still be " +
         "manipulated by planted stories, misread sarcasm, and misses paywalled context. " +
         "Verify anything important against exchange filings (NSE/BSE announcements) and " +
         "multiple sources before acting on it.",
@@ -291,7 +331,8 @@ function buildAssessment(
     return "No relevant headlines found from either source — price action, not narrative, is driving this stock.";
   }
   if (fresh24hCount === 0) {
-    return `Quiet news tape (0 fresh headlines in 24h across ${itemCount} recent items, decay-weighted sentiment ${sentimentScore >= 0 ? "+" : ""}${sentimentScore}) — price action, not narrative, is driving this stock.`;
+    const archivedTone = sentimentScore >= 15 ? "positive" : sentimentScore <= -15 ? "negative" : "mixed/neutral";
+    return `No fresh headlines in 24h across ${itemCount} recent items. The materiality- and decay-weighted research tone is ${archivedTone} (${sentimentScore >= 0 ? "+" : ""}${sentimentScore}), but it is not treated as a fresh trading catalyst.`;
   }
   const tone =
     sentimentScore >= 15 ? "positive" : sentimentScore <= -15 ? "negative" : "mixed/neutral";

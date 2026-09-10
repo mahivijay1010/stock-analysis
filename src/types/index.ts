@@ -50,7 +50,7 @@ export interface NewsItem {
   url: string;
   sentiment: number; // -1..1 (deterministic finance-lexicon score)
   ageHours: number;
-  decayWeight: number; // 0..1, 0.5^(ageHours/48)
+  decayWeight: number; // 0..1, 0.5^(ageHours/(14*24)) research-memory decay
 }
 
 export interface NewsSummary {
@@ -159,9 +159,11 @@ export interface TradePlan {
   stopLoss: number;
   stopLossPct: number; // max(2×ATR14, 5% bluechip / 7.5% if annualVol>30%) below entry
   target: number;
-  targetPct: number; // entry + 3 × (entry − stopLoss) — owner's 3:1 rule
-  rewardRiskRatio: number; // always 3.0
-  meetsRewardRisk: boolean; // false if target exceeds the +2.5σ√21d plausibility clamp
+  targetPct: number;
+  /** Actual reward:risk after any probabilistic forecast cap. */
+  rewardRiskRatio: number;
+  /** True only when the executable, probability-aligned target still offers ≥3:1. */
+  meetsRewardRisk: boolean;
   note: string;
 }
 

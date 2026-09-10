@@ -36,9 +36,27 @@ export function TechnicalsGrid({ technicals, quote }: { technicals: Technicals; 
   const week52Sweep = useMountSweep(t.week52 ? Math.max(0, Math.min(100, t.week52.positionPct)) / 100 : 0);
 
   const rsiZone =
-    t.rsi14 == null ? undefined : t.rsi14 >= 70 ? 'overbought' : t.rsi14 <= 30 ? 'oversold' : 'neutral zone';
+    t.rsi14 == null
+      ? undefined
+      : t.rsi14 >= 70
+        ? 'overbought'
+        : t.rsi14 <= 30
+          ? 'oversold'
+          : t.rsi14 >= 55
+            ? 'bullish momentum'
+            : t.rsi14 <= 45
+              ? 'weak momentum'
+              : 'neutral zone';
   const rsiClass =
-    t.rsi14 == null ? undefined : t.rsi14 >= 70 ? 'text-sell' : t.rsi14 <= 30 ? 'text-amber-400' : undefined;
+    t.rsi14 == null
+      ? undefined
+      : t.rsi14 >= 70
+        ? 'text-sell'
+        : t.rsi14 <= 30
+          ? 'text-amber-400'
+          : t.rsi14 >= 55
+            ? 'text-buy'
+            : undefined;
 
   return (
     <Card className="p-5">

@@ -35,10 +35,10 @@ type NavItem = { id: TabId; label: string; short: string; description: string; i
 
 /** The three primary destinations in the simplified product shell. */
 const PRIMARY: NavItem[] = [
-  { id: 'watchlist', label: 'Watchlist', short: 'Watch', description: 'Follow & own in one place — forecasts, decisions, your ledger', icon: Eye },
-  { id: 'discover', label: 'Discover', short: 'Discover', description: 'Search & rank the covered NSE universe', icon: Compass },
-  { id: 'short-term', label: 'Short-Term', short: 'Short', description: 'Risk-gated positional setups (1–21 sessions) — up to 5, never forced', icon: Zap },
-  { id: 'track-record', label: 'Track Record', short: 'Record', description: 'Measured forecast performance — not marketing', icon: Gauge },
+  { id: 'watchlist', label: 'Watchlist', short: 'Watch', description: 'Positions & live signals', icon: Eye },
+  { id: 'discover', label: 'Discover', short: 'Discover', description: 'Opportunity universe', icon: Compass },
+  { id: 'short-term', label: 'Short-Term', short: 'Short', description: '1–21 session setups', icon: Zap },
+  { id: 'track-record', label: 'Track Record', short: 'Record', description: 'Measured model evidence', icon: Gauge },
 ];
 
 /** Secondary destinations (gear menu): the sandbox desk + protected diagnostics. */
@@ -57,7 +57,7 @@ function Brand() {
       </div>
       <div className="leading-none">
         <p className="font-display text-[15px] font-semibold tracking-[-0.02em] text-white">StockSense</p>
-        <p className="mt-1 text-[9px] font-semibold tracking-[0.2em] text-slate-500 uppercase">India research</p>
+        <p className="mt-1 text-[9px] font-semibold tracking-[0.2em] text-slate-500 uppercase">Market intelligence</p>
       </div>
     </div>
   );
@@ -253,7 +253,7 @@ export function Header({
 
       <header className="workspace-topbar fixed top-0 right-0 left-[248px] z-40 hidden h-[72px] items-center justify-between px-8 lg:flex">
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-slate-600">StockSense</span>
+          <span className="topbar-product-label">Market observatory</span>
           <ChevronRight className="h-3 w-3 text-slate-700" aria-hidden />
           {tab === 'stock' ? (
             <span className="flex items-center gap-1.5 font-medium text-slate-300">

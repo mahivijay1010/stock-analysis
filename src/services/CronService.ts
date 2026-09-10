@@ -94,6 +94,13 @@ export class CronService {
         expression: "0 21 1 * *",
         run: () => this.monthlyGovernanceReview(),
       },
+      {
+        // Global macro (RBI + FRED India CPI/GDP + MoSPI when configured);
+        // series are universe-wide, not per-ticker. 07:30 IST on the 1st.
+        name: "monthly-macro-refresh",
+        expression: "30 7 1 * *",
+        run: () => this.monthlyMacroRefresh(),
+      },
     ];
 
     for (const job of jobs) {
@@ -142,6 +149,13 @@ export class CronService {
     const { researchJobsService } = await import("./research/ResearchJobsService");
     const r = await researchJobsService.monthlyGovernanceReview();
     console.log(`🏛️ [CRON] governance review: ${r.snapshots} snapshots, ${r.transitions} demotions`);
+  }
+
+  /** 07:30 IST on the 1st — global macro refresh (RBI + FRED India series + MoSPI). */
+  private async monthlyMacroRefresh(): Promise<void> {
+    const { intelligenceService } = await import("./intelligence/IntelligenceService");
+    const r = (await intelligenceService.refreshMacro()) as { values?: unknown[]; errors?: unknown[] };
+    console.log(`🌐 [CRON] macro refresh: ${r.values?.length ?? 0} observations, ${r.errors?.length ?? 0} provider notes`);
   }
 
 

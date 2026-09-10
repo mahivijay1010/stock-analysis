@@ -65,7 +65,7 @@ function HeadlineRow({ item }: { item: NewsItem }) {
   return (
     <li
       className="flex items-start gap-2.5 py-2"
-      // Older headlines fade with the 48h half-life decay weight (floor 0.45 for readability).
+      // Older headlines fade with the research-memory decay weight (floor 0.45 for readability).
       style={{ opacity: Math.max(0.45, Math.min(1, item.decayWeight)) }}
     >
       <span

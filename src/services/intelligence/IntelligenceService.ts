@@ -12,6 +12,7 @@ import { CompanyDocumentSource } from "./providers/CompanyDocumentSource";
 import { MoSPIDataSource } from "./providers/MoSPIDataSource";
 import { NSEDataSource } from "./providers/NSEDataSource";
 import { RBIDataSource } from "./providers/RBIDataSource";
+import { FredDataSource } from "./providers/FredDataSource";
 import { AnnualFinancials, CoverageRow, CrossCheck, DataStatus, FilingDocument, MetricResult, NormalizedFinancialFact, SourceRef } from "./types";
 import { buildAnnualSeries, normalizeXbrl } from "./xbrl";
 
@@ -39,6 +40,7 @@ export class IntelligenceService {
     private readonly bse = new BSEDataSource(),
     private readonly rbi = new RBIDataSource(),
     private readonly mospi = new MoSPIDataSource(),
+    private readonly fred = new FredDataSource(),
     private readonly documents = new CompanyDocumentSource(),
     private readonly repository = new IntelligenceRepository()
   ) {}
@@ -152,9 +154,11 @@ export class IntelligenceService {
     // adapter can only return an empty payload, so the network probe is
     // skipped entirely and reported honestly instead of silently fetched.
     const mospiEnabled = Boolean(process.env.MOSPI_API_TOKEN);
+    const fredEnabled = this.fred.isConfigured();
     const providers = [
       { name: "RBI", run: () => this.rbi.fetchCurrent() },
       ...(mospiEnabled ? [{ name: "MOSPI", run: () => this.mospi.fetchCurrent() }] : []),
+      ...(fredEnabled ? [{ name: "FRED", run: () => this.fred.fetchCurrent() }] : []),
     ];
     const results = await Promise.allSettled(providers.map((p) => p.run()));
     const values = results.flatMap((result) => result.status === "fulfilled" ? result.value : []);
@@ -163,6 +167,9 @@ export class IntelligenceService {
       ? [{ provider: providers[index].name, error: result.reason instanceof Error ? result.reason.message : String(result.reason) }] : []);
     if (!mospiEnabled) {
       errors.push({ provider: "MOSPI", error: "skipped — MOSPI_API_TOKEN not configured (adapter latent; no request made)" });
+    }
+    if (!fredEnabled) {
+      errors.push({ provider: "FRED", error: "skipped — FRED_API_KEY not configured (BLOCKED_EXTERNAL; no request made)" });
     }
     return { values, errors, refreshedAt: new Date().toISOString() };
   }

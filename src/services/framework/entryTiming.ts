@@ -173,11 +173,11 @@ export function computeEntryTiming(input: EntryTimingInput): EntryTiming {
     if (directionalHype) {
       contributions.push({
         delta: -12,
-        reason: `Directional news hype ${fmt(n.hypeTemperature, 0)}/100 with sentiment ${fmt(n.sentimentScore, 0)} — the 48h half-life decay model says much is already priced in (−12)`,
-        waitFor: `wait ~24–48h for the news hype to decay (hype ${fmt(n.hypeTemperature, 0)}/100, sentiment ${fmt(n.sentimentScore, 0)} now)`,
+        reason: `Directional news hype ${fmt(n.hypeTemperature, 0)}/100 with sentiment ${fmt(n.sentimentScore, 0)} — the fresh-news heat suggests much may already be priced in (−12)`,
+        waitFor: `wait ~24–48h for fresh-news heat to cool (hype ${fmt(n.hypeTemperature, 0)}/100, sentiment ${fmt(n.sentimentScore, 0)} now)`,
       });
     }
-    if (n.sentimentScore >= 30 && n.hypeTemperature < 50) {
+    if (n.sentimentScore >= 30 && n.hypeTemperature < 50 && n.fresh24hCount >= 1) {
       contributions.push({
         delta: 8,
         reason: `Quietly positive news — sentiment ${fmt(n.sentimentScore, 0)} at low hype ${fmt(n.hypeTemperature, 0)}/100, not yet crowded (+8)`,
@@ -187,7 +187,7 @@ export function computeEntryTiming(input: EntryTimingInput): EntryTiming {
     if (
       !(n.sentimentScore <= -30 && n.fresh24hCount >= 2) &&
       !directionalHype &&
-      !(n.sentimentScore >= 30 && n.hypeTemperature < 50)
+      !(n.sentimentScore >= 30 && n.hypeTemperature < 50 && n.fresh24hCount >= 1)
     ) {
       neutralNotes.push(
         `News tape unremarkable — sentiment ${fmt(n.sentimentScore, 0)}, hype ${fmt(n.hypeTemperature, 0)}/100, ${n.fresh24hCount} fresh headlines`
