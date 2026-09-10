@@ -303,3 +303,63 @@ Recommended next (unblocked, no external feed): AI evidence-pointer grounding on
 top of the sealed snapshot — the AI critic references evidence IDs belonging to
 a snapshot; the backend rejects unknown IDs, numbers not present in the
 evidence, or an AI action above the deterministic one.
+
+---
+
+## AI snapshot grounding (2026-09-10) — reviewer #17/#18, next-branch #1
+
+Built the first item on the reviewer's NEXT list — the mechanical enforcement
+of AI containment on top of the sealed DecisionSnapshot. **476 tests / 41 suites
+green; tsc clean.** `src/services/ai/snapshotGrounding.ts` (PURE):
+
+- **Fixed factual vocabulary**: `buildEvidenceSet(sealed, ticker)` flattens the
+  snapshot's sealed gate inputs into stable, snapshot-scoped evidence items
+  (`EV:measured.directionHitRatePct`, `EV:riskScore`, …), each bound to the
+  snapshot's `inputManifestHash`. The AI sees exactly these facts — no more.
+- **Cannot invent facts**: `validateGroundedResponse` rejects any claim that
+  references an unknown evidence id, cites a number that does not match the
+  evidence value, or cites no evidence at all. Only structured, validated claims
+  are consumed — the AI's free text is never trusted for facts.
+- **Cap-only**: the AI action is clamped to AT MOST the deterministic decision.
+  Lowering is honoured (fail-safe); an attempt to RAISE is flagged and ignored.
+- **Adversarial-safe**: a wrong ticker, a wrong snapshot hash, or an unknown
+  action is a hard violation that discards the AI contribution entirely and
+  lets the deterministic decision stand. The validator never throws.
+
+This is the reviewer's rule made physical: MODEL → prediction → AI critique
+(cap/lower only, grounded in immutable evidence) → RISK → TradeGate → final.
+
+### Realtime V1 — scope locked (reviewer's clarification)
+
+Private-use clarified: a broker/vendor API permitting personal use (e.g. an
+Upstox-style WebSocket feed) is acceptable — no enterprise NSE feed required —
+provided the source's terms allow personal use. Chosen V1 shape (deferred build,
+in this order):
+
+1. **10-minute evaluation cadence**, NOT per-second — enough intraday adaptation
+   to test whether looking intraday adds value, without HFT complexity.
+2. **Continuous 1-minute candle collection** between checkpoints (never a single
+   point every 10 min — that discards the intervening path). Ingestion cadence
+   is decoupled from evaluation cadence so 10→5→1 min is a config change.
+3. **State + StateDelta**: each checkpoint builds a full `LiveStockContext` and a
+   delta vs the prior; the AI analyses the CHANGE, not the snapshot in isolation.
+4. **No manufactured probabilities**: live layer emits qualitative assessment
+   (IMPROVING/STABLE/WEAKENING/INVALIDATED), never a % unless a realtime
+   probabilistic model is separately validated.
+5. **Two rankings**: OpportunityRank (interesting) vs ActionableRank (clears the
+   gates) — preserving interesting≠actionable. Rank by risk-adjusted expected R
+   / LCB / liquidity / portfolio impact, NOT max upside %, and NOT a revived
+   composite conviction score (components stay separate). Hard safety gates are
+   never overridden by rank.
+6. **Separate holder vs non-holder decisions** (ENTRY/WAIT/AVOID vs
+   HOLD/REDUCE_REVIEW/EXIT_REVIEW) — a bad BUY setup is not a SELL.
+7. **Replay engine alongside**: LIVE and REPLAY modes share code; feed historical
+   1-min bars incrementally (no lookahead) to test "what would it have said at
+   10:20?" before trusting it.
+8. **REALTIME_SHADOW**: runs in shadow, records every `LivePredictionRevision`,
+   and earns authority ONLY if it beats the EOD engine on expected R / win rate /
+   Brier skill / false-breakout rate / drawdown / entry efficiency — else it
+   doesn't, and we say so.
+
+Every live material-change event will seal a DecisionSnapshot the same way and
+ground its AI critique through the module built above.
