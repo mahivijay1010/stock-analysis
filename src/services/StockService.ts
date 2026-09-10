@@ -295,12 +295,27 @@ export class StockService {
     const beta1y = this.computeBeta1y(bars, niftyBars);
 
     // V2: await the concurrent fetches and compose framework + plans.
-    const [fundamentals, macro, sectorMomentum, news] = await Promise.all([
+    const [fundamentalsRaw, macro, sectorMomentum, news] = await Promise.all([
       fundamentalsP,
       regimeP,
       sectorP,
       newsP,
     ]);
+
+    // Scraped-fundamentals ENRICHMENT (fill-nulls only): a stock's ROE /
+    // current ratio / operating margin / PEG that Yahoo doesn't report are
+    // filled from the scraped panel data so the framework can actually CHECK
+    // those rules instead of listing them "not reported". Primary (Yahoo)
+    // values are never overridden. This read also drives the SWR refresh when
+    // a stock page is opened. Failure ⇒ unchanged fundamentals (never throws).
+    let fundamentals = fundamentalsRaw;
+    if (fundamentalsWarning == null || fundamentalsRaw == null) {
+      try {
+        fundamentals = await this.enrichWithScrapedFundamentals(ticker, fundamentalsRaw);
+      } catch {
+        fundamentals = fundamentalsRaw;
+      }
+    }
 
     // V5: news-aware entry timing — pop7d from the Monte Carlo forecast.
     // (The V7 six-model ensemble blend was removed from production execution
@@ -1762,6 +1777,54 @@ export class StockService {
       .where("created_at < NOW() - INTERVAL '365 days'")
       .execute();
     return result.affected ?? 0;
+  }
+
+  /**
+   * Fill-nulls-only enrichment of Yahoo fundamentals with the SCRAPED panel
+   * data, so the framework can CHECK rules (ROE/current ratio/operating
+   * margin/earnings growth/PEG) instead of reporting them unavailable. Primary
+   * (Yahoo) values always win; scraped only fills gaps. PEG is derived from the
+   * scraped P/E ÷ scraped quarterly YoY profit growth when Yahoo lacks it.
+   */
+  private async enrichWithScrapedFundamentals(
+    ticker: string,
+    base: import("./market/types").Fundamentals | null
+  ): Promise<import("./market/types").Fundamentals | null> {
+    const { fundamentalsPanelService } = await import("./intelligence/FundamentalsPanelService");
+    const panel = await fundamentalsPanelService.get(ticker); // also drives SWR refresh
+    const r = panel.ratios;
+    const val = (k: string): number | null => (r[k] != null ? r[k].value : null);
+    const roe = val("roe");
+    const currentRatio = val("current_ratio");
+    const opm = val("operating_margin");
+    const pb = val("price_to_book");
+    const divYield = val("dividend_yield");
+    const pe = val("pe_ratio");
+    const growthYoY = val("profit_growth_yoy");
+    const scrapedPeg = pe != null && growthYoY != null && growthYoY > 0 ? Math.round((pe / growthYoY) * 100) / 100 : null;
+    if (roe == null && currentRatio == null && opm == null && pe == null && growthYoY == null) return base; // nothing scraped
+
+    const seed: import("./market/types").Fundamentals =
+      base ?? {
+        trailingPE: null, pegRatio: null, priceToBook: null, enterpriseToEbitda: null,
+        grossMarginPct: null, operatingMarginPct: null, netMarginPct: null,
+        revenueGrowthPct: null, earningsGrowthPct: null, returnOnEquityPct: null, returnOnAssetsPct: null,
+        totalDebt: null, totalCash: null, freeCashflow: null, currentRatio: null,
+        dividendYieldPct: null, payoutRatioPct: null, marketCap: null, insiderHoldingPct: null,
+        beta: null, nextEarningsDate: null, asOf: new Date().toISOString(), source: "yahoo",
+      };
+    const fill = (cur: number | null, scraped: number | null): number | null => (cur != null ? cur : scraped);
+    return {
+      ...seed,
+      returnOnEquityPct: fill(seed.returnOnEquityPct, roe),
+      currentRatio: fill(seed.currentRatio, currentRatio),
+      operatingMarginPct: fill(seed.operatingMarginPct, opm),
+      priceToBook: fill(seed.priceToBook, pb),
+      dividendYieldPct: fill(seed.dividendYieldPct, divYield),
+      trailingPE: fill(seed.trailingPE, pe),
+      earningsGrowthPct: fill(seed.earningsGrowthPct, growthYoY),
+      pegRatio: fill(seed.pegRatio, scrapedPeg),
+    };
   }
 }
 

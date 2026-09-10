@@ -220,62 +220,62 @@ export function AnalyzeView({ ticker, amount, onAnalyze, onAmountChange, onGoToA
           >
             <StockHero data={data} />
           </motion.div>
-          <motion.div
-            initial={reducedMotion ? false : { opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.38, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
-          >
+          <div className="analysis-nav-slot">
             <WorkspaceNav active={section} onChange={setSection} />
-          </motion.div>
+          </div>
 
-          <AnimatePresence mode="wait" initial={false}>
-            <TabPanel key={section}>
-              {section === 'overview' && (
-                <Stagger className="analysis-section analysis-section-decision space-y-4">
-                  <div className="decision-command-deck">
-                    <StaggerItem><CanonicalDecisionCard ticker={data.ticker} /></StaggerItem>
-                    <StaggerItem><CommitteeCard ticker={data.ticker} /></StaggerItem>
+          <div className="analysis-content-slot">
+            <AnimatePresence mode="wait" initial={false}>
+              <TabPanel key={section}>
+                {section === 'overview' && (
+                  <Stagger className="analysis-section analysis-section-decision space-y-4">
+                    <div className="decision-cockpit-grid overview-command-grid">
+                      <div className="decision-cockpit-stack">
+                        <StaggerItem><CanonicalDecisionCard ticker={data.ticker} /></StaggerItem>
+                        <StaggerItem><DecisionSummary data={data} /></StaggerItem>
+                      </div>
+                      <div className="decision-cockpit-stack">
+                        <StaggerItem><CommitteeCard ticker={data.ticker} /></StaggerItem>
+                        <StaggerItem><PriceChartCard key={`chart-${data.ticker}`} ticker={data.ticker} /></StaggerItem>
+                      </div>
+                    </div>
+                    <StaggerItem><RecentWindowsPanel bars={data.chart.bars} currentPrice={data.quote.price} /></StaggerItem>
+                    {investmentPlan && data.tradePlan !== undefined && <StaggerItem><TradePlanCard tradePlan={data.tradePlan} investmentPlan={investmentPlan} /></StaggerItem>}
+                  </Stagger>
+                )}
+
+                {section === 'forecast' && (
+                  <div className="analysis-section analysis-section-forecast space-y-5">
+                    <ForecastVintageCard ticker={data.ticker} />
+                    <DailyForecastCard ticker={data.ticker} />
+                    <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
+                      <ForecastChart bars={data.chart.bars} predictions={data.analysis.predictions} />
+                      {data.monteCarlo && <MonteCarloCard forecast={data.monteCarlo} />}
+                    </div>
+                    <ProjectionsTable predictions={data.analysis.predictions} investmentPlanRow={investmentPlan?.projections ?? null} highlightAmount={investmentPlan?.amount ?? null} />
+                    <VolForecastCard ticker={data.ticker} />
                   </div>
-                  <div className="overview-command-grid">
-                    <StaggerItem className="overview-command-item overview-decision-item"><DecisionSummary data={data} /></StaggerItem>
-                    <StaggerItem className="overview-command-item overview-chart-item"><PriceChartCard key={`chart-${data.ticker}`} ticker={data.ticker} /></StaggerItem>
+                )}
+
+                {section === 'research' && (
+                  <div className="analysis-section analysis-section-research space-y-4">
+                    <MaterialEventsCard ticker={data.ticker} />
+                    {data.news !== undefined && <NewsPanel news={data.news} />}
+                    {data.framework && <FrameworkPanel framework={data.framework} />}
+                    <InvestmentBriefCard key={`brief-${data.ticker}`} ticker={data.ticker} />
+                    <AccuracyStrip accuracy={data.accuracy} onGoToAccuracy={onGoToAccuracy} />
                   </div>
-                  <StaggerItem><RecentWindowsPanel bars={data.chart.bars} currentPrice={data.quote.price} /></StaggerItem>
-                  {investmentPlan && data.tradePlan !== undefined && <StaggerItem><TradePlanCard tradePlan={data.tradePlan} investmentPlan={investmentPlan} /></StaggerItem>}
-                </Stagger>
-              )}
+                )}
 
-              {section === 'forecast' && (
-                <div className="analysis-section analysis-section-forecast space-y-5">
-                  <ForecastVintageCard ticker={data.ticker} />
-                  <DailyForecastCard ticker={data.ticker} />
-                  <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
-                    <ForecastChart bars={data.chart.bars} predictions={data.analysis.predictions} />
-                    {data.monteCarlo && <MonteCarloCard forecast={data.monteCarlo} />}
+                {section === 'technicals' && (
+                  <div className="analysis-section analysis-section-technicals space-y-4">
+                    <AiSynthesisCard ticker={data.ticker} />
+                    <TechnicalsGrid technicals={data.analysis.technicals} quote={data.quote} />
                   </div>
-                  <ProjectionsTable predictions={data.analysis.predictions} investmentPlanRow={investmentPlan?.projections ?? null} highlightAmount={investmentPlan?.amount ?? null} />
-                  <VolForecastCard ticker={data.ticker} />
-                </div>
-              )}
-
-              {section === 'research' && (
-                <div className="analysis-section analysis-section-research space-y-4">
-                  <MaterialEventsCard ticker={data.ticker} />
-                  {data.news !== undefined && <NewsPanel news={data.news} />}
-                  {data.framework && <FrameworkPanel framework={data.framework} />}
-                  <InvestmentBriefCard key={`brief-${data.ticker}`} ticker={data.ticker} />
-                  <AccuracyStrip accuracy={data.accuracy} onGoToAccuracy={onGoToAccuracy} />
-                </div>
-              )}
-
-              {section === 'technicals' && (
-                <div className="analysis-section analysis-section-technicals space-y-4">
-                  <AiSynthesisCard ticker={data.ticker} />
-                  <TechnicalsGrid technicals={data.analysis.technicals} quote={data.quote} />
-                </div>
-              )}
-            </TabPanel>
-          </AnimatePresence>
+                )}
+              </TabPanel>
+            </AnimatePresence>
+          </div>
 
           <div className="flex items-start gap-2 border-t border-white/[0.06] px-1 pt-4 text-[10px] leading-relaxed text-slate-600">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden /><p>{data.disclaimer}</p>

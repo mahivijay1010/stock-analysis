@@ -10,11 +10,14 @@ import { DURATION, EASE } from '@/lib/design-tokens';
 /* ------------------------------------------------------------------ */
 
 export function TabPanel({ children, className }: { children: ReactNode; className?: string }) {
+  const reducedMotion = useReducedMotion();
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
+      data-slot="tab-panel"
+      initial={reducedMotion ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
       transition={{ duration: 0.2, ease: EASE.standard }}
       className={className}
     >
