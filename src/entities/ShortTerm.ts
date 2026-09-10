@@ -51,7 +51,12 @@ export class ShortTermTransition {
 @Index(["ticker", "anchorDate"])
 // One prospective observation per natural identity (reviewer P0 #2). Backs the
 // `.orIgnore()` insert so a same-session re-scan is a no-op, not a duplicate.
-@Unique("uq_shadow_identity", ["ticker", "anchorDate", "setupType", "horizon", "modelVersion"])
+// The identity spans ALL THREE version axes that change what the prediction
+// MEANS — model, decision policy, and setup/feature definition — so a
+// legitimate re-run under a bumped policy/setup is a distinct experiment and is
+// NOT silently suppressed. (The snapshot branch will replace this composite
+// with a single decision_snapshot_id anchor.)
+@Unique("uq_shadow_identity", ["ticker", "anchorDate", "setupType", "horizon", "modelVersion", "policyVersion", "featureVersion"])
 export class ShortTermShadowPrediction {
   @PrimaryGeneratedColumn("uuid") id: string;
   @Column({ type: "varchar", length: 20 }) ticker: string;
@@ -59,6 +64,8 @@ export class ShortTermShadowPrediction {
   @Column({ name: "setup_type", type: "varchar", length: 30 }) setupType: string;
   @Column({ type: "varchar", length: 12 }) horizon: string;
   @Column({ name: "model_version", type: "varchar", length: 40 }) modelVersion: string;
+  @Column({ name: "policy_version", type: "varchar", length: 40, default: "st-policy-v1" }) policyVersion: string;
+  @Column({ name: "feature_version", type: "varchar", length: 40, default: "st-features-v1" }) featureVersion: string;
   @Column({ type: "jsonb" }) plan: Record<string, unknown>;
   @Column({ type: "jsonb" }) forecast: Record<string, unknown>;
   /** Resolved outcome: TARGET_FIRST | STOP_FIRST | TIMEOUT (+ realized numbers). */

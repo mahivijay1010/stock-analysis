@@ -563,6 +563,8 @@ export class ShortTermScanService {
             setupType: v.setupType,
             horizon: params.horizon,
             modelVersion: SHORT_TERM_VERSION,
+            policyVersion: SHORT_TERM_POLICY_VERSION, // part of the identity — a re-run under a new policy is a distinct experiment
+            featureVersion: SHORT_TERM_FEATURE_VERSION,
             plan: v.plan as unknown as Record<string, unknown>,
             forecast: v.forecast as unknown as Record<string, unknown>,
           } as never)

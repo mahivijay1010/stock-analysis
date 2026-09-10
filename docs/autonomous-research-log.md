@@ -209,3 +209,38 @@ Unchanged blockers plus the reviewer's newly-itemised follow-ons, in his order:
   risk; 80/90/95% EV-LCB multiplicity study.
 - **BLOCKED_EXTERNAL** (unchanged): PIT survivorship-free universe; exchange-grade
   canonical market data. **Time-dependent**: prospective confirmation.
+
+---
+
+## Batch #2 correction (2026-09-10) — identity axes + legacy R migration
+
+Reviewer follow-up on batch #2. Two real corrections, plus a factual fix to the
+batch-#2 record. **454 tests / 39 suites green; backend + frontend tsc clean.**
+
+- **Uniqueness identity was suppressing legitimate experiments.** The reviewer
+  warned a re-run under a bumped policy/setup version could be `.orIgnore()`'d
+  away. Investigating, the ORIGINAL table migration (`1789100000000`) already
+  had `uq_st_shadow` on just `(ticker, anchor_date, setup_type, horizon)` —
+  narrower even than `model_version`. So batch #2's note that "the insert had no
+  conflict target" was **wrong**: it had one, and it was too narrow (a new
+  MODEL version was already being suppressed). Migration `1789400000000` drops
+  both the original 4-col index and batch #2's 5-col one, replacing them with a
+  single 7-col identity spanning all three axes that change a prediction's
+  meaning — model, policy, feature/setup definition. Two new columns
+  (`policy_version`, `feature_version`) are populated at insert from the
+  existing `SHORT_TERM_POLICY_VERSION` / `SHORT_TERM_FEATURE_VERSION` constants;
+  `reconcileLedger`'s distinct-identity count matches. The snapshot branch will
+  replace this composite with a single `decision_snapshot_id`.
+- **Legacy synthetic R could leak into "realized".** The realized average uses
+  `COALESCE(realizedNetR, netRMultiple)`, so a pre-split AMBIGUOUS row (whose
+  synthetic adverse value sat in `netRMultiple`) could re-enter as realized.
+  The migration rewrites historical outcome JSON to the explicit split —
+  ambiguous ⇒ `realizedNetR=null`, `conservativeNetR=old netR`,
+  `netRMultiple=null`; other filled scored ⇒ realized=conservative=best-case —
+  so no synthetic number is ever read as realized, with or without the COALESCE.
+  Rows written before the AMBIGUOUS label existed (recorded as STOP_FIRST) are
+  unrecoverable and documented as such; no prospective rows have accrued yet, so
+  the backfill is a guard, not a lossy repair.
+
+Next: immutable DecisionSnapshot (unchanged priority), which subsumes the shadow
+identity into `decision_snapshot_id` and enables AI evidence-pointer grounding.

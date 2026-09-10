@@ -75,7 +75,7 @@ export class ResearchJobsService {
               COUNT(*) FILTER (WHERE outcome IS NULL)::text AS pending,
               COUNT(*) FILTER (WHERE (outcome->>'ambiguous')::boolean IS TRUE)::text AS ambiguous,
               COUNT(*) FILTER (WHERE (outcome->>'outcome') = 'DATA_INVALID')::text AS invalid,
-              COUNT(DISTINCT (ticker, anchor_date, setup_type, horizon, model_version))::text AS distinct
+              COUNT(DISTINCT (ticker, anchor_date, setup_type, horizon, model_version, policy_version, feature_version))::text AS distinct
          FROM short_term_shadow_predictions`
     ).catch(() => [{ total: "0", resolved: "0", pending: "0", ambiguous: "0", invalid: "0", distinct: "0" }]);
     const counts: LedgerCounts = {
