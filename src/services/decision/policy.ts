@@ -34,7 +34,7 @@
  * a new-entry caution is never a sell instruction.
  */
 
-export const DECISION_POLICY_VERSION = "decision-policy-v5";
+export const DECISION_POLICY_VERSION = "decision-policy-v6";
 
 export const POLICY_THRESHOLDS = {
   minMaturedSamples: 30, // fewer matured 30d predictions ⇒ INSUFFICIENT_EVIDENCE
@@ -286,31 +286,47 @@ export function evaluateEntryPolicy(inputs: PolicyInputs): PolicyDecision {
       { gate: "directional edge", current: `${m.directionHitRatePct.toFixed(1)}% over ~${effN} independent obs`, required: `one-sided 95% above 50% on ≥${T.minEffectiveSamples} independent obs` }
     );
   }
-  if (inputs.dataQualityScore != null && inputs.dataQualityScore < T.minDataQuality) {
+  // P0 #6 — FAIL-CLOSED: a decision-critical unknown (null) is itself an unmet
+  // gate. "Not assessed" can never contribute to a BUY; it must block it.
+  if (inputs.dataQualityScore == null || inputs.dataQualityScore < T.minDataQuality) {
     cap(
-      `Data quality ${inputs.dataQualityScore.toFixed(0)}/100 (minimum ${T.minDataQuality}) — missing or suspect inputs make a buy opinion unsupportable.`,
-      { gate: "data quality", current: `${inputs.dataQualityScore.toFixed(0)}`, required: `≥${T.minDataQuality}` }
+      inputs.dataQualityScore == null
+        ? "Data quality was not assessed — a buy opinion is unsupportable without it (fail-closed)."
+        : `Data quality ${inputs.dataQualityScore.toFixed(0)}/100 (minimum ${T.minDataQuality}) — missing or suspect inputs make a buy opinion unsupportable.`,
+      { gate: "data quality", current: inputs.dataQualityScore == null ? "not assessed" : `${inputs.dataQualityScore.toFixed(0)}`, required: `≥${T.minDataQuality}` }
     );
   }
-  if (inputs.forecastConfidenceScore != null && inputs.forecastConfidenceScore < T.minForecastConfidence) {
+  if (inputs.forecastConfidenceScore == null || inputs.forecastConfidenceScore < T.minForecastConfidence) {
     cap(
-      `Forecast confidence ${inputs.forecastConfidenceScore.toFixed(0)}/100 (minimum ${T.minForecastConfidence}) — measured out-of-sample evidence does not support a buy.`,
-      { gate: "forecast confidence", current: `${inputs.forecastConfidenceScore.toFixed(0)}`, required: `≥${T.minForecastConfidence}` }
+      inputs.forecastConfidenceScore == null
+        ? "Forecast confidence was not assessed — measured out-of-sample evidence is required for a buy (fail-closed)."
+        : `Forecast confidence ${inputs.forecastConfidenceScore.toFixed(0)}/100 (minimum ${T.minForecastConfidence}) — measured out-of-sample evidence does not support a buy.`,
+      { gate: "forecast confidence", current: inputs.forecastConfidenceScore == null ? "not assessed" : `${inputs.forecastConfidenceScore.toFixed(0)}`, required: `≥${T.minForecastConfidence}` }
     );
   }
-  if (inputs.entryQualityScore != null && inputs.entryQualityScore < T.minEntryQuality) {
+  if (inputs.entryQualityScore == null || inputs.entryQualityScore < T.minEntryQuality) {
     cap(
-      `Entry quality ${inputs.entryQualityScore.toFixed(0)}/100 (minimum ${T.minEntryQuality}) — the setup may be strong but THIS price is an unattractive entry (extension/reward-risk penalties).`,
-      { gate: "entry quality", current: `${inputs.entryQualityScore.toFixed(0)}`, required: `≥${T.minEntryQuality}` }
+      inputs.entryQualityScore == null
+        ? "Entry quality was not assessed — this price cannot be confirmed as an attractive entry (fail-closed)."
+        : `Entry quality ${inputs.entryQualityScore.toFixed(0)}/100 (minimum ${T.minEntryQuality}) — the setup may be strong but THIS price is an unattractive entry (extension/reward-risk penalties).`,
+      { gate: "entry quality", current: inputs.entryQualityScore == null ? "not assessed" : `${inputs.entryQualityScore.toFixed(0)}`, required: `≥${T.minEntryQuality}` }
     );
   }
-  if (inputs.evAfterCostsPct != null && inputs.evAfterCostsPct <= 0) {
+  if (inputs.evAfterCostsPct == null || inputs.evAfterCostsPct <= 0) {
     cap(
-      `Expected value after round-trip costs is ${inputs.evAfterCostsPct.toFixed(2)}% — a scenario frequency above 50% does not justify BUY when the expected P&L net of fees is not positive.`,
-      { gate: "expected value", current: `${inputs.evAfterCostsPct.toFixed(2)}% after costs`, required: "> 0%" }
+      inputs.evAfterCostsPct == null
+        ? "Expected value after costs was not assessed — a BUY requires a positive after-cost EV (fail-closed)."
+        : `Expected value after round-trip costs is ${inputs.evAfterCostsPct.toFixed(2)}% — a scenario frequency above 50% does not justify BUY when the expected P&L net of fees is not positive.`,
+      { gate: "expected value", current: inputs.evAfterCostsPct == null ? "not assessed" : `${inputs.evAfterCostsPct.toFixed(2)}% after costs`, required: "> 0%" }
     );
   }
-  if (inputs.regime) {
+  if (!inputs.regime) {
+    cap("Market/entry regime was not assessed — a BUY cannot be issued blind to regime (fail-closed).", {
+      gate: "regime",
+      current: "not assessed",
+      required: "assessed, non-hostile market + entry regime",
+    });
+  } else {
     if (inputs.regime.marketRegime === "bear_high_vol") {
       cap(
         "Market regime is bear_high_vol — new entries are capped at WATCH regardless of the setup (regime caps, never boosts).",
@@ -324,14 +340,14 @@ export function evaluateEntryPolicy(inputs: PolicyInputs): PolicyDecision {
       );
     }
   }
-  if (inputs.modelHealthState === "SUSPENDED") {
+  // P0 #6 — only a live-HEALTHY model may support a BUY. SUSPENDED, DEGRADED,
+  // INSUFFICIENT_HISTORY and "not assessed" (null) all cap at WAIT: an
+  // unproven or degraded live model must never authorize an entry.
+  if (inputs.modelHealthState !== "HEALTHY") {
+    const state = inputs.modelHealthState ?? "not assessed";
     cap(
-      "Live model monitoring is SUSPENDED — rolling out-of-sample metrics breached the suspension thresholds; a suspended model may not support a BUY (Phase 13).",
-      {
-        gate: "model health",
-        current: "SUSPENDED",
-        required: "HEALTHY or DEGRADED (rolling Brier ≤0.35 and 80% coverage ≥55% on the live tape)",
-      }
+      `Live model health is ${state} — only a HEALTHY live model may support a BUY (Phase 13, fail-closed). Rolling out-of-sample evidence is insufficient or degraded.`,
+      { gate: "model health", current: state, required: "HEALTHY (sufficient resolved history, rolling Brier ≤0.35, 80% coverage ≥55%)" }
     );
   }
 

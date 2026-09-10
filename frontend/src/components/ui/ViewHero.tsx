@@ -20,12 +20,15 @@ export function ViewHero({
   eyebrow?: ReactNode;
   right?: ReactNode;
   /** Optional data-bearing visual; defaults to the lightweight Market Prism. */
-  visual?: ReactNode;
+  visual?: ReactNode | false;
   prismState?: MarketPrismState;
   className?: string;
 }) {
+  const visualNode = visual === false ? null : (visual ?? <MarketPrism state={prismState} compact />);
+  const hasAside = visualNode != null || right != null;
+
   return (
-    <section className={clsx('view-hero', className)}>
+    <section className={clsx('view-hero', !hasAside && 'view-hero-no-aside', className)}>
       <div className="view-hero-sheen" aria-hidden />
       <div className="view-hero-copy min-w-0">
         {eyebrow != null && (
@@ -38,13 +41,13 @@ export function ViewHero({
         </h2>
         {subtitle != null && <p className="view-hero-subtitle">{subtitle}</p>}
       </div>
-      <div className="view-hero-aside">
-        {visual ?? <MarketPrism state={prismState} compact />}
+      {hasAside && <div className="view-hero-aside">
+        {visualNode}
         {/* min-w-0 (not shrink-0): the chip row must be allowed to shrink and
             wrap on phones — shrink-0 forced its max-content width and pushed
             the page into horizontal overflow at 375px. */}
         {right != null && <div className="view-hero-meta">{right}</div>}
-      </div>
+      </div>}
     </section>
   );
 }

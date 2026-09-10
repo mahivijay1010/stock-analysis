@@ -405,6 +405,7 @@ export function TopPicksView({ onAnalyze }: { onAnalyze: (ticker: string) => voi
         eyebrow="Daily full-universe scan"
         title="Today's Scan"
         subtitle="Setups from today's full-universe scan, grouped honestly: only stocks that pass the evidence gate can appear under Best new entries — strong charts without that evidence are labeled as setups, never recommendations."
+        visual={false}
         right={
           data ? (
             <>

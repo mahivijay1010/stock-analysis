@@ -55,6 +55,13 @@ const TIER_TONE: Record<string, 'buy' | 'cyan' | 'amber' | 'zinc'> = { A: 'buy',
 const TIER_LABEL: Record<string, string> = { A: 'A / VALIDATED', B: 'B / PROMISING', C: 'C / UNPROVEN', D: 'D / REJECTED' };
 const FRESH_TONE: Record<string, 'buy' | 'amber' | 'sell'> = { LIVE: 'buy', EOD_FINAL: 'cyan' as never, DELAYED_INTRADAY: 'amber', STALE: 'sell' };
 
+const RADAR_GATES = [
+  { index: '01', label: 'Data', detail: 'Freshness & liquidity' },
+  { index: '02', label: 'Evidence', detail: 'Out-of-sample edge' },
+  { index: '03', label: 'Risk', detail: 'Loss defined first' },
+  { index: '04', label: 'Entry', detail: 'Confirmation required' },
+] as const;
+
 type DetailTab = 'overview' | 'entry' | 'exit' | 'ai' | 'track';
 
 function DetailTabButton({ id, label, active, onSelect }: { id: DetailTab; label: string; active: DetailTab; onSelect: (id: DetailTab) => void }) {
@@ -356,7 +363,17 @@ export function ShortTermView() {
       {scan.isError && <ErrorState message={scan.error instanceof Error ? scan.error.message : 'Scan failed'} onRetry={() => scan.mutate(params)} />}
 
       {result == null && !scan.isPending && (
-        <section className="short-intentional-empty"><TradeRadarOrb compact /><div><span>Radar ready</span><h2>Start with the risk you can absorb.</h2><p>Set your constraints and run the scan. Qualified trades require validated setup evidence, a confirmed entry, and an EV edge that survives uncertainty—often zero stocks, and that is the correct answer.</p></div></section>
+        <section className="short-intentional-empty">
+          <div className="short-empty-visual"><TradeRadarOrb compact /><p><ShieldCheck aria-hidden /> Risk gates armed</p></div>
+          <div className="short-empty-copy">
+            <span>Radar ready</span>
+            <h2>Start with the risk you can absorb.</h2>
+            <p>Set your constraints and run the scan. Qualified trades require validated setup evidence, a confirmed entry, and an EV edge that survives uncertainty—often zero stocks, and that is the correct answer.</p>
+            <div className="short-gate-path" aria-label="Trade qualification sequence">
+              {RADAR_GATES.map((gate) => <div key={gate.index}><i>{gate.index}</i><strong>{gate.label}</strong><small>{gate.detail}</small></div>)}
+            </div>
+          </div>
+        </section>
       )}
 
       {result && (
@@ -367,7 +384,7 @@ export function ShortTermView() {
               <h2 className="font-display text-sm font-semibold tracking-wide text-slate-200">Qualified short-term trades <span className="text-slate-500">— up to 5</span></h2>
             </div>
             {result.candidates.length === 0 ? (
-              <section className="short-intentional-empty short-no-qualified"><TradeRadarOrb compact regime={result.marketStatus.session} quality="none qualified" /><div><span>No qualified short-term trades</span><h2>Discipline is also a position.</h2><p>{result.emptyMessage} Tier A, confirmed entry, positive EV lower bound, affordability and live authority are all required.</p></div></section>
+              <section className="short-intentional-empty short-no-qualified"><div className="short-empty-visual"><TradeRadarOrb compact regime={result.marketStatus.session} quality="none qualified" /><p><ShieldCheck aria-hidden /> Gates enforced</p></div><div className="short-empty-copy"><span>No qualified short-term trades</span><h2>Discipline is also a position.</h2><p>{result.emptyMessage} Tier A, confirmed entry, positive EV lower bound, affordability and live authority are all required.</p><div className="short-gate-path" aria-label="Trade qualification sequence">{RADAR_GATES.map((gate) => <div key={gate.index}><i>{gate.index}</i><strong>{gate.label}</strong><small>{gate.detail}</small></div>)}</div></div></section>
             ) : (
               result.candidates.map((c) => <CandidateCard key={c.ticker} c={c} onOpen={setOpenTicker} />)
             )}

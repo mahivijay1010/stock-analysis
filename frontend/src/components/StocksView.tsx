@@ -236,6 +236,7 @@ export function StocksView({ onAnalyze }: { onAnalyze: (ticker: string) => void 
       eyebrow="Universe"
       title="Stocks"
       subtitle="The full NSE universe this engine scans — filter and sort it, expand a row for its quick stats, or tap the row for the complete live analysis."
+      visual={false}
       right={chips}
     />
   );

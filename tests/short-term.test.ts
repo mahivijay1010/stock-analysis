@@ -56,18 +56,30 @@ function feats(over: Partial<ShortTermFeatures>): ShortTermFeatures {
 }
 
 describe("risk-based position sizing (spec example)", () => {
-  test("₹50,000 budget, 0.5% risk, entry 420, stop 410 ⇒ 25 shares, ₹10,500 capital", () => {
+  test("₹50,000 budget, 0.5% risk, entry 420, stop 410: cost-inclusive size never breaches the risk budget (P0 #7)", () => {
     const s = computePositionSize({ budgetInr: 50_000, riskPerTradePct: 0.5, entryPrice: 420, stopPrice: 410, atrPct: 2.4, relVolume: 1, advInr: 1e9 });
     expect(s.riskAmount).toBe(250);
     expect(s.riskPerShare).toBe(10);
-    expect(s.positionSizeShares).toBe(25);
-    expect(s.capitalRequired).toBe(10_500);
-    expect(s.capitalRemaining).toBe(39_500);
+    // price-only qty (25) is reported for transparency, but the SIZED qty is
+    // smaller because costs + slippage + a gap buffer are solved in first.
+    expect(s.rawRiskBasedQty).toBe(25);
+    expect(s.positionSizeShares).toBeLessThan(25);
+    expect(s.positionSizeShares).toBeGreaterThan(0);
+    // THE INVARIANT: realized loss at the stop (incl. costs) ≤ the risk budget.
+    expect(s.lossAtStop!).toBeLessThanOrEqual(s.riskAmount);
+    expect(s.capitalRequired).toBe(s.positionSizeShares * 420);
   });
 
-  test("never budget/price: capital used stays a fraction of budget", () => {
+  test("never budget/price: capital used stays within the single-stock cap and the loss budget", () => {
     const s = computePositionSize({ budgetInr: 50_000, riskPerTradePct: 0.5, entryPrice: 100, stopPrice: 99, atrPct: 2, relVolume: 1, advInr: 1e9 });
-    // raw risk-based would be 250 shares = ₹25,000 → capped at 35% of budget (₹17,500)
+    expect(s.capitalRequired).toBeLessThanOrEqual(50_000 * 0.35); // ≤35% single-stock allocation
+    expect(s.lossAtStop!).toBeLessThanOrEqual(s.riskAmount); // cost-inclusive loss never breaches the budget
+    expect(s.capitalRequired).toBeLessThan(50_000); // never the whole budget
+  });
+
+  test("explicit single-stock cap triggers when the cost-inclusive size still exceeds 35%", () => {
+    // Tiny stop distance + high risk% ⇒ cost-inclusive qty*price would exceed 35%.
+    const s = computePositionSize({ budgetInr: 50_000, riskPerTradePct: 5, entryPrice: 100, stopPrice: 99.9, atrPct: 1, relVolume: 1, advInr: 1e9 });
     expect(s.capitalRequired).toBeLessThanOrEqual(50_000 * 0.35);
     expect(s.constraintsApplied.join(" ")).toMatch(/single-stock allocation/);
   });

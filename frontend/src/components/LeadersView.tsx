@@ -542,6 +542,7 @@ export function LeadersView({ onAnalyze }: { onAnalyze: (ticker: string) => void
         eyebrow="Cross-sectional rank"
         title="Relative Leaders"
         subtitle="Who is strongest versus the rest of the universe right now — a cross-sectional rank, not a market-direction promise."
+        visual={false}
         right={
           data ? (
             <>

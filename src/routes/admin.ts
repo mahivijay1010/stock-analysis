@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { AdminController } from "../controllers/AdminController";
 import { adminService } from "../services/admin/AdminService";
+import { requireAuthOrAdminKey } from "../middleware/auth";
 
 /**
  * Admin trading-desk routes (Module V2-D), mounted at /api/admin.
@@ -13,8 +14,9 @@ import { adminService } from "../services/admin/AdminService";
  * the DB is initialized, so this is safe on boot.
  */
 /**
- * Shared admin-key guard — also protects POST /api/jobs/* submissions until
- * real account auth lands (plan §3.3).
+ * @deprecated Fail-OPEN when ADMIN_KEY is unset — replaced by
+ * requireAuthOrAdminKey (P0 security #9). Retained only for reference; not
+ * mounted on any route.
  */
 export const adminKeyGuard = (req: Request, res: Response, next: NextFunction): void => {
   const requiredKey = process.env.ADMIN_KEY;
@@ -41,7 +43,9 @@ export const createAdminRoutes = (): Router => {
     console.error("⚠️ Admin paper-account seed failed (will retry on first request):", err);
   });
 
-  router.use(adminKeyGuard);
+  // P0 security #9: fail-CLOSED. A session OR a matching x-admin-key is
+  // required; the old "no ADMIN_KEY ⇒ open" behavior is gone.
+  router.use(requireAuthOrAdminKey);
   router.get("/account", controller.account); //  GET  /api/admin/account
   router.post("/account/settings", controller.updateSettings); //  POST /api/admin/account/settings (disabled — honest 400)
   router.post("/trades", controller.recordTrade); //  POST /api/admin/trades

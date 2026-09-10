@@ -63,7 +63,7 @@ function Brand() {
   );
 }
 
-function DesktopNavButton({ item, active, onClick }: { item: NavItem; active: boolean; onClick: () => void }) {
+function DesktopNavButton({ item, index, active, onClick }: { item: NavItem; index: number; active: boolean; onClick: () => void }) {
   const Icon = item.icon;
   return (
     <button
@@ -88,6 +88,7 @@ function DesktopNavButton({ item, active, onClick }: { item: NavItem; active: bo
         <strong>{item.label}</strong>
         <small>{item.description}</small>
       </span>
+      <span className="sidebar-nav-index relative z-10" aria-hidden>{String(index + 1).padStart(2, '0')}</span>
     </button>
   );
 }
@@ -225,8 +226,8 @@ export function Header({
 
   return (
     <>
-      <aside className="app-sidebar fixed inset-y-0 left-0 z-50 hidden w-[232px] flex-col lg:flex">
-        <div className="desktop-sidebar-brand flex h-[76px] items-center px-5">
+      <aside className="app-sidebar fixed inset-y-0 left-0 z-50 hidden w-[248px] flex-col lg:flex">
+        <div className="desktop-sidebar-brand flex h-[84px] items-center px-5">
           <Brand />
         </div>
 
@@ -234,9 +235,9 @@ export function Header({
           <p className="sidebar-section-label">Workspace</p>
         </div>
         <nav className="flex flex-1 flex-col gap-1.5 overflow-visible px-3 pt-2" aria-label="Primary navigation">
-          {PRIMARY.map((item) => (
+          {PRIMARY.map((item, index) => (
             <div key={item.id} className="w-full">
-              <DesktopNavButton item={item} active={tab === item.id} onClick={() => choose(item.id)} />
+              <DesktopNavButton item={item} index={index} active={tab === item.id} onClick={() => choose(item.id)} />
             </div>
           ))}
         </nav>
@@ -250,7 +251,7 @@ export function Header({
         </div>
       </aside>
 
-      <header className="workspace-topbar fixed top-0 right-0 left-[232px] z-40 hidden h-[64px] items-center justify-between px-7 lg:flex">
+      <header className="workspace-topbar fixed top-0 right-0 left-[248px] z-40 hidden h-[72px] items-center justify-between px-8 lg:flex">
         <div className="flex items-center gap-2 text-xs">
           <span className="text-slate-600">StockSense</span>
           <ChevronRight className="h-3 w-3 text-slate-700" aria-hidden />

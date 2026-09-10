@@ -222,6 +222,7 @@ export function AccuracyView({ diagnosticsOpen = false }: { diagnosticsOpen?: bo
         eyebrow="measured, not promised"
         title="Accuracy"
         subtitle="Everything here is measured, not promised — walk-forward backtests replay past days and compare each prediction with what actually happened."
+        visual={false}
         right={
           tiles ? (
             <>

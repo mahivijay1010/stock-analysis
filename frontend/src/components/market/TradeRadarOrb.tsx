@@ -1,6 +1,8 @@
 'use client';
 
 import clsx from 'clsx';
+import { useRef } from 'react';
+import { useAmbientActivity } from '@/hooks/useAmbientActivity';
 
 /** A semantic radar: outer=regime, middle=participation, core=quality. */
 export function TradeRadarOrb({
@@ -16,8 +18,19 @@ export function TradeRadarOrb({
   active?: boolean;
   compact?: boolean;
 }) {
+  const rootRef = useRef<HTMLElement>(null);
+  const ambientActive = useAmbientActivity(rootRef);
+
   return (
-    <figure className={clsx('trade-radar', active && 'trade-radar-active', compact && 'trade-radar-compact')}>
+    <figure
+      ref={rootRef}
+      className={clsx(
+        'trade-radar',
+        active && 'trade-radar-active',
+        compact && 'trade-radar-compact',
+        !ambientActive && 'ambient-paused',
+      )}
+    >
       <div className="trade-radar-scene" aria-hidden>
         <span className="trade-radar-ring trade-radar-ring-outer"><i /></span>
         <span className="trade-radar-ring trade-radar-ring-middle"><i /></span>

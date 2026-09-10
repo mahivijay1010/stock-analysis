@@ -25,6 +25,21 @@ const freshIssuance = (over?: Partial<NonNullable<PolicyInputs["issuance"]>>): P
 
 const coinFlipMeasured = { samples: 59, directionHitRatePct: 51.0, withinBandPct: 85.0, brierScore: 0.2525 };
 
+/**
+ * P0 #6 (fail-closed): every decision-critical gate input must be present AND
+ * healthy for a BUY. A BUY fixture therefore supplies them explicitly; the
+ * default `base()` deliberately omits them so any accidental BUY is impossible.
+ */
+const healthyGates: Partial<PolicyInputs> = {
+  dataQualityScore: 85,
+  forecastConfidenceScore: 70,
+  entryQualityScore: 60,
+  evAfterCostsPct: 1.5,
+  riskScore: 40,
+  regime: { marketRegime: "bull_low_vol", entryRegime: "healthy_uptrend" },
+  modelHealthState: "HEALTHY",
+};
+
 const base = (over?: Partial<PolicyInputs>): PolicyInputs => ({
   ticker: "RELIANCE.NS",
   issuance: freshIssuance(),
@@ -35,7 +50,7 @@ const base = (over?: Partial<PolicyInputs>): PolicyInputs => ({
 
 describe("decision policy v1", () => {
   test("policy version is pinned", () => {
-    expect(DECISION_POLICY_VERSION).toBe("decision-policy-v5");
+    expect(DECISION_POLICY_VERSION).toBe("decision-policy-v6");
   });
 
   test("no issuance → INSUFFICIENT_EVIDENCE", () => {
@@ -112,6 +127,7 @@ describe("decision policy v1", () => {
   test("BUY_CANDIDATE only with a genuinely validated edge (65% over 3000 raw = 100 windows)", () => {
     const d = evaluateEntryPolicy(
       base({
+        ...healthyGates,
         measured: { samples: 3000, directionHitRatePct: 65, withinBandPct: 82, brierScore: 0.22 },
         afterMarketClose: false,
       })
@@ -147,6 +163,9 @@ const buyReady = (over?: Partial<PolicyInputs>): PolicyInputs =>
     forecastConfidenceScore: 70,
     entryQualityScore: 65,
     evAfterCostsPct: 1.4,
+    // P0 #6: regime must be assessed + non-hostile and live model HEALTHY for a BUY.
+    regime: { marketRegime: "bull_low_vol", entryRegime: "healthy_uptrend" },
+    modelHealthState: "HEALTHY",
     ...over,
   });
 

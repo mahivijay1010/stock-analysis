@@ -1,10 +1,12 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { BrainCircuit } from 'lucide-react';
 import { getAiRoles } from '@/lib/api';
 import { fmtDateTime } from '@/lib/format';
 import { Card, Chip, Collapsible } from '@/components/ui';
+import { EvidenceGraph } from '@/components/market/EvidenceGraph';
 
 /*
  * AI synthesis (upgrade Parts 13/16/18): the specialist roles' VALIDATED
@@ -53,6 +55,7 @@ function StateRow({ label, value }: { label: string; value: string }) {
 }
 
 export function AiSynthesisCard({ ticker }: { ticker: string }) {
+  const [evidenceFocus, setEvidenceFocus] = useState('risk');
   const q = useQuery({
     queryKey: ['ai-roles', ticker],
     queryFn: () => getAiRoles(ticker),
@@ -79,6 +82,25 @@ export function AiSynthesisCard({ ticker }: { ticker: string }) {
     );
   }
 
+  const graphNodes = [
+    { id: 'business', label: 'Business', available: Boolean(fund) },
+    { id: 'valuation', label: 'Valuation', available: Boolean(fund) },
+    { id: 'technicals', label: 'Technicals', available: Boolean(tech) },
+    { id: 'events', label: 'Events', available: Boolean(roles.event_analyst) },
+    { id: 'regime', label: 'Regime', available: Boolean(tech) },
+    { id: 'forecast', label: 'Forecast', available: Boolean(critic) },
+    { id: 'risk', label: 'Risk', available: Boolean(critic) },
+  ];
+  const focusCopy: Record<string, string> = {
+    business: fund?.summary ?? 'Business evidence is not available in this AI review.',
+    valuation: fund ? `Valuation state: ${fund.valuationAssessment.replace(/_/g, ' ')}.` : 'Valuation evidence is not available in this AI review.',
+    technicals: tech?.overallState ?? 'Technical evidence is not available in this AI review.',
+    events: roles.event_analyst ? 'Material-event evidence is available in the Research timeline.' : 'No event-analyst evidence is stored for this review.',
+    regime: tech ? `${tech.volatilityCharacter.replace(/_/g, ' ')} volatility; ${tech.location.replace(/_/g, ' ')} location.` : 'Regime evidence is not available in this AI review.',
+    forecast: critic?.summary ?? 'Forecast-critic evidence is not available in this AI review.',
+    risk: critic ? `Action cap: ${critic.recommendedActionCap.replace(/_/g, ' ')}. ${critic.primaryConcerns[0] ?? critic.summary}` : 'Risk-critic evidence is not available in this AI review.',
+  };
+
   return (
     <Card className="p-4">
       <p className="flex items-center gap-2 text-xs font-medium text-slate-400">
@@ -88,6 +110,15 @@ export function AiSynthesisCard({ ticker }: { ticker: string }) {
           {roles.technical_analyst && ` · ${fmtDateTime(roles.technical_analyst.createdAt)}`}
         </span>
       </p>
+
+      <div className="ai-evidence-map">
+        <EvidenceGraph ticker={ticker} nodes={graphNodes} selected={evidenceFocus} onSelect={setEvidenceFocus} />
+        <div className="ai-evidence-focus" role="status">
+          <span>Focused evidence · {evidenceFocus}</span>
+          <p>{focusCopy[evidenceFocus]}</p>
+          <small>AI is advisory and cap-only. Quantitative risk and the deterministic gate remain authoritative.</small>
+        </div>
+      </div>
 
       <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-3">
         {tech && (

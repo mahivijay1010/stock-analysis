@@ -9,6 +9,7 @@ import { Chip, ViewHero } from '@/components/ui';
 import { TopPicksView } from '@/components/TopPicksView';
 import { LeadersView } from '@/components/LeadersView';
 import { StocksView } from '@/components/StocksView';
+import { MarketLens } from '@/components/market/MarketLens';
 
 /*
  * v2 upgrade (upgrade-spec §2/§10): Discover replaces the three discovery
@@ -43,7 +44,7 @@ export function DiscoverView({ onOpenStock }: { onOpenStock: (ticker: string) =>
   const active = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0];
 
   return (
-    <div className="space-y-5">
+    <div className="discover-page space-y-5">
       <ViewHero
         eyebrow="Explore the universe"
         title="Discover"
@@ -53,6 +54,7 @@ export function DiscoverView({ onOpenStock }: { onOpenStock: (ticker: string) =>
             Every ranking states its basis; none of them is a guarantee.
           </>
         }
+        visual={<MarketLens variant="discover" />}
         right={<Chip tone="zinc"><Compass className="h-3.5 w-3.5" aria-hidden /> coverage: 151 NSE stocks</Chip>}
       />
 

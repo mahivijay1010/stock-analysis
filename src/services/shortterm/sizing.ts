@@ -41,9 +41,20 @@ export function computePositionSize(opts: {
     };
   }
 
-  const rawQty = Math.floor(riskAmount / riskPerShare);
-  let qty = rawQty;
-  if (qty < 1) constraints.push("risk budget cannot afford 1 share at this stop distance");
+  // P0 #7 — solve qty against the FULL per-share loss at the stop: price risk
+  // + round-trip costs + slippage + a gap buffer (adverse fill beyond the
+  // stop). Costs are added BEFORE sizing so realized lossAtStop can never
+  // exceed the risk budget. `costPctAsymptotic` drops the fixed DP fee (tiny,
+  // per-order) so the per-share figure is well-defined.
+  const costPctAsymptotic = roundTripCostPct(10_000_000);
+  const slipPctEst = estimateSlippagePct({ atrPct: opts.atrPct, relVolume: opts.relVolume, orderValueInr: opts.budgetInr, advInr: opts.advInr });
+  const atrValue = opts.atrPct != null ? (opts.atrPct / 100) * opts.entryPrice : 0;
+  const GAP_BUFFER_ATR = 0.2; // adverse gap-through-stop allowance
+  const perShareLoss =
+    riskPerShare + (opts.entryPrice * (costPctAsymptotic + slipPctEst)) / 100 + GAP_BUFFER_ATR * atrValue;
+  const rawQty = Math.floor(riskAmount / riskPerShare); // price-only (reported for transparency)
+  let qty = Math.floor(riskAmount / perShareLoss); // cost-inclusive (the one actually used)
+  if (qty < 1) constraints.push("risk budget cannot afford 1 share once costs, slippage and a gap buffer are included");
 
   // Capital constraint: 35% of budget max on a single trade.
   const maxCapital = opts.budgetInr * (SIZING_LIMITS.maxSingleStockPctOfBudget / 100);

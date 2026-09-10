@@ -56,7 +56,7 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
           {isLight ? <SunMedium /> : <MoonStar />}
         </motion.span>
       </span>
-      {!compact && <span>{isLight ? 'Ivory' : 'Nocturne'}</span>}
+      {!compact && <span>{isLight ? 'Light' : 'Night'}</span>}
     </button>
   );
 }

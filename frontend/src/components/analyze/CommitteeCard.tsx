@@ -55,7 +55,7 @@ export function CommitteeCard({ ticker }: { ticker: string }) {
 
   const r = data.review;
   return (
-    <Card className="p-4">
+    <Card className="committee-card p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-2 text-xs font-medium text-slate-400">
           <Bot className="h-4 w-4 text-cyan-300" aria-hidden /> AI Investment Committee

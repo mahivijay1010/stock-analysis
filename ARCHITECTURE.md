@@ -2,6 +2,14 @@
 
 **Primary doc for the running system.** The v2 production upgrade is underway on branch `upgrade/product-v2` — its binding contract is `docs/upgrade-spec.md`, its evidence `docs/upgrade-audit.md`, its plan `docs/implementation-plan.md`, and its resumable state `docs/next-session.md`. Every claim below was measured live, not promised.
 
+## Market Depth UI architecture (2026-09-09)
+
+- **Tokens:** `frontend/src/lib/design-tokens.ts` mirrors the CSS contract for graphite/navy surfaces, financial/AI semantics, typography, elevation, chart series, status, motion, and z-index.
+- **Shell:** 248px indexed desktop rail + 72px market/status topbar + 1560px editorial workspace; mobile swaps to top branding and a five-action bottom navigation.
+- **Spatial identity:** `MarketPrism` and `TradeRadarOrb` use isolated CSS 3D with text equivalents; `EvidenceGraph` uses accessible SVG relationships. `useAmbientActivity` pauses ambient motion offscreen/background. No WebGL dependency or business logic enters the visual layer.
+- **Short-Term:** the V2 qualification logic is unchanged. The UI exposes risk amount, real scan context, Qualified vs Research Watchlist, measured trade levels, evidence tiers, EV uncertainty, confirmation, Model Lab, AI evidence status, and the Data → Evidence → Risk → Entry gate order.
+- **QA/docs:** see `docs/ui-audit.md`, `docs/design-system.md`, `docs/chart-system.md`, `docs/motion-system.md`, `docs/3d-system.md`, `docs/responsive-design.md`, `docs/ui-accessibility.md`, `docs/ui-performance.md`, and `docs/ui-final-report.md`.
+
 ## Short-Term Trade Radar V2 — qualification integrity (2026-09-08)
 - **ZONE_REACHED != ENTRY_CONFIRMED**: `actionStates.composeCeiling` takes the most conservative of tier / short-term-model-health / confidence / freshness / confirmation / EV-lower-bound / affordability / contradictions. AI cap-only.
 - **SetupEvidenceService + `scripts/setupExpectancyStudy.ts`**: realized-R per setup×horizon (block-bootstrap CI, P(>0), Benjamini–Hochberg FDR). Verdict 2/12 tier A (MEAN_REVERSION 5-10d +0.117R, 10-21d +0.146R); pullback/VCP negative after costs. Persisted to short_term_model_performance (`st-setup-expectancy`).

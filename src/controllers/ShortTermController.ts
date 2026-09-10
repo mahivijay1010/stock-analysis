@@ -17,21 +17,42 @@ function ok(res: Response, data: unknown, status = 200): void {
   res.status(status).json({ success: true, data });
 }
 
-function parseParams(src: Record<string, unknown>): Partial<ScanParams> {
+/**
+ * P0 #47 — explicit input validation. A bad value THROWS an HttpError(400)
+ * rather than silently coercing (which previously accepted negative budgets,
+ * extreme risk %, and min>max price windows). Ranges are documented bounds.
+ */
+export function parseParams(src: Record<string, unknown>): Partial<ScanParams> {
   const num = (v: unknown): number | null => (v == null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
+  const bounded = (v: unknown, name: string, min: number, max: number): number | null => {
+    const n = num(v);
+    if (n == null) return null;
+    if (n < min || n > max) throw new HttpError(400, `${name} must be between ${min} and ${max} (got ${n}).`);
+    return n;
+  };
+  const enumOr = <T extends string>(v: unknown, allowed: readonly T[], name: string): T | undefined => {
+    if (v == null || v === "") return undefined;
+    if (!allowed.includes(v as T)) throw new HttpError(400, `${name} must be one of ${allowed.join(", ")}.`);
+    return v as T;
+  };
+
+  const budgetInr = bounded(src.budgetInr, "budgetInr", 1_000, 100_000_000);
+  const priceMin = bounded(src.priceMin, "priceMin", 1, 10_000_000);
+  const priceMax = bounded(src.priceMax, "priceMax", 1, 10_000_000);
+  if (priceMin != null && priceMax != null && priceMin > priceMax) {
+    throw new HttpError(400, `priceMin (${priceMin}) cannot exceed priceMax (${priceMax}).`);
+  }
   return {
-    budgetInr: num(src.budgetInr),
-    priceMin: num(src.priceMin),
-    priceMax: num(src.priceMax),
-    horizon: (["1-3d", "3-5d", "5-10d", "10-21d"] as const).includes(src.horizon as never) ? (src.horizon as ScanParams["horizon"]) : undefined,
-    riskPerTradePct: num(src.riskPerTradePct) ?? undefined,
-    strategy: (["ALL", "PULLBACK", "BREAKOUT", "MOMENTUM", "MEAN_REVERSION"] as const).includes(src.strategy as never)
-      ? (src.strategy as ScanParams["strategy"])
-      : undefined,
+    budgetInr,
+    priceMin,
+    priceMax,
+    horizon: enumOr(src.horizon, ["1-3d", "3-5d", "5-10d", "10-21d"] as const, "horizon"),
+    riskPerTradePct: bounded(src.riskPerTradePct, "riskPerTradePct", 0.01, 5) ?? undefined,
+    strategy: enumOr(src.strategy, ["ALL", "PULLBACK", "BREAKOUT", "MOMENTUM", "MEAN_REVERSION"] as const, "strategy"),
     sector: typeof src.sector === "string" && src.sector && src.sector !== "ALL" ? src.sector : null,
-    minAdvInr: num(src.minAdvInr),
-    aiDepth: (["AUTO", "LOCAL_ONLY", "LOW_COST", "DEEP_REVIEW"] as const).includes(src.aiDepth as never) ? (src.aiDepth as ScanParams["aiDepth"]) : undefined,
-    limit: num(src.limit) ?? undefined,
+    minAdvInr: bounded(src.minAdvInr, "minAdvInr", 0, 1e12),
+    aiDepth: enumOr(src.aiDepth, ["AUTO", "LOCAL_ONLY", "LOW_COST", "DEEP_REVIEW"] as const, "aiDepth"),
+    limit: bounded(src.limit, "limit", 0, 50) ?? undefined,
   };
 }
 

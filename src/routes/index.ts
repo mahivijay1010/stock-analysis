@@ -140,11 +140,14 @@ export const createStockRoutes = (): Router => {
   router.get("/portfolio/calibration", portfolioController.calibration); //  GET /api/portfolio/calibration?tickers=A,B
 
   // Provenance-first company fundamentals, macro observations and portfolio risk.
-  router.post("/intelligence/macro/refresh", intelligenceController.refreshMacro);
+  // P0 security #11: expensive/outbound-fetch mutations require auth (refreshes
+  // trigger provider fetches — the SSRF/exhaustion surface — and portfolio
+  // takes user positions). GET reads stay public.
+  router.post("/intelligence/macro/refresh", requireAuthOrAdminKey, intelligenceController.refreshMacro);
   router.get("/intelligence/macro", intelligenceController.macro);
   router.get("/intelligence/source-registry", intelligenceController.registry);
-  router.post("/intelligence/portfolio", intelligenceController.portfolio);
-  router.post("/intelligence/:ticker/refresh", intelligenceController.refresh);
+  router.post("/intelligence/portfolio", requireAuth, intelligenceController.portfolio);
+  router.post("/intelligence/:ticker/refresh", requireAuthOrAdminKey, intelligenceController.refresh);
   router.get("/intelligence/:ticker", intelligenceController.get);
 
   // V8: relative rank + vol forecast (labeled diagnostics/evaluation keepers).
@@ -152,7 +155,9 @@ export const createStockRoutes = (): Router => {
   router.get("/volatility/forecast/:ticker", quantController.volatilityForecast); //  GET /api/volatility/forecast/RELIANCE.NS
 
   router.get("/search", controller.search); //  GET /api/search?q=tata
-  router.post("/analyze", controller.analyze); //  POST /api/analyze { ticker, amount? }
+  // P0 security #11: /analyze runs the full live pipeline (provider fetches +
+  // heavy compute) — authenticate it to prevent unauthenticated resource abuse.
+  router.post("/analyze", requireAuth, controller.analyze); //  POST /api/analyze { ticker, amount? }
   router.get("/top-picks", controller.topPicks); //  GET /api/top-picks?count=5
   router.get("/backtest/:ticker", controller.backtest); //  GET /api/backtest/RELIANCE.NS?days=60 (read-only)
   router.get("/accuracy", controller.accuracy); //  GET /api/accuracy

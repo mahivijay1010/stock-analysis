@@ -27,8 +27,8 @@ export function LoginPanel({ context }: { context: string }) {
   const canSubmit = email.trim().length > 2 && password.length > 0 && !mut.isPending;
 
   return (
-    <div className="mx-auto flex min-h-[55vh] max-w-md items-center">
-      <Card elevated className="w-full p-6">
+    <div className="login-panel-shell mx-auto flex min-h-[42vh] w-full max-w-3xl items-center">
+      <Card elevated className="login-panel-card w-full p-6">
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-300/20 bg-cyan-300/10">
             <KeyRound className="h-5 w-5 text-cyan-300" aria-hidden />

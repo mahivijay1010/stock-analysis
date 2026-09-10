@@ -1,6 +1,8 @@
 'use client';
 
 import clsx from 'clsx';
+import { useRef } from 'react';
+import { useAmbientActivity } from '@/hooks/useAmbientActivity';
 
 export type MarketPrismState = {
   direction?: 'up' | 'down' | 'neutral';
@@ -24,6 +26,8 @@ export function MarketPrism({
   compact?: boolean;
   label?: string;
 }) {
+  const rootRef = useRef<HTMLElement>(null);
+  const ambientActive = useAmbientActivity(rootRef);
   const direction = state.direction ?? 'neutral';
   const volatility = state.volatility ?? 'normal';
   const confidence = state.confidence ?? 'medium';
@@ -31,8 +35,10 @@ export function MarketPrism({
 
   return (
     <figure
+      ref={rootRef}
       className={clsx(
         'market-prism',
+        !ambientActive && 'ambient-paused',
         `market-prism-${direction}`,
         `market-prism-vol-${volatility}`,
         `market-prism-confidence-${confidence}`,

@@ -8,6 +8,10 @@ Run: `npm run dev` (backend :5101) · `cd frontend && npx next dev -p 3001` (UI 
 
 Educational tool — not SEBI-registered investment advice. Markets are uncertain; measured past accuracy does not guarantee future results.
 
+## Market Depth UI system (2026-09-09)
+
+The interface now uses the Market Depth 2.0 visual information system: graphite/navy Night and cool Polar Light themes, semantic gain/loss/risk/AI colors, a 1560px editorial workspace, indexed navigation, centralized chart and motion semantics, a risk-first Short-Term command surface, bounded Market Lens/Trade Radar spatial instruments, AI Evidence Graph, responsive bottom navigation, reduced-motion support, and offscreen animation pausing. Design and QA documentation starts at [docs/ui-final-report.md](docs/ui-final-report.md); tokens and component rules are in [docs/design-system.md](docs/design-system.md).
+
 ## Short-Term Trade Radar V2 — qualification integrity (2026-09-08)
 
 The Short-Term section separates INTERESTING SETUP from ACTIONABLE TRADE. A

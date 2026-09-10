@@ -41,6 +41,7 @@ import { AddPurchaseForm } from '@/components/holdings/AddPurchaseForm';
 import { TransactionRowActions } from '@/components/holdings/TransactionRowActions';
 import { DailyForecastCard } from '@/components/analyze/DailyForecastCard';
 import { signTone } from '@/components/analyze/tone';
+import { MarketLens } from '@/components/market/MarketLens';
 
 /*
  * Unified portfolio (owner request 2026-09-06): Watchlist and Holdings merged
@@ -418,6 +419,7 @@ export function PortfolioView({
       eyebrow="Your personal market intelligence"
       title="Watchlist"
       subtitle="Follow the names that matter. Monthly forecasts, nightly decisions, live positions and holding horizons—together, without the noise."
+      visual={<MarketLens variant="watch" />}
       right={
         data ? (
           <div className="portfolio-hero-counts flex flex-wrap gap-1.5">
@@ -431,7 +433,7 @@ export function PortfolioView({
 
   if (authLoading) {
     return (
-      <div className="space-y-5">
+      <div className="portfolio-page space-y-5">
         {hero}
         <CardSkeleton lines={3} />
         <CardSkeleton lines={3} />
@@ -441,7 +443,7 @@ export function PortfolioView({
 
   if (authError) {
     return (
-      <div className="space-y-5">
+      <div className="portfolio-page space-y-5">
         {hero}
         <ErrorState message={authError} onRetry={() => qc.invalidateQueries({ queryKey: ['auth'] })} />
       </div>
@@ -449,7 +451,12 @@ export function PortfolioView({
   }
 
   if (auth?.status === 'unauthenticated' || (overviewQ.isError && isUnauthorized(overviewQ.error))) {
-    return <LoginPanel context="Your watchlist & holdings" />;
+    return (
+      <div className="portfolio-page space-y-5">
+        {hero}
+        <LoginPanel context="Your watchlist & holdings" />
+      </div>
+    );
   }
 
   const backendPending = overviewQ.isError && isNotFound(overviewQ.error);
@@ -457,7 +464,7 @@ export function PortfolioView({
   const heldCount = data?.totals.held ?? 0;
 
   return (
-    <div className="space-y-5">
+    <div className="portfolio-page space-y-5">
       {hero}
 
       {auth?.status === 'unavailable' && (

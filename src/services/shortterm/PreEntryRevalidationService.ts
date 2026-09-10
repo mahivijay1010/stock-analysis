@@ -9,6 +9,9 @@ import { ShortTermCandidate } from "../../entities";
 import { HttpError } from "../../types";
 import { liveMarketDataProvider } from "./LiveMarketDataProvider";
 import { eventService } from "../market/EventService";
+import { marketDataService } from "../market/MarketDataService";
+import { assessRegime } from "../decision/regimeEngine";
+import { assessPortfolioRisk } from "./sizing";
 import { assessGap, revalidate, GapAssessment } from "./gapPolicy";
 
 export interface RevalidationReport {
@@ -66,23 +69,70 @@ export class PreEntryRevalidationService {
       entryType: plan.entryType ?? "PULLBACK_ZONE",
     });
 
-    // New adverse tier-≤2 event since the candidate was computed.
+    // P0 #5 — FAIL-CLOSED: every advertised safety control must be VERIFIED.
+    // A provider/computation failure counts as "unverified" ⇒ veto, never a
+    // silent pass. An unverified event/regime/risk check can NEVER return
+    // PROCEED.
+    const unverified: string[] = [];
+
+    // (a) New adverse event — unavailable ⇒ cannot rule one out ⇒ veto.
     let newAdverseEvent = false;
     try {
       const risk = await eventService.assessEventRisk(yt, new Date());
       newAdverseEvent = risk.upcomingEventRisk === true;
     } catch {
-      newAdverseEvent = false;
+      unverified.push("event provider unavailable — cannot confirm the absence of an adverse event");
+    }
+
+    // (b) Market regime — actually computed (fail-closed on failure).
+    let marketRegimeOk = false;
+    try {
+      const [niftyBars, vixBars, stockBars] = await Promise.all([
+        marketDataService.getNiftyBars("1y").catch(() => null),
+        marketDataService.getIndiaVixBars("1y").catch(() => null),
+        marketDataService.getDailyBars(yt, "1y").catch(() => null),
+      ]);
+      if (!niftyBars || !stockBars) {
+        unverified.push("market/stock bars unavailable — regime not re-verified");
+      } else {
+        const vixLevel = vixBars && vixBars.length ? vixBars[vixBars.length - 1].close : null;
+        const vixPctile =
+          vixBars && vixBars.length >= 60 && vixLevel != null ? (vixBars.filter((b) => b.close < vixLevel).length / vixBars.length) * 100 : null;
+        const regime = assessRegime({ niftyBars, vixLevel, vixPercentile1y: vixPctile, stockBars, sectorRelativeStrength20pp: null });
+        marketRegimeOk = regime.marketRegime !== "bear_high_vol" && !["extended_uptrend", "late_trend", "high_event_risk"].includes(regime.entryRegime);
+      }
+    } catch {
+      unverified.push("regime engine failed — regime not re-verified");
+    }
+
+    // (c) Portfolio risk — recomputed from open paper positions (fail-closed).
+    let riskAllowed = false;
+    try {
+      const openPaper: Array<{ loss_at_stop: string | null; sector: string | null }> = await AppDataSource.query(
+        `SELECT (metrics->>'lossAtStop') AS loss_at_stop, (plan->>'sector') AS sector FROM short_term_paper_trades WHERE status = 'OPEN'`
+      );
+      const rm = assessPortfolioRisk({
+        budgetInr: 100_000,
+        openPositions: openPaper.map((p) => ({ lossAtStop: Number(p.loss_at_stop ?? 0), sector: p.sector ?? "UNKNOWN" })),
+        realizedTodayInr: 0,
+        realizedWeekInr: 0,
+        equityDrawdownPct: null,
+      });
+      riskAllowed = rm.newEntriesAllowed;
+    } catch {
+      unverified.push("portfolio risk state unavailable — not re-verified");
     }
 
     const result = revalidate({
       gap,
       freshEnough,
       newAdverseEvent,
-      marketRegimeOk: true,
-      riskAllowed: true, // portfolio risk re-checked by the scan; here we focus on the single-name plan
+      marketRegimeOk,
+      riskAllowed,
       evLowerBoundPositive: (payload.ev?.ev80LowerPct ?? -1) > 0,
     });
+    result.vetoes.push(...unverified);
+    if (unverified.length > 0) result.ok = false;
 
     const recommendation = result.ok
       ? "PROCEED — plan still valid on fresh data; place the entry per the plan."

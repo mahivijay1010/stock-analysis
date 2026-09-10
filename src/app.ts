@@ -16,10 +16,10 @@ export const createApp = (): Application => {
   // explicitly. Additional origins via FRONTEND_ORIGINS (comma-separated).
   const allowedOrigins = new Set(
     [
-      "http://localhost:3001",
-      "http://127.0.0.1:3001",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
       ...(process.env.FRONTEND_ORIGINS ?? "").split(",").map((o) => o.trim()),
-    ].filter(Boolean)
+    ].filter(Boolean),
   );
   app.use(
     cors({
@@ -27,7 +27,7 @@ export const createApp = (): Application => {
       credentials: true,
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "X-Requested-With", "x-admin-key"],
-    })
+    }),
   );
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));

@@ -127,6 +127,7 @@ describe("policy v4 — regime caps in the TradeGate", () => {
     forecastConfidenceScore: 70,
     entryQualityScore: 65,
     evAfterCostsPct: 1.4,
+    modelHealthState: "HEALTHY", // P0 #6: BUY requires a HEALTHY live model
   });
 
   test("bear_high_vol market caps an otherwise-BUY at WATCH", () => {

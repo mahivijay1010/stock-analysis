@@ -3,6 +3,7 @@
 import { ScrollText } from 'lucide-react';
 import { Chip, ViewHero } from '@/components/ui';
 import { AccuracyView } from '@/components/AccuracyView';
+import { MarketLens } from '@/components/market/MarketLens';
 
 /*
  * v2 upgrade (upgrade-spec §2/§10): the public forecast track record — easy to
@@ -12,7 +13,7 @@ import { AccuracyView } from '@/components/AccuracyView';
  */
 export function TrackRecordView({ diagnosticsOpen = false }: { diagnosticsOpen?: boolean }) {
   return (
-    <div className="space-y-5">
+    <div className="record-page space-y-5">
       <ViewHero
         eyebrow="Public honesty page"
         title="Forecast Track Record"
@@ -24,6 +25,7 @@ export function TrackRecordView({ diagnosticsOpen = false }: { diagnosticsOpen?:
             future results.
           </>
         }
+        visual={<MarketLens variant="record" />}
         right={<Chip tone="zinc"><ScrollText className="h-3.5 w-3.5" aria-hidden /> walk-forward evidence</Chip>}
       />
       <AccuracyView diagnosticsOpen={diagnosticsOpen} />

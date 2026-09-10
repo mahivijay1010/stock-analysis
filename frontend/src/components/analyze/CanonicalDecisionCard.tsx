@@ -48,7 +48,7 @@ const HORIZON_LABEL: Record<string, string> = {
 
 function ScoreRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-white/[0.04] py-1.5 last:border-0">
+    <div className="decision-score-row flex items-baseline justify-between gap-3 border-b border-white/[0.04] py-1.5 last:border-0">
       <span className="text-xs text-slate-500" title={hint}>
         {label}
       </span>
@@ -65,7 +65,7 @@ function TruthPanel({ s }: { s: DecisionSnapshotView }) {
   const calibrated = fc.brierSkill != null && fc.brierSkill > 0 && (fc.effectiveSamples ?? 0) >= 10;
   const dp = s.inputs?.directionProbability;
   return (
-    <div className="mt-3 grid grid-cols-1 gap-x-8 rounded-xl border border-white/8 bg-white/3 px-4 py-2.5 sm:grid-cols-2">
+    <div className="decision-truth-grid mt-3 grid grid-cols-1 gap-x-8 rounded-xl border border-white/8 bg-white/3 px-4 py-2.5 sm:grid-cols-2">
       <ScoreRow label="Setup (technical description, not a probability)" value={sc.setupScore != null ? `${sc.setupScore}/100` : '—'} />
       <ScoreRow label="Entry quality" value={sc.entryTimingScore != null ? `${sc.entryTimingScore}/100` : '—'} />
       <ScoreRow
@@ -176,7 +176,7 @@ export function CanonicalDecisionCard({ ticker }: { ticker: string }) {
   const whyNot = (s.unmetGates ?? []).length > 0;
 
   return (
-    <Card className="p-4">
+    <Card className="canonical-decision-card p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-2 text-xs font-medium text-slate-400">
           <Scale className="h-4 w-4 text-cyan-300" aria-hidden /> Published decision

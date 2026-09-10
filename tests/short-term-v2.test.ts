@@ -105,6 +105,51 @@ describe("action ladder + ceilings", () => {
     const r = composeCeiling({ tier: "A", modelHealthState: "HEALTHY", modelConfidence: "HIGH", freshness: "EOD_FINAL", confirmationSatisfied: true, evLowerBoundPositive: true, affordable: false, contradictionCeilings: [] });
     expect(r.ceiling).toBe("RESEARCH_WATCH");
   });
+
+  // P0 #1 — ENTRY_CONFIRMED must be structurally REACHABLE. This mirrors the
+  // exact ScanService composition: a ZONE_REACHED geometry is promoted to
+  // ENTRY_CONFIRMED and then capped by the ceiling. With every gate healthy
+  // the result is ENTRY_CONFIRMED (before the fix it topped out at ZONE_REACHED).
+  test("positive path: in-zone + fully-healthy ceiling ⇒ ENTRY_CONFIRMED reachable", () => {
+    const ceiling = composeCeiling({
+      tier: "A",
+      modelHealthState: "HEALTHY",
+      modelConfidence: "HIGH",
+      freshness: "EOD_FINAL",
+      confirmationSatisfied: true,
+      evLowerBoundPositive: true,
+      affordable: true,
+      contradictionCeilings: [],
+    });
+    const geometry: ReturnType<typeof capAction> = "ZONE_REACHED";
+    const promoted = geometry === "ZONE_REACHED" ? "ENTRY_CONFIRMED" : geometry;
+    expect(capAction(promoted, ceiling.ceiling)).toBe("ENTRY_CONFIRMED");
+  });
+
+  test("negative path: the SAME in-zone geometry with any unhealthy gate never reaches ENTRY_CONFIRMED", () => {
+    for (const bad of [
+      { modelHealthState: "SHADOW" as const },
+      { modelConfidence: "LOW" as const },
+      { evLowerBoundPositive: false },
+      { confirmationSatisfied: false },
+      { freshness: "DELAYED_INTRADAY" as const },
+      { tier: "C" as const },
+    ]) {
+      const ceiling = composeCeiling({
+        tier: "A",
+        modelHealthState: "HEALTHY",
+        modelConfidence: "HIGH",
+        freshness: "EOD_FINAL",
+        confirmationSatisfied: true,
+        evLowerBoundPositive: true,
+        affordable: true,
+        contradictionCeilings: [],
+        ...bad,
+      });
+      const promoted = "ENTRY_CONFIRMED";
+      expect(capAction(promoted, ceiling.ceiling)).not.toBe("ENTRY_CONFIRMED");
+    }
+  });
 });
 
 describe("setup evidence tiers", () => {

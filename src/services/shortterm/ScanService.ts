@@ -44,6 +44,7 @@ import { computeTier } from "./tiers";
 import { detectContradictions } from "./contradictions";
 import { assessShortTermHealth } from "./shortTermHealth";
 import { assessPortfolioContext } from "./portfolioContext";
+import { assessRegime } from "../decision/regimeEngine";
 import { adjustedDailyReturns } from "../market/canonical";
 import {
   composeCeiling,
@@ -121,11 +122,13 @@ export class ShortTermScanService {
     const health = await modelHealthService.assess("quant-v1").catch(() => null);
 
     // Live-shadow evidence per setup×horizon → short-term model live authority (Part 24/25).
+    // P0 #3 — live authority is measured in realized net R-MULTIPLE (not %),
+    // and only FILLED shadow trades count (NEVER_ENTERED plans are not trades).
     const shadowRows: Array<{ setup_type: string; horizon: string; resolved: string; dates: string; exp: string | null }> = await AppDataSource.query(
       `SELECT setup_type, horizon,
-              COUNT(*) FILTER (WHERE outcome IS NOT NULL)::text AS resolved,
-              COUNT(DISTINCT anchor_date) FILTER (WHERE outcome IS NOT NULL)::text AS dates,
-              AVG((outcome->>'returnPct')::numeric) FILTER (WHERE outcome IS NOT NULL)::text AS exp
+              COUNT(*) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE)::text AS resolved,
+              COUNT(DISTINCT anchor_date) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE)::text AS dates,
+              AVG((outcome->>'netRMultiple')::numeric) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE)::text AS exp
          FROM short_term_shadow_predictions GROUP BY setup_type, horizon`
     ).catch(() => []);
     const shadowStatsBySetup = new Map<string, { resolved: number; distinctDates: number; expectancyR: number | null }>();
@@ -155,6 +158,11 @@ export class ShortTermScanService {
     const universe = NSE_UNIVERSE.filter((u) => (params.sector ? u.sector === params.sector : true));
     const nifty = await marketDataService.getNiftyBars("1y");
     const niftyCloses = new Map(nifty.map((b) => [b.date, b.close]));
+    // P0 #4 — real regime inputs (fetched once): VIX level + 1y percentile.
+    const vixBars = await marketDataService.getIndiaVixBars("1y").catch(() => null);
+    const vixLevel = vixBars && vixBars.length ? vixBars[vixBars.length - 1].close : null;
+    const vixPctile1y = vixBars && vixBars.length >= 60 && vixLevel != null ? (vixBars.filter((b) => b.close < vixLevel).length / vixBars.length) * 100 : null;
+    const regimeAvailable = nifty.length >= 200;
 
     // Sector indexes from cached bars (one pass).
     const barsByTicker = new Map<string, Awaited<ReturnType<typeof liveMarketDataProvider.getCompletedBars>>>();
@@ -184,19 +192,33 @@ export class ShortTermScanService {
 
     const today = new Date();
     const views: ShortTermCandidateView[] = [];
+    const relVolumeByTicker = new Map<string, number | null>();
     for (const u of universe) {
       const bars = barsByTicker.get(u.ticker);
       if (!bars) continue;
       const f = computeShortTermFeatures(bars, niftyCloses, sectorIdx.get(u.sector) ?? null);
       if (!f) continue;
+      relVolumeByTicker.set(u.ticker, f.relVolume);
       // Price filter FIRST (cheap, deterministic).
       if (params.priceMin != null && f.price < params.priceMin) continue;
       if (params.priceMax != null && f.price > params.priceMax) continue;
 
       const eventRisk = await eventService.assessEventRisk(u.ticker, today).catch(() => null);
+      // P0 #4 — REAL regime per stock (was hardcoded null/true). Failure to
+      // compute ⇒ regime unknown ⇒ marketRegimeOk false (fail-closed in
+      // confirmation, so it cannot reach ENTRY_CONFIRMED blind to regime).
+      let regime: ReturnType<typeof assessRegime> | null = null;
+      if (regimeAvailable) {
+        try {
+          regime = assessRegime({ niftyBars: nifty, vixLevel, vixPercentile1y: vixPctile1y, stockBars: bars, sectorRelativeStrength20pp: null, upcomingEventRisk: eventRisk?.upcomingEventRisk === true });
+        } catch {
+          regime = null;
+        }
+      }
+      const marketRegimeOk = regime != null && regime.marketRegime !== "bear_high_vol";
       const setup = classifySetup(f, {
-        marketRegime: null,
-        stockRegime: null,
+        marketRegime: regime?.marketRegime ?? null,
+        stockRegime: regime?.stockRegime ?? null,
         upcomingEventRisk: eventRisk?.upcomingEventRisk === true,
       });
       // Strategy filter.
@@ -284,7 +306,7 @@ export class ShortTermScanService {
       const freshnessV2: FreshnessV2 =
         marketStatus.session === "OPEN" ? "DELAYED_INTRADAY" : marketStatus.lastCompletedSession === lastBarDate ? "EOD_FINAL" : barAgeDays > 4 ? "STALE" : "EOD_FINAL";
       const confirmation = assessConfirmation(setup.setupType, f, {
-        marketRegimeOk: true, // market regime hook (bull/neutral); bear_high_vol handled by exit/gate
+        marketRegimeOk, // P0 #4: real regime (fail-closed when unknown)
         upcomingEventRisk: eventRisk?.upcomingEventRisk === true,
         freshDataOk: freshnessV2 === "EOD_FINAL",
       });
@@ -321,7 +343,14 @@ export class ShortTermScanService {
         affordable,
         contradictionCeilings: contradictions.map((c) => c.cap as ShortTermActionV2),
       });
-      const finalAction = capAction(geometryAction, ceiling.ceiling);
+      // P0 #1: a stock IN the entry zone is eligible to become ENTRY_CONFIRMED —
+      // the ceiling is the sole authority that decides whether it actually does
+      // (tier A + confirmation + HEALTHY authority + EV lower bound > 0 + fresh
+      // data + affordable + no contradiction). Without this promotion the
+      // geometry action topped out at ZONE_REACHED and qualification was
+      // structurally unreachable even with perfect evidence.
+      const promotedGeometry: ShortTermActionV2 = geometryAction === "ZONE_REACHED" ? "ENTRY_CONFIRMED" : geometryAction;
+      const finalAction = capAction(promotedGeometry, ceiling.ceiling);
 
       // ENTRY-eligibility gates (V2): setup usable + EV lower bound + all deterministic gates.
       const entryEligible = gates.passed && setupEvidence.usableForEntry && evOk.ok && tierRes.tier === "A" && stHealth.state === "HEALTHY";
@@ -399,7 +428,7 @@ export class ShortTermScanService {
         advInr: v.plan.advInr,
         slippagePct: v.plan.estimatedSlippagePct,
         atrPct: v.currentPrice && v.plan.atr14 ? (v.plan.atr14 / v.currentPrice) * 100 : null,
-        relVolume: null,
+        relVolume: relVolumeByTicker.get(v.ticker) ?? null, // P0 #4: real relative volume
         setupUsableForEntry: (v.setupEvidence as { usableForEntry?: boolean } | null)?.usableForEntry ?? false,
         setupScore: v.setupScore,
       });
