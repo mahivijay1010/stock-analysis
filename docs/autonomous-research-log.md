@@ -363,3 +363,68 @@ in this order):
 
 Every live material-change event will seal a DecisionSnapshot the same way and
 ground its AI critique through the module built above.
+
+---
+
+## Realtime feed-agnostic core (2026-09-10) — reviewer's next code batch
+
+Built the entire feed-independent realtime core, no broker connected yet, all
+unit-testable with synthetic/replayed data. **498 tests / 42 suites green; tsc
+clean.** Modules under `src/services/realtime/`:
+
+- **types.ts** — `MarketTick`, `ProviderHealth`, `MarketEvent` (TICK | CLOCK),
+  `MarketDataSource`, `RealtimeMarketProvider`, discriminated `FormingBar` vs
+  `CompletedBar`, `LiveFeatures`, `LiveStockContext`, `StateDelta`.
+- **tickValidator.ts** — rejects/flags NaN·≤0 price·negative qty·future ts·
+  crossed book·duplicates·sequence regression·**sequence gaps** (surfaced, not
+  absorbed)·stale feed. A corrupt tick never reaches a bar.
+- **barBuilder.ts** — canonical 1m bars from ticks (+ clock closes a quiet
+  minute); PURE `aggregateBars` derives 5m/10m/15m from the ONE 1m series; a
+  partial coarse bar is FORMING, never completed.
+- **featureEngine.ts** — EMA/RSI/ATR/VWAP/relVol/range as both a PURE full
+  recompute AND an incremental engine; the parity test proves
+  `incremental === full` bar-for-bar.
+- **stateStore.ts** — hot in-memory current state per security (Postgres is not
+  the per-tick machine).
+- **liveStockContext.ts** — `computePosture` (∈[-1,1], NOT a probability),
+  `assessLive` with a hysteresis dead-band (no flicker), `buildLiveStockContext`
+  assembling the prepared single-truth object.
+- **stateDelta.ts** — deterministic diff between consecutive checkpoints (the AI
+  reasons about the change, not the snapshot alone).
+- **materiality.ts** — fires the AI only on meaningful change (breakout, VWAP
+  cross, RS/vol shock, gate/regime/risk/data-quality change); a ₹0.05 drift is
+  not material.
+- **opportunityRanker.ts** — two lists (Opportunity vs Actionable), ranked by a
+  deterministic MULTI-KEY comparator over independent fields (LCB → expected R →
+  RS percentile → entry quality → −risk), NOT a revived composite conviction
+  score; a high score can NEVER promote a gated-out or data-unavailable stock.
+- **replayProvider.ts** — `ReplayMarketDataSource` (time-ordered, no lookahead) +
+  `ReplayMarketProvider` so LIVE and REPLAY run identical code.
+
+Tests (`tests/realtime-core.test.ts`, 22) cover the reviewer's required
+invariants: tick ordering/duplicate/gap/invalid/stale, 1m OHLC, 5/10/15m
+aggregation, forming≠completed, incremental==full features, StateDelta
+determinism, hysteresis, materiality, ranking determinism + gate supremacy,
+replay ordering, no-lookahead, and LIVE/REPLAY parity (byte-identical bars).
+
+Also FIXED an operational gap: the DecisionSnapshot hash columns + prior shadow
+migrations had not been applied to the live DB (runtime error
+`column input_manifest_hash does not exist`). Ran `migration:run`; verified the
+hash columns, single `uq_shadow_identity` index, immutability trigger, and
+shadow version columns are all present. Going forward migrations are applied in
+the same batch they are authored.
+
+### Not yet built (deliberate)
+
+- ONE broker adapter (e.g. `UpstoxRealtimeProvider`) implementing
+  `RealtimeMarketProvider` — the only piece that needs a real personal-use feed.
+- The 10-minute scheduler, the durable `LivePredictionRevision` (append-only)
+  and `LiveDecisionEvent` entities, the live TradeGate, chart-structure
+  classification, market/sector/relative-strength context wiring, and the
+  REALTIME_SHADOW dashboard.
+
+The engine seals each material-change decision via the DecisionSnapshot core and
+grounds its AI critique through the snapshot-grounding module already shipped, so
+the broker adapter can start collecting prospective 1-minute data immediately
+while the analytical layers keep improving — and it stays REALTIME_SHADOW until
+it beats the EOD engine on prospective evidence.
