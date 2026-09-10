@@ -12,6 +12,10 @@ describe("probability-aligned trade plan", () => {
         upperReturnPct: 7,
         label: "the bootstrap upper bound",
       },
+      technicalResistance: {
+        price: 97.5,
+        label: "the observed 60-session resistance",
+      },
     });
 
     expect(plan).not.toBeNull();
@@ -22,6 +26,29 @@ describe("probability-aligned trade plan", () => {
     expect(plan!.meetsRewardRisk).toBe(false);
     expect(plan!.note).toContain("capped");
     expect(plan!.note).toContain("not a qualifying 3:1 trade");
+  });
+
+  test("uses observed resistance when it is tighter than the forecast ceiling", () => {
+    const plan = buildTradePlan({
+      entry: 84.15,
+      atr14: 5.52,
+      annualVolatilityPct: 45,
+      recommendation: "BUY",
+      forecastConstraint: {
+        horizonDays: 30,
+        upperReturnPct: 21.22,
+        label: "the 80% forecast upper bound",
+      },
+      technicalResistance: {
+        price: 97.5,
+        label: "the observed 60-session resistance",
+      },
+    });
+
+    expect(plan!.target).toBe(97.5);
+    expect(plan!.rewardRiskRatio).toBeCloseTo(1.21, 2);
+    expect(plan!.meetsRewardRisk).toBe(false);
+    expect(plan!.note).toContain("observed 60-session resistance");
   });
 
   test("preserves 3:1 when the forecast envelope can contain it", () => {

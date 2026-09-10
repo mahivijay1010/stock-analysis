@@ -85,6 +85,43 @@ export function headlineImpactWeight(title: string): number {
   return Math.min(2.5, weight);
 }
 
+/**
+ * Aggregate only headlines that carry directional evidence. Neutral boilerplate
+ * must not dilute several unambiguously positive/negative results stories to
+ * zero. A two-item neutral prior shrinks small samples; freshness drives hype
+ * separately so old context cannot masquerade as a live catalyst.
+ */
+export function aggregateHeadlineSentiment(items: NewsItem[]): {
+  sentimentScore: number;
+  weightedMean: number;
+  hypeTemperature: number;
+} {
+  const directional = items
+    .filter((item) => item.sentiment !== 0)
+    .map((item) => ({
+      item,
+      weight: item.decayWeight * headlineImpactWeight(item.title),
+    }));
+  const weightSum = directional.reduce((sum, row) => sum + row.weight, 0);
+  const rawMean = weightSum > 0
+    ? directional.reduce((sum, row) => sum + row.item.sentiment * row.weight, 0) / weightSum
+    : 0;
+  const evidenceShrink = directional.length / (directional.length + 2);
+  const weightedMean = rawMean * evidenceShrink;
+  const sentimentScore = Math.round(weightedMean * 100 * 10) / 10;
+
+  const fresh = directional.filter((row) => row.item.ageHours <= 24);
+  const freshWeight = fresh.reduce((sum, row) => sum + row.weight, 0);
+  const freshMean = freshWeight > 0
+    ? fresh.reduce((sum, row) => sum + row.item.sentiment * row.weight, 0) / freshWeight
+    : 0;
+  const fresh24hCount = items.filter((item) => item.ageHours <= 24).length;
+  const hypeTemperature =
+    Math.round(Math.min(100, 8 * fresh24hCount + 50 * Math.abs(freshMean)) * 10) / 10;
+
+  return { sentimentScore, weightedMean, hypeTemperature };
+}
+
 /** Decode the handful of entities Google RSS actually emits. */
 function decodeEntities(s: string): string {
   return s
@@ -283,24 +320,8 @@ export class NewsService {
       };
     });
 
-    // Materiality × time-decay weighted mean in [-1, 1]. A 14-day half-life
-    // retains quarterly-result context without pretending it is fresh news.
-    const weightedItems = items.map((item) => ({
-      item,
-      weight: item.decayWeight * headlineImpactWeight(item.title),
-    }));
-    const wSum = weightedItems.reduce((s, row) => s + row.weight, 0);
-    const weightedMean =
-      wSum > 0
-        ? weightedItems.reduce((s, row) => s + row.item.sentiment * row.weight, 0) / wSum
-        : 0;
-    const sentimentScore = Math.round(weightedMean * 100 * 10) / 10;
+    const { sentimentScore, hypeTemperature } = aggregateHeadlineSentiment(items);
     const fresh24hCount = items.filter((i) => i.ageHours <= 24).length;
-    // Hype = ABNORMAL attention, not routine coverage: liquid large caps run
-    // 4-8 headlines/day as a baseline, so volume alone saturates slowly (8/pt,
-    // ~12 fresh items to max) and directional intensity carries more weight.
-    const hypeTemperature =
-      Math.round(Math.min(100, 8 * fresh24hCount + 50 * Math.abs(weightedMean)) * 10) / 10;
 
     const summary: NewsSummary = {
       items,

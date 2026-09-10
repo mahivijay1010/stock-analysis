@@ -6,7 +6,8 @@ export type DataStatus =
   | "AI_ANALYSIS"
   | "NOT_AVAILABLE"
   | "STALE"
-  | "ERROR";
+  | "ERROR"
+  | "SCRAPED";
 
 export type Confidence = "HIGH" | "MEDIUM" | "LOW";
 export type Consolidation = "CONSOLIDATED" | "STANDALONE" | "UNKNOWN";

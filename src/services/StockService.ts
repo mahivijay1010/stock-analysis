@@ -344,6 +344,12 @@ export class StockService {
     const forecastConstraint = forecastUpperCandidates.sort(
       (a, b) => a.upperReturnPct - b.upperReturnPct
     )[0] ?? null;
+    const recentResistance = Math.max(
+      ...bars.slice(-61, -1).map((bar) => bar.high).filter(Number.isFinite)
+    );
+    const technicalResistance = Number.isFinite(recentResistance) && recentResistance > quote.price
+      ? { price: recentResistance, label: "the observed 60-session resistance" }
+      : null;
 
     const tradePlan: TradePlan | null = buildTradePlan({
       entry: quote.price,
@@ -351,6 +357,7 @@ export class StockService {
       annualVolatilityPct: analysis.technicals.annualVolatilityPct,
       recommendation: analysis.recommendation,
       forecastConstraint,
+      technicalResistance,
     });
 
     const sector =

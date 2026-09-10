@@ -265,6 +265,14 @@ export class AdminService {
                 }
               : null;
           })(),
+          technicalResistance: (() => {
+            const resistance = Math.max(
+              ...bars.slice(-61, -1).map((bar) => bar.high).filter(Number.isFinite)
+            );
+            return Number.isFinite(resistance) && resistance > price
+              ? { price: resistance, label: "the observed 60-session resistance" }
+              : null;
+          })(),
         });
         if (plan) {
           stopLoss = plan.stopLoss;

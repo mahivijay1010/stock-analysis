@@ -13,6 +13,7 @@ import { MoSPIDataSource } from "./providers/MoSPIDataSource";
 import { NSEDataSource } from "./providers/NSEDataSource";
 import { RBIDataSource } from "./providers/RBIDataSource";
 import { FredDataSource } from "./providers/FredDataSource";
+import { ScreenerDataSource } from "./providers/ScreenerDataSource";
 import { AnnualFinancials, CoverageRow, CrossCheck, DataStatus, FilingDocument, MetricResult, NormalizedFinancialFact, SourceRef } from "./types";
 import { buildAnnualSeries, normalizeXbrl } from "./xbrl";
 
@@ -41,6 +42,7 @@ export class IntelligenceService {
     private readonly rbi = new RBIDataSource(),
     private readonly mospi = new MoSPIDataSource(),
     private readonly fred = new FredDataSource(),
+    private readonly screener = new ScreenerDataSource(),
     private readonly documents = new CompanyDocumentSource(),
     private readonly repository = new IntelligenceRepository()
   ) {}
@@ -144,9 +146,19 @@ export class IntelligenceService {
     };
     const rules = evaluateRules(ruleMetrics);
     if (persist) await this.repository.saveMetrics(ticker, coreMetrics);
+    // Scraped panel ratios (Screener) — fills the display for stocks XBRL
+    // leaves blank; persisted to the METRICS store only, never to
+    // financial_facts (backtest firewall). Non-blocking.
+    let scraped: MetricResult[] = [];
+    try {
+      scraped = await this.screener.fetchRatios(ticker);
+      if (persist && scraped.length > 0) await this.repository.saveMetrics(ticker, scraped);
+    } catch (error) {
+      errors.push({ source: "Screener.in", error: error instanceof Error ? error.message : String(error) });
+    }
     const coverage = this.coverage(coreMetrics, series, evidence, crossChecks);
     return { ticker, industryKind: kind, consolidation, filingsFound: filings.length, annualSeries: series,
-      metrics: coreMetrics, rules, evidence, crossChecks, coverage, errors, refreshedAt: new Date().toISOString() };
+      metrics: coreMetrics, scrapedRatios: scraped, rules, evidence, crossChecks, coverage, errors, refreshedAt: new Date().toISOString() };
   }
 
   async refreshMacro(): Promise<Record<string, unknown>> {

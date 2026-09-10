@@ -52,11 +52,23 @@ export interface TradePlanInput {
     upperReturnPct: number;
     label: string;
   } | null;
+  /** Observed resistance from real recent bars; ignored unless above entry. */
+  technicalResistance?: {
+    price: number;
+    label: string;
+  } | null;
 }
 
 /** ATR/vol-based trade plan. Returns null when the recommendation is AVOID. */
 export function buildTradePlan(input: TradePlanInput): TradePlan | null {
-  const { entry, atr14, annualVolatilityPct, recommendation, forecastConstraint } = input;
+  const {
+    entry,
+    atr14,
+    annualVolatilityPct,
+    recommendation,
+    forecastConstraint,
+    technicalResistance,
+  } = input;
   if (recommendation === "AVOID") return null;
   if (!(entry > 0)) return null;
 
@@ -74,14 +86,29 @@ export function buildTradePlan(input: TradePlanInput): TradePlan | null {
     forecastConstraint.upperReturnPct > 0
       ? entry * (1 + forecastConstraint.upperReturnPct / 100)
       : null;
-  const target =
-    validForecastCeiling !== null
-      ? Math.min(structuralTarget, validForecastCeiling)
-      : structuralTarget;
+  const validTechnicalResistance =
+    technicalResistance &&
+    Number.isFinite(technicalResistance.price) &&
+    technicalResistance.price > entry
+      ? technicalResistance.price
+      : null;
+  const targetCandidates = [
+    { price: structuralTarget, label: "the structural 3:1 target" },
+    ...(validForecastCeiling !== null && forecastConstraint
+      ? [{ price: validForecastCeiling, label: forecastConstraint.label }]
+      : []),
+    ...(validTechnicalResistance !== null && technicalResistance
+      ? [{ price: validTechnicalResistance, label: technicalResistance.label }]
+      : []),
+  ];
+  const bindingTarget = targetCandidates.reduce((best, candidate) =>
+    candidate.price < best.price ? candidate : best
+  );
+  const target = bindingTarget.price;
   const targetDist = target - entry;
   const targetPct = (targetDist / entry) * 100;
   const rewardRiskRatio = stopDist > 0 ? targetDist / stopDist : 0;
-  const forecastCapped = target < structuralTarget - 0.005;
+  const targetCapped = target < structuralTarget - 0.005;
 
   // Plausibility: target must fit inside +2.5σ over ~21 trading days (1 month).
   let meetsRewardRisk = rewardRiskRatio >= REWARD_RISK_RATIO - 0.005;
@@ -110,10 +137,13 @@ export function buildTradePlan(input: TradePlanInput): TradePlan | null {
       ? `2×ATR14 (${inr(atrDist)})`
       : `${(pctTier * 100).toFixed(1)}% ${pctTier === BLUECHIP_STOP_PCT ? "bluechip" : "high-volatility"} floor`;
 
-  const targetBasis = forecastCapped && forecastConstraint
+  const forecastDetail =
+    bindingTarget.label === forecastConstraint?.label && forecastConstraint
+      ? ` (${forecastConstraint.horizonDays}-day upper return ${forecastConstraint.upperReturnPct.toFixed(1)}%)`
+      : "";
+  const targetBasis = targetCapped
     ? ` The raw 3:1 target was ${inr(structuralTarget)}, but the executable target was capped at ` +
-      `${inr(target)} by ${forecastConstraint.label} (${forecastConstraint.horizonDays}-day upper return ` +
-      `${forecastConstraint.upperReturnPct.toFixed(1)}%). The resulting reward:risk is ` +
+      `${inr(target)} by ${bindingTarget.label}${forecastDetail}. The resulting reward:risk is ` +
       `${rewardRiskRatio.toFixed(2)}:1, so this is not a qualifying 3:1 trade.`
     : ` Target ${inr(target)} preserves the 3:1 reward:risk geometry.`;
 

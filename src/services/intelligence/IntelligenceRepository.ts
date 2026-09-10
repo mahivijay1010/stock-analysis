@@ -154,12 +154,15 @@ export class IntelligenceRepository {
       period: string;
       calculated_at: Date | string;
     }
+    // PRIMARY-FEEDS-GATES: a non-scraped (CALCULATED/RAW/EXTRACTED) value is
+    // preferred over a SCRAPED one for the same metric; scraped only fills a
+    // gate input when no primary value exists. Recency breaks ties within a tier.
     const metricRows: MetricRow[] = await AppDataSource.query(
       `SELECT DISTINCT ON (ticker, metric)
               ticker, metric, value, value_json, methodology, status, period, calculated_at
          FROM intelligence_metrics
         WHERE ticker = ANY($1) AND metric = ANY($2)
-        ORDER BY ticker, metric, calculated_at DESC`,
+        ORDER BY ticker, metric, (status = 'SCRAPED') ASC, calculated_at DESC`,
       [normalized, QUALITY_METRICS as unknown as string[]]
     );
 
