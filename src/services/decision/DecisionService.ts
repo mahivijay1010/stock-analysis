@@ -15,10 +15,11 @@ import { sessionCalendarService } from "../forecast/SessionCalendarService";
 import { calendarDaysBetween, istDateString } from "../forecast/dates";
 import {
   DECISION_POLICY_VERSION,
-  evaluateEntryPolicy,
   evaluateHolderPolicy,
   PolicyInputs,
 } from "./policy";
+import { sealDecision } from "./decisionSnapshot";
+import { SHORT_TERM_FEATURE_VERSION } from "../shortterm/types";
 import {
   annualizedVolPct,
   assessHorizonSuitability,
@@ -361,8 +362,10 @@ export class DecisionService {
     }
 
     // Re-evaluate the gate WITH the v3 inputs (the first evaluation above only
-    // covered v2 evidence; scorecard fields can only cap further).
-    const decisionV3 = evaluateEntryPolicy({
+    // covered v2 evidence; scorecard fields can only cap further). We SEAL the
+    // exact PolicyInputs so the published snapshot is hash-pinned and replayable
+    // (same sealed inputs + same policy version ⇒ same decision).
+    const gateInputs = {
       ticker: instrument.yahooTicker,
       issuance: issuanceInputs,
       measured,
@@ -374,7 +377,9 @@ export class DecisionService {
       evAfterCostsPct: evReport?.evAfterCostsPct ?? null,
       regime: regime ? { marketRegime: regime.marketRegime, entryRegime: regime.entryRegime } : null,
       modelHealthState: modelHealth?.overallState ?? null,
-    });
+    };
+    const sealed = sealDecision(gateInputs, { modelVersion: run?.modelVersion ?? "none", featureVersion: SHORT_TERM_FEATURE_VERSION });
+    const decisionV3 = sealed.decision;
     const holder = evaluateHolderPolicy(decisionV3, {
       ticker: instrument.yahooTicker,
       issuance: issuanceInputs,
@@ -426,6 +431,8 @@ export class DecisionService {
               }
             : null,
         },
+        inputManifestHash: sealed.inputManifestHash,
+        decisionHash: sealed.decisionHash,
         asOf: now,
         validUntil,
         modelVersion: run?.modelVersion ?? "none",

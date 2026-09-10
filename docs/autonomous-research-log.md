@@ -244,3 +244,62 @@ batch-#2 record. **454 tests / 39 suites green; backend + frontend tsc clean.**
 
 Next: immutable DecisionSnapshot (unchanged priority), which subsumes the shadow
 identity into `decision_snapshot_id` and enables AI evidence-pointer grounding.
+
+---
+
+## Immutable DecisionSnapshot branch (2026-09-10) — reviewer #29
+
+Built the agreed next branch: the hash-pinned, replayable, append-only snapshot
+that everything downstream (shadow ledger, AI grounding, and the future
+realtime layer) will anchor to. **465 tests / 40 suites green; tsc clean.**
+
+The gate pinned today is the pure `evaluateEntryPolicy` (deterministic
+TradeGate). `decision_snapshots` already stored the gate inputs; this branch
+adds the guarantees that make it trustworthy evidence:
+
+- **Canonical hashing** (`src/services/decision/decisionSnapshot.ts`, PURE):
+  `canonicalize()` sorts object keys recursively (arrays keep order; undefined /
+  non-finite collapse to null) so a hash is key-order-independent — the
+  serialization-stability point the reviewer flagged as easy to miss.
+  `sealDecision()` runs the gate and records `inputManifestHash` = sha256 over
+  `{versionManifest, inputs}` and `decisionHash` = sha256 over the output.
+- **Replay determinism**: `replaySealed()` re-runs the gate on the SEALED inputs
+  ONLY — never live prices/fundamentals/events — so a replayed decision is
+  immune to later live-data mutation by construction. `assertReplayDeterministic()`
+  throws if the decision doesn't reproduce byte-identically (catches a gate code
+  change without a version bump).
+- **Fail-closed**: an incomplete manifest, or one whose input hash no longer
+  verifies, is REFUSED — replay never backfills from current data.
+- **DB-level immutability**: `input_manifest_hash` / `decision_hash` columns +
+  a `BEFORE UPDATE OR DELETE` trigger that REJECTS mutation of a published
+  snapshot, with an explicit admin override GUC
+  (`stocksense.allow_snapshot_mutation = 'on'`) for a deliberate retention op.
+  `DecisionService` now seals the exact `PolicyInputs` and persists both hashes.
+- **Tests**: the reviewer's six — replay determinism, live-mutation immunity,
+  hash sensitivity, version sensitivity, missing-evidence fail-closed,
+  serialization stability (`tests/decision-snapshot.test.ts`, 11 cases).
+
+### Live Market Intelligence Agent — sequencing decision (reviewer #30)
+
+The realtime architecture (per-second numerical evaluation of all ~151 stocks,
+LLM only on material change, chart-structure engine, order flow, WebSocket UI)
+is accepted as the long-term shape but **deferred**, for two reasons the
+reviewer themselves gave:
+
+1. **Data source**: it requires a licensed NSE realtime feed (or authorized
+   vendor) with redistribution-compliant terms — Yahoo is not suitable and we
+   do not have such a feed. The provider must sit behind a
+   `RealtimeMarketProvider` abstraction so the engine is feed-agnostic.
+2. **No unproven authority**: the realtime engine must run as `REALTIME_SHADOW`
+   and record every `LivePredictionRevision` until prospective evidence shows it
+   measurably improves entry timing / false-breakout avoidance / expected R /
+   calibration / drawdown over the EOD engine. If it doesn't, we say so.
+
+The snapshot built here is the prerequisite: realtime `LiveDecisionEvent`s will
+seal the SAME way and reference `input_manifest_hash`, so the temporary 7-column
+shadow identity can be replaced by a snapshot reference without a retrofit.
+
+Recommended next (unblocked, no external feed): AI evidence-pointer grounding on
+top of the sealed snapshot — the AI critic references evidence IDs belonging to
+a snapshot; the backend rejects unknown IDs, numbers not present in the
+evidence, or an AI action above the deterministic one.

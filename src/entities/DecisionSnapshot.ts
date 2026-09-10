@@ -89,6 +89,20 @@ export class DecisionSnapshot {
   @Column({ type: "jsonb" })
   inputs: Record<string, unknown>;
 
+  /**
+   * Canonical sha256 over {versionManifest, gateInputs} — the hash-pinned
+   * identity of everything the deterministic gate saw. Lets a replay verify the
+   * snapshot was not altered and lets the shadow ledger / AI grounding refer to
+   * one immutable evidence object. Null on snapshots published before hashing.
+   */
+  @Column({ name: "input_manifest_hash", type: "varchar", length: 64, nullable: true })
+  inputManifestHash?: string | null;
+
+  /** Canonical sha256 over the gate's decision output — the replay-determinism
+   *  target (same manifest + same gate version ⇒ same decision_hash). */
+  @Column({ name: "decision_hash", type: "varchar", length: 64, nullable: true })
+  decisionHash?: string | null;
+
   @Index()
   @Column({ name: "as_of", type: "timestamptz" })
   asOf: Date;
