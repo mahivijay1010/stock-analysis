@@ -83,3 +83,38 @@ model_governance + transitions tables; ModelGovernanceService (legal-transition 
 Deflated Sharpe + CSCV-lite PBO + forecastDisagreement implemented & tested. **Applied DSR to the panel program's best selections (~53 trials): 5td stride pick DSR-prob ≈ 0.000; 21td naive pick 0.015 — both far below 0.95 ⇒ the GBM panel "signal" is formally indistinguishable from selection luck. Final multiple-testing verdict: NOT promotable.** PBO on noise correctly reads high (0.84); a dominant strategy reads low (<0.2).
 
 **Program conclusion after cycles 0–9**: every currently-testable challenger was evaluated and none met its pre-registered bar. The champion stack (bootstrap distributions + deterministic gates + withheld probabilities) survives on merit. Remaining items are BLOCKED_EXTERNAL (PIT universe membership, PIT fundamentals timestamps, derivatives/microstructure feeds) or REQUIRE_PROSPECTIVE_TIME (shadow authority, live calibration, drift observations).
+
+---
+
+## Review-response pass (2026-09-08) — P0 correctness + security defects
+
+Acted on an external code-review. **All 12 P0 defects fixed and tested** (commits eac1262, 597b745):
+
+| # | Defect | Fix | Proof |
+| --- | --- | --- | --- |
+| 1 | ENTRY_CONFIRMED unreachable | in-zone geometry promoted to ENTRY_CONFIRMED; ceiling is sole gate | positive+negative path tests |
+| 2 | shadow outcomes assumed entry | fill-aware `simulateBracket` (NEVER_ENTERED, gap fills, same-bar→STOP) | 10 tests |
+| 3 | % averaged and called R | persist realized net `rMultiple`; health/governance avg netR over FILLED only | tests + queries |
+| 4 | regime/relVol bypassed with constants | real `assessRegime` per stock, fail-closed; real relVolume in rank | live scan |
+| 5 | pre-entry revalidation fails open | verifies event+regime+portfolio-risk, unavailable⇒veto | code + fail-closed |
+| 6 | decision policy fails open on null | null critical input ⇒ unmet gate; only HEALTHY model → BUY (policy v6) | 3 suites updated |
+| 7 | sizing could exceed loss budget | qty solved incl. costs+slippage+0.2·ATR gap buffer; lossAtStop≤riskAmount | invariant test |
+| 8 | adjusted levels vs raw OHLC | `toAdjustedOhlc` (×adjClose/close) so basis matches | tests |
+| 9 | admin fail-open w/o ADMIN_KEY | requireAuthOrAdminKey | live 401 |
+| 10 | SSRF via irPageUrl | ssrfGuard (IP/DNS-rebind/allowlist/creds) + manual redirect revalidation + 25MB cap | 27 tests |
+| 11 | expensive endpoints public | auth on macro/refresh, portfolio, :ticker/refresh, /analyze | live 401 |
+| 12 | npm audit failing (13, 7 high) | non-breaking `npm audit fix` → 2 moderate (express→qs needs express-5 major, deferred) | audit |
+| 47 | scan params unvalidated | explicit 400 on negative budget / risk∉[0.01,5] / min>max / bad enum | tests |
+| 62 | 5xx leaked internal messages | generic 500 body, real error logged server-side | code |
+
+Live acceptance re-run after all changes: universe 151 → 3 gated → **0 qualified**; the 8-Sep four remain RESEARCH_WATCHLIST. 33 suites / 410 tests green.
+
+### Honest triage of the remaining review items (NOT yet done)
+
+These are real and accepted, but are multi-day infrastructure or require prospective time — classified, not hidden:
+
+- **REQUIRES_PROSPECTIVE_TIME**: #13–#24 (forecasting-objective migration, selective prediction, per-horizon health, effective-sample rework, hierarchical cell eval, registry-per-horizon champion, challenger battery, live drift, statistically-justified promotion sample). The machinery (governance, shadow resolver, DSR/PBO, calibration) now exists; these need accumulated live cohorts. The fill-aware ledger (this pass) is the prerequisite that unblocks them.
+- **BLOCKED_EXTERNAL / large-data**: #18 PIT universe membership + delistings + symbol history (no licensed source).
+- **INFRA (multi-day, scoped for follow-up branches)**: #25–#32 account-scoped risk engine + HWM drawdown + factor exposure + liquidity stress + order preview; #40–#55 transactional scans, bounded-concurrency fetch, durable queue/leased worker, cron_execution_logs, multi-provider quorum, shared cache, FK/check constraints, normalized outcomes, PG pool/timeouts, graceful shutdown, real health check, structured logs, PITR/partitioning, service decomposition; #33–#39 AI immutable-evidence pointers, provenance in cache key, prompt-injection defenses, per-role breakers/canary; #56–#61 Redis-backed login throttle, refresh-token rotation/jti/revocation, session secret/issuer/rotation, roles/MFA, no-plaintext-password migration output, same-cost dummy bcrypt. Governed-data table (fees/limits/thresholds effective-dated) is the recommended umbrella for the "static values" section.
+
+Recommended next branch: transactional + concurrency-bounded scan (#40/#41/#42) — it directly improves the reliability of the prospective-evidence pipeline the forecasting items depend on.
