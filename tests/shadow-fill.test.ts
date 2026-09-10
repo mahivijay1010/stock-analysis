@@ -54,10 +54,10 @@ describe("simulateBracket — fill discipline (P0 #2)", () => {
     expect(r.netRMultiple!).toBeLessThan(-1); // worse than a clean −1R because of the gap + costs
   });
 
-  test("same-bar straddle is flagged AMBIGUOUS_INTRABAR yet still resolved adversely (exit at stop)", () => {
+  test("same-bar straddle is flagged AMBIGUOUS_INTRABAR: adverse ASSUMED for the gate, never RECORDED as realized", () => {
     // EOD OHLC can't order an intrabar stop+target touch. We DON'T pretend it
-    // was a stop (that fabricates a clean −1R fact); we label it ambiguous and
-    // still assume the adverse leg for expectancy — countable, never silent.
+    // was a stop (that fabricates a −1R we never witnessed): realizedNetR stays
+    // null while the SAFETY gate still gets the adverse (stop) leg.
     const forward = [
       bar("d1", 100, 100, 99, 99.8), // fill at 100
       bar("d2", 100, 111, 94, 100), // touches BOTH target 110 and stop 95
@@ -65,8 +65,10 @@ describe("simulateBracket — fill discipline (P0 #2)", () => {
     const r = simulateBracket({ ...common, forward });
     expect(r.outcome).toBe("AMBIGUOUS_INTRABAR");
     expect(r.ambiguous).toBe(true);
-    expect(r.exitPrice).toBe(95); // adverse leg assumed for EV
-    expect(r.netRMultiple!).toBeLessThan(0);
+    expect(r.realizedNetR).toBeNull(); // NOT an observed outcome
+    expect(r.netRMultiple).toBeNull(); // back-compat alias tracks realized
+    expect(r.conservativeNetR!).toBeLessThan(0); // adverse leg for the gate
+    expect(r.exitPrice).toBe(95); // adverse leg, display only
   });
 
   test("breakout trigger: intrabar cross fills at the trigger; gap-up opens above ⇒ fills at open", () => {

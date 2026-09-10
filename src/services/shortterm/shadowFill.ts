@@ -33,6 +33,11 @@ export type FillOutcome =
   | "AMBIGUOUS_INTRABAR" // a single bar's low hit the stop AND high hit the target — EOD OHLC cannot order them
   | "DATA_INVALID"; // malformed OHLC (e.g. high < low) — never scored
 
+/** How the R-multiples were derived. CONSERVATIVE_ASSUMPTION means the intrabar
+ *  ordering was unobservable from EOD OHLC and the adverse leg was ASSUMED —
+ *  a safety input, NOT an observed historical fact. */
+export type ResolutionSource = "DAILY_BAR" | "CONSERVATIVE_ASSUMPTION";
+
 export interface BracketResult {
   outcome: FillOutcome;
   filled: boolean;
@@ -42,13 +47,28 @@ export interface BracketResult {
   exitDate: string | null;
   holdingDays: number;
   returnPct: number | null; // gross price return of the trade (fill→exit)
-  netRMultiple: number | null; // realized R AFTER round-trip costs (the honest number)
+  /** OBSERVED realized R after costs. NULL when the ordering was not observable
+   *  (AMBIGUOUS_INTRABAR) or the bar was malformed (DATA_INVALID) — we DO NOT
+   *  manufacture a historical R we could not actually witness. Track-record and
+   *  any "realized expectancy" stat must read THIS field. */
+  realizedNetR: number | null;
+  /** Fail-closed R for SAFETY gates: equals realizedNetR for observed outcomes;
+   *  for AMBIGUOUS_INTRABAR it is the ADVERSE (stop) leg. Health/governance
+   *  suspension reads this so an unobservable path is treated as a loss. */
+  conservativeNetR: number | null;
+  /** The FAVORABLE (target) leg for an ambiguous bar — the other bound of the
+   *  true-but-unknown outcome; equals realizedNetR for observed outcomes. */
+  bestCaseNetR: number | null;
+  /** @deprecated Back-compat alias of realizedNetR (NULL when unobserved). New
+   *  code should read realizedNetR / conservativeNetR explicitly. */
+  netRMultiple: number | null;
   mfeR: number | null; // best favorable excursion in R while open
   maeR: number | null; // worst adverse excursion in R while open
   /** True when the exit sequence within a bar could not be determined from EOD
-   *  OHLC and the ADVERSE (stop) outcome was assumed — flagged so it is
-   *  countable and never silently inflates expectancy. */
+   *  OHLC and the ADVERSE (stop) outcome was ASSUMED for safety — flagged so it
+   *  is countable and never silently presented as an observed realized loss. */
   ambiguous: boolean;
+  resolutionSource: ResolutionSource;
 }
 
 const r4 = (x: number): number => Math.round(x * 10000) / 10000;
@@ -76,10 +96,14 @@ export function simulateBracket(opts: {
     exitDate: null,
     holdingDays: 0,
     returnPct: null,
+    realizedNetR: null,
+    conservativeNetR: null,
+    bestCaseNetR: null,
     netRMultiple: null,
     mfeR: null,
     maeR: null,
     ambiguous: false,
+    resolutionSource: "DAILY_BAR",
   };
   if (opts.forward.length === 0 || !(opts.stop > 0) || !(opts.target > opts.stop)) return none;
 
@@ -126,6 +150,10 @@ export function simulateBracket(opts: {
       exitDate: opts.forward[fillIdx].date,
       holdingDays: 1,
       returnPct: 0,
+      // Observed (the gap-down open IS the tradeable price) — realized == conservative.
+      realizedNetR: r4(-(fillPrice * (opts.roundTripCostPct + opts.slippagePct)) / 100 / Math.max(1e-6, Math.abs(risk) || fillPrice * 0.01)),
+      conservativeNetR: r4(-(fillPrice * (opts.roundTripCostPct + opts.slippagePct)) / 100 / Math.max(1e-6, Math.abs(risk) || fillPrice * 0.01)),
+      bestCaseNetR: r4(-(fillPrice * (opts.roundTripCostPct + opts.slippagePct)) / 100 / Math.max(1e-6, Math.abs(risk) || fillPrice * 0.01)),
       netRMultiple: r4(-(fillPrice * (opts.roundTripCostPct + opts.slippagePct)) / 100 / Math.max(1e-6, Math.abs(risk) || fillPrice * 0.01)),
       mfeR: 0,
       maeR: 0,
@@ -145,7 +173,7 @@ export function simulateBracket(opts: {
     const b = opts.forward[k];
     if (!(b.high >= b.low) || !(b.high > 0)) {
       // Malformed candle — refuse to score rather than invent a fill sequence.
-      return { ...none, outcome: "DATA_INVALID", filled: true, fillPrice: r4(fillPrice), fillDate: opts.forward[fillIdx].date, holdingDays: k - fillIdx };
+      return { ...none, outcome: "DATA_INVALID", filled: true, fillPrice: r4(fillPrice), fillDate: opts.forward[fillIdx].date, holdingDays: k - fillIdx }; // all R fields null (from `none`) — never scored
     }
     mfeR = Math.max(mfeR, (b.high - fillPrice) / risk);
     maeR = Math.min(maeR, (b.low - fillPrice) / risk);
@@ -174,6 +202,35 @@ export function simulateBracket(opts: {
 
   const costsInR = (fillPrice * (opts.roundTripCostPct + opts.slippagePct)) / 100 / risk;
   const grossR = (exitPrice - fillPrice) / risk;
+
+  if (ambiguous) {
+    // AMBIGUOUS_INTRABAR: the true outcome is bounded but UNOBSERVED. We refuse
+    // to record a realized R we did not witness (realizedNetR = null) while
+    // still handing the safety gate the ADVERSE leg (conservativeNetR) and
+    // exposing the FAVORABLE leg (bestCaseNetR) as the other bound.
+    const adverseR = r4((opts.stop - fillPrice) / risk - costsInR);
+    const favorableR = r4((opts.target - fillPrice) / risk - costsInR);
+    return {
+      outcome,
+      filled: true,
+      fillPrice: r4(fillPrice),
+      fillDate: opts.forward[fillIdx].date,
+      exitPrice: r4(exitPrice), // = stop (adverse), for display only
+      exitDate,
+      holdingDays,
+      returnPct: r4(((exitPrice - fillPrice) / fillPrice) * 100),
+      realizedNetR: null, // NOT observed — never counted as a realized outcome
+      conservativeNetR: adverseR,
+      bestCaseNetR: favorableR,
+      netRMultiple: null, // back-compat alias tracks realized ⇒ null
+      mfeR: r4(mfeR),
+      maeR: r4(maeR),
+      ambiguous: true,
+      resolutionSource: "CONSERVATIVE_ASSUMPTION",
+    };
+  }
+
+  const net = r4(grossR - costsInR);
   return {
     outcome,
     filled: true,
@@ -183,10 +240,14 @@ export function simulateBracket(opts: {
     exitDate,
     holdingDays,
     returnPct: r4(((exitPrice - fillPrice) / fillPrice) * 100),
-    netRMultiple: r4(grossR - costsInR),
+    realizedNetR: net, // observed
+    conservativeNetR: net,
+    bestCaseNetR: net,
+    netRMultiple: net,
     mfeR: r4(mfeR),
     maeR: r4(maeR),
-    ambiguous,
+    ambiguous: false,
+    resolutionSource: "DAILY_BAR",
   };
 }
 

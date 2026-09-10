@@ -19,7 +19,7 @@ import { AppDataSource } from "../../config/database";
 import { adjustedDailyReturns } from "../market/canonical";
 import { simulateDailyQuantiles } from "../quant/montecarlo";
 import { Bar } from "../market/types";
-import { HORIZON_TD, ShortTermForecast, ShortTermHorizon, SHORT_TERM_VERSION } from "./types";
+import { HORIZON_TD, ShortTermForecast, ShortTermHorizon, SHORT_TERM_VERSION, resolveProbability } from "./types";
 import { SetupClassification } from "./setups";
 import { TradePlan } from "./types";
 
@@ -77,14 +77,16 @@ export function buildShortTermForecast(opts: {
   const h = HORIZON_TD[opts.horizon];
   const statementUnavailable =
     "Target-vs-stop probability unavailable — insufficient calibrated evidence.";
+  // Enforce the invariant at construction: a probability shows IFF AVAILABLE.
+  const prob = resolveProbability(opts.calibratedTargetProb != null ? "AVAILABLE" : "UNCALIBRATED", opts.calibratedTargetProb);
   const base: ShortTermForecast = {
     expectedExcessReturnPct: null,
     p10Pct: null,
     p50Pct: null,
     p90Pct: null,
-    probabilityTargetBeforeStop: opts.calibratedTargetProb,
-    probabilityStatus: opts.calibratedTargetProb != null ? "AVAILABLE" : "UNCALIBRATED",
-    probabilityStatement: opts.calibratedTargetProb != null ? "calibrated meta-label probability" : statementUnavailable,
+    probabilityTargetBeforeStop: prob.probabilityTargetBeforeStop,
+    probabilityStatus: prob.probabilityStatus,
+    probabilityStatement: prob.probabilityStatus === "AVAILABLE" ? "calibrated meta-label probability" : statementUnavailable,
     expectedHoldingDays: h.mid,
     modelConfidence: "LOW",
     modelConfidenceReasons: [],

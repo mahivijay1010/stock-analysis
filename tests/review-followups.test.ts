@@ -10,6 +10,7 @@ import { evaluateEntryPolicy, PolicyInputs } from "../src/services/decision/poli
 import { composeCeiling, actionRank, EvidenceTier, ShortTermActionV2, FreshnessV2 } from "../src/services/shortterm/actionStates";
 import { simulateBracket, OhlcBar } from "../src/services/shortterm/shadowFill";
 import { reconcileLedger } from "../src/services/research/ResearchJobsService";
+import { resolveProbability, ProbabilityStatus } from "../src/services/shortterm/types";
 
 const bar = (d: string, o: number, h: number, l: number, c: number): OhlcBar => ({ date: d, open: o, high: h, low: l, close: c });
 
@@ -60,18 +61,36 @@ describe("gate monotonicity (reviewer: gates must be monotonic)", () => {
 
 describe("intrabar ambiguity (reviewer: EOD OHLC can't order same-bar stop+target)", () => {
   const common = { entryType: "zone" as const, zoneLow: 98, zoneHigh: 100, triggerPrice: null, stop: 95, target: 108, entryWindow: 3, maxHold: 10, roundTripCostPct: 0.3, slippagePct: 0.2 };
-  test("a bar whose low hits the stop AND high hits the target ⇒ AMBIGUOUS_INTRABAR, resolved adversely", () => {
+  test("ambiguous bar is NEVER counted as a realized outcome, but IS handed to the safety gate", () => {
     const forward = [bar("d1", 100, 100, 99, 99.8), bar("d2", 100, 110, 94, 100)]; // d2 straddles 95 and 108
     const r = simulateBracket({ ...common, forward });
     expect(r.outcome).toBe("AMBIGUOUS_INTRABAR");
     expect(r.ambiguous).toBe(true);
-    expect(r.exitPrice).toBe(95); // adverse (stop) assumed — never the favorable target
-    expect(r.netRMultiple!).toBeLessThan(0);
+    expect(r.resolutionSource).toBe("CONSERVATIVE_ASSUMPTION");
+    // reviewer P0 #1: the un-observable path is NOT recorded as a realized R…
+    expect(r.realizedNetR).toBeNull();
+    expect(r.netRMultiple).toBeNull(); // back-compat alias tracks realized
+    // …yet the safety gate still receives the ADVERSE leg (a loss)…
+    expect(r.conservativeNetR!).toBeLessThan(0);
+    expect(r.exitPrice).toBe(95); // adverse (stop), display only
+    // …and the favorable leg bounds the true-but-unknown outcome above it.
+    expect(r.bestCaseNetR!).toBeGreaterThan(r.conservativeNetR!);
+    expect(r.bestCaseNetR!).toBeGreaterThan(0);
   });
-  test("a malformed candle ⇒ DATA_INVALID (unscored)", () => {
+  test("an OBSERVED outcome has realized == conservative == best-case", () => {
+    const win = simulateBracket({ ...common, forward: [bar("d1", 100, 100, 99, 99.8), bar("d2", 100, 109, 99, 108)] });
+    expect(win.outcome).toBe("TARGET_FIRST");
+    expect(win.realizedNetR).not.toBeNull();
+    expect(win.conservativeNetR).toBe(win.realizedNetR);
+    expect(win.bestCaseNetR).toBe(win.realizedNetR);
+    expect(win.resolutionSource).toBe("DAILY_BAR");
+  });
+  test("a malformed candle ⇒ DATA_INVALID (all R null, unscored)", () => {
     const forward = [bar("d1", 100, 100, 99, 99.8), { date: "d2", open: 100, high: 90, low: 101, close: 95 }];
     const r = simulateBracket({ ...common, forward });
     expect(r.outcome).toBe("DATA_INVALID");
+    expect(r.realizedNetR).toBeNull();
+    expect(r.conservativeNetR).toBeNull();
     expect(r.netRMultiple).toBeNull();
   });
   test("clean single-touch bars are unaffected", () => {
@@ -81,18 +100,57 @@ describe("intrabar ambiguity (reviewer: EOD OHLC can't order same-bar stop+targe
   });
 });
 
-describe("shadow-ledger accounting identity", () => {
-  test("balanced when resolved + pending = total", () => {
-    const r = reconcileLedger({ total: 100, resolved: 60, pending: 40, ambiguous: 5, dataInvalid: 1 });
+describe("shadow-ledger accounting identity (sum AND uniqueness)", () => {
+  test("balanced when resolved + pending = total AND all identities distinct", () => {
+    const r = reconcileLedger({ total: 100, resolved: 60, pending: 40, ambiguous: 5, dataInvalid: 1, distinctIdentities: 100 });
     expect(r.balanced).toBe(true);
     expect(r.discrepancy).toBe(0);
+    expect(r.duplicates).toBe(0);
   });
-  test("flags a dropped/duplicated resolution", () => {
-    const dropped = reconcileLedger({ total: 100, resolved: 59, pending: 40, ambiguous: 0, dataInvalid: 0 });
+  test("flags a dropped/mis-stated resolution (sum identity)", () => {
+    const dropped = reconcileLedger({ total: 100, resolved: 59, pending: 40, ambiguous: 0, dataInvalid: 0, distinctIdentities: 100 });
     expect(dropped.balanced).toBe(false);
     expect(dropped.discrepancy).toBe(1);
-    const dup = reconcileLedger({ total: 100, resolved: 61, pending: 40, ambiguous: 0, dataInvalid: 0 });
-    expect(dup.balanced).toBe(false);
-    expect(dup.discrepancy).toBe(-1);
+  });
+  test("reviewer P0 #2: a DUPLICATED row passes the SUM but fails uniqueness", () => {
+    // The exact counterexample: 101 = 90 + 11 (sum balances) but the ledger is
+    // corrupt because one identity was doubled.
+    const dup = reconcileLedger({ total: 101, resolved: 90, pending: 11, ambiguous: 0, dataInvalid: 0, distinctIdentities: 100 });
+    expect(dup.discrepancy).toBe(0); // SUM identity ALONE is satisfied…
+    expect(dup.balanced).toBe(false); // …but the ledger is NOT balanced
+    expect(dup.duplicates).toBe(1);
+    expect(dup.note).toMatch(/DUPLICATE/);
+  });
+});
+
+describe("probabilityStatus invariant: displayed IFF AVAILABLE (reviewer P0 #5)", () => {
+  const notAvailable: ProbabilityStatus[] = ["UNCALIBRATED", "NO_SKILL", "INSUFFICIENT_N", "STALE"];
+  test("AVAILABLE with a usable probability keeps it", () => {
+    const r = resolveProbability("AVAILABLE", 0.72);
+    expect(r.probabilityStatus).toBe("AVAILABLE");
+    expect(r.probabilityTargetBeforeStop).toBe(0.72);
+  });
+  test("AVAILABLE + null/NaN/out-of-range collapses to UNCALIBRATED with null probability", () => {
+    for (const p of [null, NaN, Infinity, -0.1, 1.5]) {
+      const r = resolveProbability("AVAILABLE", p as number | null);
+      expect(r.probabilityStatus).toBe("UNCALIBRATED");
+      expect(r.probabilityTargetBeforeStop).toBeNull();
+    }
+  });
+  test("every not-available status ALWAYS nulls the probability, even if one is passed", () => {
+    for (const s of notAvailable) {
+      const r = resolveProbability(s, 0.61); // caller tried to attach a number
+      expect(r.probabilityStatus).toBe(s);
+      expect(r.probabilityTargetBeforeStop).toBeNull(); // impossible combo made unrepresentable
+    }
+  });
+  test("the invariant holds: probability is non-null IFF status is AVAILABLE", () => {
+    const cases: Array<[ProbabilityStatus, number | null]> = [
+      ["AVAILABLE", 0.5], ["AVAILABLE", null], ["UNCALIBRATED", 0.9], ["NO_SKILL", 0.3], ["INSUFFICIENT_N", null], ["STALE", 0.8],
+    ];
+    for (const [s, p] of cases) {
+      const r = resolveProbability(s, p);
+      expect(r.probabilityTargetBeforeStop != null).toBe(r.probabilityStatus === "AVAILABLE");
+    }
   });
 });

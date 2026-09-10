@@ -35,16 +35,31 @@ export interface LedgerCounts {
   pending: number;
   ambiguous: number;
   dataInvalid: number;
+  /** Distinct natural identities (ticker, anchor, setup, horizon, model). When
+   *  omitted we can't check for duplicates — only the sum identity. */
+  distinctIdentities?: number;
 }
-export function reconcileLedger(c: LedgerCounts): { balanced: boolean; discrepancy: number; note: string } {
+/**
+ * Two independent identities must BOTH hold (reviewer P0 #2):
+ *  (1) SUM:        total === resolved + pending  (nothing dropped/mis-stated)
+ *  (2) UNIQUENESS: total === distinctIdentities  (nothing duplicated)
+ * The sum alone passes on a duplicated row (101 = 90 + 11); the uniqueness
+ * check is what actually catches a doubled prospective observation.
+ */
+export function reconcileLedger(c: LedgerCounts): { balanced: boolean; discrepancy: number; duplicates: number; note: string } {
   const discrepancy = c.total - (c.resolved + c.pending);
-  const balanced = discrepancy === 0;
+  const duplicates = c.distinctIdentities != null ? c.total - c.distinctIdentities : 0;
+  const balanced = discrepancy === 0 && duplicates === 0;
+  const parts: string[] = [];
+  if (discrepancy !== 0) parts.push(`SUM off by ${discrepancy}: ${c.resolved} resolved + ${c.pending} pending ≠ ${c.total} logged — a resolution was dropped or mis-stated`);
+  if (duplicates !== 0) parts.push(`${duplicates} DUPLICATE identit${Math.abs(duplicates) === 1 ? "y" : "ies"}: ${c.total} rows vs ${c.distinctIdentities} distinct — a shadow row was doubled`);
   return {
     balanced,
     discrepancy,
+    duplicates,
     note: balanced
-      ? `balanced: ${c.resolved} resolved + ${c.pending} pending = ${c.total} logged (${c.ambiguous} ambiguous, ${c.dataInvalid} invalid)`
-      : `IMBALANCE of ${discrepancy}: ${c.resolved} resolved + ${c.pending} pending ≠ ${c.total} logged — a resolution was dropped or duplicated`,
+      ? `balanced: ${c.resolved} resolved + ${c.pending} pending = ${c.total} logged, all distinct (${c.ambiguous} ambiguous, ${c.dataInvalid} invalid)`
+      : `IMBALANCE — ${parts.join("; ")}`,
   };
 }
 
@@ -54,20 +69,22 @@ export class ResearchJobsService {
    * Returns the counts + verdict; a caller/cron can alarm on !balanced.
    */
   async reconcileShadowLedger(): Promise<LedgerCounts & ReturnType<typeof reconcileLedger>> {
-    const rows: Array<{ total: string; resolved: string; pending: string; ambiguous: string; invalid: string }> = await AppDataSource.query(
+    const rows: Array<{ total: string; resolved: string; pending: string; ambiguous: string; invalid: string; distinct: string }> = await AppDataSource.query(
       `SELECT COUNT(*)::text AS total,
               COUNT(*) FILTER (WHERE outcome IS NOT NULL)::text AS resolved,
               COUNT(*) FILTER (WHERE outcome IS NULL)::text AS pending,
               COUNT(*) FILTER (WHERE (outcome->>'ambiguous')::boolean IS TRUE)::text AS ambiguous,
-              COUNT(*) FILTER (WHERE (outcome->>'outcome') = 'DATA_INVALID')::text AS invalid
+              COUNT(*) FILTER (WHERE (outcome->>'outcome') = 'DATA_INVALID')::text AS invalid,
+              COUNT(DISTINCT (ticker, anchor_date, setup_type, horizon, model_version))::text AS distinct
          FROM short_term_shadow_predictions`
-    ).catch(() => [{ total: "0", resolved: "0", pending: "0", ambiguous: "0", invalid: "0" }]);
+    ).catch(() => [{ total: "0", resolved: "0", pending: "0", ambiguous: "0", invalid: "0", distinct: "0" }]);
     const counts: LedgerCounts = {
       total: Number(rows[0]?.total ?? 0),
       resolved: Number(rows[0]?.resolved ?? 0),
       pending: Number(rows[0]?.pending ?? 0),
       ambiguous: Number(rows[0]?.ambiguous ?? 0),
       dataInvalid: Number(rows[0]?.invalid ?? 0),
+      distinctIdentities: Number(rows[0]?.distinct ?? 0),
     };
     return { ...counts, ...reconcileLedger(counts) };
   }
@@ -122,11 +139,17 @@ export class ResearchJobsService {
         p.outcome = {
           outcome: res.outcome,
           filled: res.filled,
-          ambiguous: res.ambiguous, // same-bar straddle resolved adversely — countable, never silent
+          ambiguous: res.ambiguous, // same-bar straddle: adverse ASSUMED for safety, NOT observed
+          resolutionSource: res.resolutionSource, // DAILY_BAR (observed) vs CONSERVATIVE_ASSUMPTION
           fillPrice: res.fillPrice,
           exitPrice: res.exitPrice,
           returnPct: res.returnPct,
-          netRMultiple: res.netRMultiple, // realized R AFTER costs (#3) — NOT a percentage
+          // Realized (OBSERVED) vs conservative (fail-safe ASSUMED) are stored
+          // separately so track-record never claims an unobserved R (reviewer P0).
+          realizedNetR: res.realizedNetR, // null when ordering was unobservable
+          conservativeNetR: res.conservativeNetR, // adverse leg for the safety gate
+          bestCaseNetR: res.bestCaseNetR,
+          netRMultiple: res.netRMultiple, // back-compat alias of realizedNetR
           mfeR: res.mfeR,
           maeR: res.maeR,
           holdingDays: res.holdingDays,
@@ -147,26 +170,34 @@ export class ResearchJobsService {
    * pre-registered floors. Never promotes.
    */
   async monthlyGovernanceReview(): Promise<{ snapshots: number; transitions: number }> {
-    // P0 #3 — realized net R-multiple, FILLED trades only (never % as R).
-    const rows: Array<{ setup_type: string; horizon: string; resolved: string; dates: string; exp: string | null }> = await AppDataSource.query(
+    // P0 #3 — net R-multiple, FILLED trades only (never % as R). Two measures
+    // are computed and kept separate (reviewer P0): CONSERVATIVE (adverse leg
+    // assumed for ambiguous bars) drives the SAFETY demotion; REALIZED (observed
+    // only — ambiguous excluded) is what may be reported as the live track
+    // record. COALESCE keeps rows written before the realized/conservative split.
+    const rows: Array<{ setup_type: string; horizon: string; resolved: string; dates: string; cons_exp: string | null; real_exp: string | null; realized_n: string; ambiguous: string }> = await AppDataSource.query(
       `SELECT setup_type, horizon,
               COUNT(*) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS resolved,
               COUNT(DISTINCT anchor_date) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS dates,
-              AVG((outcome->>'netRMultiple')::numeric) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS exp
+              AVG(COALESCE((outcome->>'conservativeNetR')::numeric, (outcome->>'netRMultiple')::numeric)) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS cons_exp,
+              AVG(COALESCE((outcome->>'realizedNetR')::numeric, (outcome->>'netRMultiple')::numeric)) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID' AND (outcome->>'outcome') <> 'AMBIGUOUS_INTRABAR')::text AS real_exp,
+              COUNT(*) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID' AND (outcome->>'outcome') <> 'AMBIGUOUS_INTRABAR')::text AS realized_n,
+              COUNT(*) FILTER (WHERE (outcome->>'outcome') = 'AMBIGUOUS_INTRABAR')::text AS ambiguous
          FROM short_term_shadow_predictions GROUP BY setup_type, horizon`
     );
     const perf = AppDataSource.getRepository(ShortTermModelPerformance);
     let transitions = 0;
     for (const r of rows) {
       const eff = Number(r.dates);
-      const expR = r.exp != null ? Number(r.exp) : null;
+      const expR = r.cons_exp != null ? Number(r.cons_exp) : null; // conservative — governs demotion
+      const realizedR = r.real_exp != null ? Number(r.real_exp) : null; // observed only — reportable
       await perf.save(
         perf.create({
           modelName: "st-live-shadow-review",
           modelVersion: `${r.setup_type}|${r.horizon}`,
           state: "SHADOW",
-          metrics: { filledResolved: Number(r.resolved), independentDates: eff, liveExpectancyR: expR },
-          verdict: eff < LIVE_AUTHORITY.minEffectiveShadowTrades ? "insufficient live evidence — remains SHADOW" : `live expectancy ${expR}R`,
+          metrics: { filledResolved: Number(r.resolved), independentDates: eff, liveExpectancyR: expR, realizedExpectancyR: realizedR, realizedTrades: Number(r.realized_n), ambiguousTrades: Number(r.ambiguous) },
+          verdict: eff < LIVE_AUTHORITY.minEffectiveShadowTrades ? "insufficient live evidence — remains SHADOW" : `conservative expectancy ${expR}R (realized ${realizedR ?? "n/a"}R over ${r.realized_n} observed, ${r.ambiguous} ambiguous)`,
         })
       );
       // Governance action only on the tracked candidate setups (R thresholds).

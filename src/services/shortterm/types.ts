@@ -119,6 +119,29 @@ export interface PositionSizing {
   lossAtStop: number | null;
 }
 
+export type ProbabilityStatus = "AVAILABLE" | "UNCALIBRATED" | "NO_SKILL" | "INSUFFICIENT_N" | "STALE";
+
+/**
+ * Invariant (reviewer P0 #5): a probability is displayed IFF the status is
+ * AVAILABLE. Every not-available reason MUST null the probability so no surface
+ * can render a stale/uncalibrated/no-skill number. This makes the impossible
+ * combinations (AVAILABLE+null, UNCALIBRATED+0.72, …) unrepresentable — callers
+ * pass their intended status + raw probability and receive a consistent pair.
+ * PURE + tested.
+ */
+export function resolveProbability(
+  intendedStatus: ProbabilityStatus,
+  probability: number | null
+): { probabilityStatus: ProbabilityStatus; probabilityTargetBeforeStop: number | null } {
+  // A finite probability in [0,1] is a precondition for AVAILABLE; anything else
+  // (null, NaN, out of range) collapses to UNCALIBRATED with a null probability.
+  const usable = probability != null && Number.isFinite(probability) && probability >= 0 && probability <= 1;
+  if (intendedStatus === "AVAILABLE" && usable) return { probabilityStatus: "AVAILABLE", probabilityTargetBeforeStop: probability };
+  if (intendedStatus === "AVAILABLE" && !usable) return { probabilityStatus: "UNCALIBRATED", probabilityTargetBeforeStop: null };
+  // Any not-available status ALWAYS nulls the probability, even if one was passed.
+  return { probabilityStatus: intendedStatus, probabilityTargetBeforeStop: null };
+}
+
 export interface ShortTermForecast {
   expectedExcessReturnPct: number | null;
   p10Pct: number | null;
@@ -127,7 +150,7 @@ export interface ShortTermForecast {
   /** ONLY set when a calibrated meta-label model is promoted; else null + statement. */
   probabilityTargetBeforeStop: number | null;
   /** Machine-readable status so surfaces don't parse display text. */
-  probabilityStatus: "AVAILABLE" | "UNCALIBRATED" | "NO_SKILL" | "INSUFFICIENT_N" | "STALE";
+  probabilityStatus: ProbabilityStatus;
   probabilityStatement: string;
   expectedHoldingDays: number;
   modelConfidence: "LOW" | "MEDIUM" | "HIGH";

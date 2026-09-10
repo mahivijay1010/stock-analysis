@@ -124,16 +124,21 @@ export class ShortTermScanService {
     // Live-shadow evidence per setup×horizon → short-term model live authority (Part 24/25).
     // P0 #3 — live authority is measured in realized net R-MULTIPLE (not %),
     // and only FILLED shadow trades count (NEVER_ENTERED plans are not trades).
-    const shadowRows: Array<{ setup_type: string; horizon: string; resolved: string; dates: string; exp: string | null }> = await AppDataSource.query(
+    // Live authority is a SAFETY gate → it reads the CONSERVATIVE expectancy
+    // (ambiguous bars counted at their adverse leg). realized/ambiguous are also
+    // surfaced so the number can be shown honestly. COALESCE keeps pre-split rows.
+    const shadowRows: Array<{ setup_type: string; horizon: string; resolved: string; dates: string; exp: string | null; real_exp: string | null; ambiguous: string }> = await AppDataSource.query(
       `SELECT setup_type, horizon,
               COUNT(*) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS resolved,
               COUNT(DISTINCT anchor_date) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS dates,
-              AVG((outcome->>'netRMultiple')::numeric) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS exp
+              AVG(COALESCE((outcome->>'conservativeNetR')::numeric, (outcome->>'netRMultiple')::numeric)) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS exp,
+              AVG(COALESCE((outcome->>'realizedNetR')::numeric, (outcome->>'netRMultiple')::numeric)) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID' AND (outcome->>'outcome') <> 'AMBIGUOUS_INTRABAR')::text AS real_exp,
+              COUNT(*) FILTER (WHERE (outcome->>'outcome') = 'AMBIGUOUS_INTRABAR')::text AS ambiguous
          FROM short_term_shadow_predictions GROUP BY setup_type, horizon`
     ).catch(() => []);
-    const shadowStatsBySetup = new Map<string, { resolved: number; distinctDates: number; expectancyR: number | null }>();
+    const shadowStatsBySetup = new Map<string, { resolved: number; distinctDates: number; expectancyR: number | null; realizedExpectancyR: number | null; ambiguousTrades: number }>();
     for (const r of shadowRows)
-      shadowStatsBySetup.set(`${r.setup_type}|${r.horizon}`, { resolved: Number(r.resolved), distinctDates: Number(r.dates), expectancyR: r.exp != null ? Number(r.exp) : null });
+      shadowStatsBySetup.set(`${r.setup_type}|${r.horizon}`, { resolved: Number(r.resolved), distinctDates: Number(r.dates), expectancyR: r.exp != null ? Number(r.exp) : null, realizedExpectancyR: r.real_exp != null ? Number(r.real_exp) : null, ambiguousTrades: Number(r.ambiguous) });
 
     // Risk manager over open paper positions (S6): limits block NEW entries only.
     const openPaper: Array<{ loss_at_stop: string | null; sector: string | null }> = await AppDataSource.query(

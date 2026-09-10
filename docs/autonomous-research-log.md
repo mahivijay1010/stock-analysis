@@ -168,3 +168,44 @@ Recommended next branch: immutable decision snapshots (hash-pinned gate inputs)
 — it is the prerequisite for both AI semantic grounding and a trustworthy
 prospective ledger, and is self-contained enough to land without the external
 data blockers.
+
+---
+
+## Review-response batch #2 (2026-09-10) — realized ≠ conservative correction
+
+The reviewer accepted batch #1 but flagged that `AMBIGUOUS_INTRABAR`, while
+correctly *labelled*, was still being **recorded as a realized −1R** and only
+`DATA_INVALID` was excluded from the live average — conflating "what the safety
+gate should assume" with "what actually happened." Fixed before starting the
+immutable-snapshot branch, as advised. **454 tests / 39 suites green; backend +
+frontend tsc clean.**
+
+| Reviewer point | Fix | Proof |
+| --- | --- | --- |
+| **P0 #1** ambiguous scored as realized | `BracketResult` now carries **`realizedNetR`** (null when the ordering was unobservable), **`conservativeNetR`** (adverse leg — for the safety gate), **`bestCaseNetR`** (favorable bound) and **`resolutionSource`** (`DAILY_BAR` vs `CONSERVATIVE_ASSUMPTION`). `netRMultiple` is a back-compat alias of *realized* (⇒ null for ambiguous). Governance/health average **conservative** (fail-safe demotion unchanged); the reported live expectancy averages **realized** with ambiguous excluded and counted separately. `COALESCE` keeps pre-split rows valid. | realized/conservative + observed-equality tests |
+| **P0 #2** reconciliation can't catch a duplicate | `reconcileLedger` now checks **two** identities — SUM (`total = resolved + pending`) *and* UNIQUENESS (`total = distinctIdentities`); the reviewer's `101 = 90 + 11` counterexample now fails. DB-level `UNIQUE (ticker, anchor_date, setup_type, horizon, model_version)` (migration `1789300000000`) makes the existing `.orIgnore()` shadow insert genuinely idempotent (it had no conflict target before). | duplicate-detection test + migration |
+| **P0 #5** probabilityStatus invariant | pure `resolveProbability()` makes the impossible pairs unrepresentable: a probability is emitted **IFF** status is `AVAILABLE`; every not-available reason nulls it; `AVAILABLE` + null/NaN/out-of-range collapses to `UNCALIBRATED`. Enforced at forecast construction, not by frontend convention. | invariant tests over all statuses |
+
+### Still open after batch #2 (reviewer's revised priority)
+
+Unchanged blockers plus the reviewer's newly-itemised follow-ons, in his order:
+
+- **Immutable DecisionSnapshot** (hash-pinned universe/price/fundamental/event
+  inputs + versions) with a **replay-determinism** test — the next large branch.
+- **AI evidence-pointer grounding** on top of snapshots (claims reference
+  immutable evidence IDs; backend rejects unknown IDs / unsupported numbers).
+- **DataQualityIncident** record + quarantine/second-source reconcile on
+  `DATA_INVALID` (currently excluded statistically but not fixed at the data layer).
+- **EvidenceStage transitions gated by persisted evidence** (manifest id, study
+  run id, survivorship pass, immutable result hash) rather than a manual flag;
+  `PIT_UNIVERSE_AVAILABLE=true` must not by itself promote anything.
+- **sourceQuality** as a third dimension beside score+completeness (PRIMARY vs
+  SCRAPED are not epistemically equal).
+- **Property-based** gate monotonicity over generated multi-variable states incl.
+  NaN/±Infinity/−0 (current tests are single-variable, hand-picked).
+- **PublishedPhaseResult** with required completeness fields at the API boundary
+  (internal phase methods keep the optional shape).
+- Durable queue + leases + DLQ; PITR + restore test; portfolio correlated-gap
+  risk; 80/90/95% EV-LCB multiplicity study.
+- **BLOCKED_EXTERNAL** (unchanged): PIT survivorship-free universe; exchange-grade
+  canonical market data. **Time-dependent**: prospective confirmation.

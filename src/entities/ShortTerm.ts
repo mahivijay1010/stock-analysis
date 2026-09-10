@@ -1,4 +1,4 @@
-import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from "typeorm";
+import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, Unique } from "typeorm";
 
 /** Short-Term Trade Radar entities (S1/S8/S9). Scan/candidate/transition rows are append-only. */
 
@@ -49,6 +49,9 @@ export class ShortTermTransition {
 
 @Entity("short_term_shadow_predictions")
 @Index(["ticker", "anchorDate"])
+// One prospective observation per natural identity (reviewer P0 #2). Backs the
+// `.orIgnore()` insert so a same-session re-scan is a no-op, not a duplicate.
+@Unique("uq_shadow_identity", ["ticker", "anchorDate", "setupType", "horizon", "modelVersion"])
 export class ShortTermShadowPrediction {
   @PrimaryGeneratedColumn("uuid") id: string;
   @Column({ type: "varchar", length: 20 }) ticker: string;
