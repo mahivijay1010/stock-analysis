@@ -22,7 +22,56 @@ import { HORIZON_TD, ShortTermHorizon } from "../shortterm/types";
 import { LIVE_AUTHORITY } from "../shortterm/shortTermHealth";
 import { modelGovernanceService } from "./governance";
 
+/**
+ * Shadow-ledger accounting identity (durability guard). Every logged shadow
+ * prediction must be exactly one of: resolved (with an outcome) or still
+ * pending (unmatured). A mismatch means a resolution job dropped or
+ * double-counted — silent corruption of prospective statistics — so the
+ * nightly reconciliation asserts this balances. PURE + tested.
+ */
+export interface LedgerCounts {
+  total: number;
+  resolved: number;
+  pending: number;
+  ambiguous: number;
+  dataInvalid: number;
+}
+export function reconcileLedger(c: LedgerCounts): { balanced: boolean; discrepancy: number; note: string } {
+  const discrepancy = c.total - (c.resolved + c.pending);
+  const balanced = discrepancy === 0;
+  return {
+    balanced,
+    discrepancy,
+    note: balanced
+      ? `balanced: ${c.resolved} resolved + ${c.pending} pending = ${c.total} logged (${c.ambiguous} ambiguous, ${c.dataInvalid} invalid)`
+      : `IMBALANCE of ${discrepancy}: ${c.resolved} resolved + ${c.pending} pending ≠ ${c.total} logged — a resolution was dropped or duplicated`,
+  };
+}
+
 export class ResearchJobsService {
+  /**
+   * Nightly reconciliation: assert the shadow ledger accounting identity holds.
+   * Returns the counts + verdict; a caller/cron can alarm on !balanced.
+   */
+  async reconcileShadowLedger(): Promise<LedgerCounts & ReturnType<typeof reconcileLedger>> {
+    const rows: Array<{ total: string; resolved: string; pending: string; ambiguous: string; invalid: string }> = await AppDataSource.query(
+      `SELECT COUNT(*)::text AS total,
+              COUNT(*) FILTER (WHERE outcome IS NOT NULL)::text AS resolved,
+              COUNT(*) FILTER (WHERE outcome IS NULL)::text AS pending,
+              COUNT(*) FILTER (WHERE (outcome->>'ambiguous')::boolean IS TRUE)::text AS ambiguous,
+              COUNT(*) FILTER (WHERE (outcome->>'outcome') = 'DATA_INVALID')::text AS invalid
+         FROM short_term_shadow_predictions`
+    ).catch(() => [{ total: "0", resolved: "0", pending: "0", ambiguous: "0", invalid: "0" }]);
+    const counts: LedgerCounts = {
+      total: Number(rows[0]?.total ?? 0),
+      resolved: Number(rows[0]?.resolved ?? 0),
+      pending: Number(rows[0]?.pending ?? 0),
+      ambiguous: Number(rows[0]?.ambiguous ?? 0),
+      dataInvalid: Number(rows[0]?.invalid ?? 0),
+    };
+    return { ...counts, ...reconcileLedger(counts) };
+  }
+
   /** Resolve matured shadow predictions on completed bars (idempotent). */
   async resolveShadowOutcomes(): Promise<{ pending: number; resolved: number }> {
     const repo = AppDataSource.getRepository(ShortTermShadowPrediction);
@@ -73,6 +122,7 @@ export class ResearchJobsService {
         p.outcome = {
           outcome: res.outcome,
           filled: res.filled,
+          ambiguous: res.ambiguous, // same-bar straddle resolved adversely — countable, never silent
           fillPrice: res.fillPrice,
           exitPrice: res.exitPrice,
           returnPct: res.returnPct,
@@ -100,9 +150,9 @@ export class ResearchJobsService {
     // P0 #3 — realized net R-multiple, FILLED trades only (never % as R).
     const rows: Array<{ setup_type: string; horizon: string; resolved: string; dates: string; exp: string | null }> = await AppDataSource.query(
       `SELECT setup_type, horizon,
-              COUNT(*) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE)::text AS resolved,
-              COUNT(DISTINCT anchor_date) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE)::text AS dates,
-              AVG((outcome->>'netRMultiple')::numeric) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE)::text AS exp
+              COUNT(*) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS resolved,
+              COUNT(DISTINCT anchor_date) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS dates,
+              AVG((outcome->>'netRMultiple')::numeric) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS exp
          FROM short_term_shadow_predictions GROUP BY setup_type, horizon`
     );
     const perf = AppDataSource.getRepository(ShortTermModelPerformance);

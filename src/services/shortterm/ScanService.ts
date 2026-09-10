@@ -126,9 +126,9 @@ export class ShortTermScanService {
     // and only FILLED shadow trades count (NEVER_ENTERED plans are not trades).
     const shadowRows: Array<{ setup_type: string; horizon: string; resolved: string; dates: string; exp: string | null }> = await AppDataSource.query(
       `SELECT setup_type, horizon,
-              COUNT(*) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE)::text AS resolved,
-              COUNT(DISTINCT anchor_date) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE)::text AS dates,
-              AVG((outcome->>'netRMultiple')::numeric) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE)::text AS exp
+              COUNT(*) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS resolved,
+              COUNT(DISTINCT anchor_date) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS dates,
+              AVG((outcome->>'netRMultiple')::numeric) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS exp
          FROM short_term_shadow_predictions GROUP BY setup_type, horizon`
     ).catch(() => []);
     const shadowStatsBySetup = new Map<string, { resolved: number; distinctDates: number; expectancyR: number | null }>();

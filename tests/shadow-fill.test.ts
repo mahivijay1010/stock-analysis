@@ -54,13 +54,19 @@ describe("simulateBracket — fill discipline (P0 #2)", () => {
     expect(r.netRMultiple!).toBeLessThan(-1); // worse than a clean −1R because of the gap + costs
   });
 
-  test("same-bar straddle is resolved conservatively as STOP_FIRST", () => {
+  test("same-bar straddle is flagged AMBIGUOUS_INTRABAR yet still resolved adversely (exit at stop)", () => {
+    // EOD OHLC can't order an intrabar stop+target touch. We DON'T pretend it
+    // was a stop (that fabricates a clean −1R fact); we label it ambiguous and
+    // still assume the adverse leg for expectancy — countable, never silent.
     const forward = [
       bar("d1", 100, 100, 99, 99.8), // fill at 100
       bar("d2", 100, 111, 94, 100), // touches BOTH target 110 and stop 95
     ];
     const r = simulateBracket({ ...common, forward });
-    expect(r.outcome).toBe("STOP_FIRST");
+    expect(r.outcome).toBe("AMBIGUOUS_INTRABAR");
+    expect(r.ambiguous).toBe(true);
+    expect(r.exitPrice).toBe(95); // adverse leg assumed for EV
+    expect(r.netRMultiple!).toBeLessThan(0);
   });
 
   test("breakout trigger: intrabar cross fills at the trigger; gap-up opens above ⇒ fills at open", () => {

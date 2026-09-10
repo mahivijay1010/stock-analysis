@@ -261,6 +261,9 @@ export interface PhaseResult {
   status: PhaseStatus;
   score: number | null;
   weight: number;
+  completeness?: number;
+  scoredChecks?: number;
+  totalChecks?: number;
   checks: PhaseCheck[];
   missing: string[];
 }

@@ -168,7 +168,7 @@ export class FrameworkService {
   // ── Report composition ────────────────────────────────────────────────────
 
   buildReport(input: FrameworkInput): FrameworkReport {
-    const phases: PhaseResult[] = [
+    const rawPhases = [
       this.phaseMacro(input),
       this.phaseIndustry(input),
       this.phaseMoat(input),
@@ -176,6 +176,13 @@ export class FrameworkService {
       this.phaseValuation(input),
       this.phaseTechnicals(input),
     ];
+    // Attach COMPLETENESS (data coverage) separately from the QUALITY score, so
+    // a 100 on 2 checks is distinguishable from a 100 on 6 (reviewer note).
+    const phases: PhaseResult[] = rawPhases.map((p) => {
+      const total = p.checks.length;
+      const scoredN = p.checks.filter((c) => c.result !== "no-data").length;
+      return { ...p, totalChecks: total, scoredChecks: scoredN, completeness: total > 0 ? round2(scoredN / total) : 0 };
+    });
 
     // Master score over available scored phases 1-6, weights renormalized.
     const keyByPhase: Record<number, keyof typeof OWNER_WEIGHTS> = {

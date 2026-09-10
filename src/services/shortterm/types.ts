@@ -126,6 +126,8 @@ export interface ShortTermForecast {
   p90Pct: number | null;
   /** ONLY set when a calibrated meta-label model is promoted; else null + statement. */
   probabilityTargetBeforeStop: number | null;
+  /** Machine-readable status so surfaces don't parse display text. */
+  probabilityStatus: "AVAILABLE" | "UNCALIBRATED" | "NO_SKILL" | "INSUFFICIENT_N" | "STALE";
   probabilityStatement: string;
   expectedHoldingDays: number;
   modelConfidence: "LOW" | "MEDIUM" | "HIGH";

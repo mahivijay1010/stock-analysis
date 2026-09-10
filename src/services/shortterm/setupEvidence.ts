@@ -41,9 +41,22 @@ export interface SetupEvidence {
   probabilityExpectancyPositive: number;
   bhSignificant: boolean;
   evidenceStrength: EvidenceTier;
+  /** Maturity of the evidence — a backtest tier is NOT production-grade until
+   *  survivorship (PIT universe) is accounted AND prospective shadow confirms. */
+  evidenceStage: EvidenceStage;
   usableForEntry: boolean;
   note: string;
 }
+
+export type EvidenceStage = "BACKTEST_PROVISIONAL" | "PIT_VALIDATED" | "PROSPECTIVE_CONFIRMED";
+
+/**
+ * Point-in-time universe membership (delistings/mergers/suspensions) is NOT
+ * yet reconstructed, so every backtest is survivorship-exposed. Until that
+ * flag flips, a tier-A cell is BACKTEST_PROVISIONAL — real signal, not final
+ * evidence — and is held below live ENTRY authority regardless (shadow gate).
+ */
+export const PIT_UNIVERSE_AVAILABLE = false;
 
 /** Pre-registered promotion thresholds (Part 25) — fixed before the final study read. */
 export const SETUP_PROMOTION = {
@@ -54,33 +67,43 @@ export const SETUP_PROMOTION = {
 } as const;
 
 /** Derive the tier from a realized-R evidence row (deterministic, Part 19/25). */
-export function tierFromEvidence(e: Omit<SetupEvidence, "evidenceStrength" | "usableForEntry" | "note">): {
+export function tierFromEvidence(e: Omit<SetupEvidence, "evidenceStrength" | "usableForEntry" | "note" | "evidenceStage">): {
   tier: EvidenceTier;
   usable: boolean;
+  stage: EvidenceStage;
   note: string;
 } {
   const P = SETUP_PROMOTION;
   const strongExpectancy = e.expectancyAfterCosts >= P.minExpectancyAfterCostsR && e.bootstrapExpectancyCI[0] > P.ciLowerMustExceed;
   const enoughDates = e.independentEntryDates >= P.minIndependentDates;
   const confident = e.probabilityExpectancyPositive >= P.minProbExpectancyPositive;
+  const stage: EvidenceStage = PIT_UNIVERSE_AVAILABLE ? "PIT_VALIDATED" : "BACKTEST_PROVISIONAL";
 
   if (strongExpectancy && enoughDates && confident && e.bhSignificant) {
-    return { tier: "A", usable: true, note: "validated: positive after-cost expectancy, CI lower > 0, survives FDR" };
+    return {
+      tier: "A",
+      usable: true,
+      stage,
+      note: PIT_UNIVERSE_AVAILABLE
+        ? "validated: positive after-cost expectancy, CI lower > 0, survives FDR"
+        : "BACKTEST-PROVISIONAL tier A — positive after-cost expectancy, CI lower > 0, survives FDR, BUT survivorship (PIT universe) is not yet accounted; not production-grade until PIT-validated and shadow-confirmed",
+    };
   }
   if (e.expectancyAfterCosts > 0 && enoughDates && e.probabilityExpectancyPositive >= 0.75) {
-    return { tier: "B", usable: false, note: "promising but not yet promotable — expectancy positive, evidence not decisive" };
+    return { tier: "B", usable: false, stage, note: "promising but not yet promotable — expectancy positive, evidence not decisive" };
   }
   if (e.rawTrades > 0) {
     return {
       tier: "C",
       usable: false,
+      stage,
       note:
         e.expectancyAfterCosts <= 0
           ? `unvalidated — realized after-cost expectancy ${e.expectancyAfterCosts}R is not positive`
           : "unvalidated — insufficient independent evidence",
     };
   }
-  return { tier: "D", usable: false, note: "no historical evidence for this setup" };
+  return { tier: "D", usable: false, stage: "BACKTEST_PROVISIONAL", note: "no historical evidence for this setup" };
 }
 
 export class SetupEvidenceService {
@@ -141,6 +164,7 @@ export class SetupEvidenceService {
       probabilityExpectancyPositive: 0,
       bhSignificant: false,
       evidenceStrength: "D",
+      evidenceStage: "BACKTEST_PROVISIONAL",
       usableForEntry: false,
       note: "no expectancy study has been run for this setup×horizon yet — treated as unvalidated",
     };

@@ -83,6 +83,7 @@ export function buildShortTermForecast(opts: {
     p50Pct: null,
     p90Pct: null,
     probabilityTargetBeforeStop: opts.calibratedTargetProb,
+    probabilityStatus: opts.calibratedTargetProb != null ? "AVAILABLE" : "UNCALIBRATED",
     probabilityStatement: opts.calibratedTargetProb != null ? "calibrated meta-label probability" : statementUnavailable,
     expectedHoldingDays: h.mid,
     modelConfidence: "LOW",

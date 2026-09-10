@@ -172,7 +172,7 @@ async function main(): Promise<void> {
       ...(base as never),
       bootstrapExpectancyCI: c.bootstrapExpectancyCI as [number, number],
     });
-    return { ...base, evidenceStrength: tier.tier, usableForEntry: tier.usable, note: tier.note };
+    return { ...base, evidenceStrength: tier.tier, evidenceStage: tier.stage, usableForEntry: tier.usable, note: tier.note };
   });
 
   const repo = AppDataSource.getRepository(ShortTermModelPerformance);

@@ -118,3 +118,53 @@ These are real and accepted, but are multi-day infrastructure or require prospec
 - **INFRA (multi-day, scoped for follow-up branches)**: #25–#32 account-scoped risk engine + HWM drawdown + factor exposure + liquidity stress + order preview; #40–#55 transactional scans, bounded-concurrency fetch, durable queue/leased worker, cron_execution_logs, multi-provider quorum, shared cache, FK/check constraints, normalized outcomes, PG pool/timeouts, graceful shutdown, real health check, structured logs, PITR/partitioning, service decomposition; #33–#39 AI immutable-evidence pointers, provenance in cache key, prompt-injection defenses, per-role breakers/canary; #56–#61 Redis-backed login throttle, refresh-token rotation/jti/revocation, session secret/issuer/rotation, roles/MFA, no-plaintext-password migration output, same-cost dummy bcrypt. Governed-data table (fees/limits/thresholds effective-dated) is the recommended umbrella for the "static values" section.
 
 Recommended next branch: transactional + concurrency-bounded scan (#40/#41/#42) — it directly improves the reliability of the prospective-evidence pipeline the forecasting items depend on.
+
+---
+
+## Review-response batch (2026-09-10) — honesty & correctness follow-ups
+
+A second external review (of the record + methodology, not a fresh code read)
+raised correctness/honesty defects distinct from the P0 set above. Fixed and
+tested this pass (tests: `tests/review-followups.test.ts`, updated
+`tests/shadow-fill.test.ts`). **448 tests / 39 suites green; backend + frontend
+tsc clean.**
+
+| Area | Reviewer point | Fix | Proof |
+| --- | --- | --- | --- |
+| Intrabar ambiguity | EOD OHLC cannot order a same-bar stop+target touch; calling it a clean STOP fabricates a −1R fact | `FillOutcome` gains `AMBIGUOUS_INTRABAR` + `DATA_INVALID`; straddle is now **flagged ambiguous** but **still resolved adversely at the stop** for EV; malformed candles (`high<low`/`≤0`) ⇒ `DATA_INVALID`, unscored (`netRMultiple=null`). `BracketResult.ambiguous` persisted on every shadow outcome. | shadow-fill + follow-up tests |
+| Ledger integrity | a dropped/duplicated shadow resolution silently corrupts prospective stats | pure `reconcileLedger()` asserts `total === resolved + pending`; `reconcileShadowLedger()` cron counts ambiguous/invalid separately and alarms on imbalance; aggregation queries exclude `DATA_INVALID` | accounting-identity tests |
+| Tier-A honesty | Tier A was presented as "verified" while survivorship (PIT universe) is unaccounted | `EvidenceStage = BACKTEST_PROVISIONAL \| PIT_VALIDATED \| PROSPECTIVE_CONFIRMED`; `PIT_UNIVERSE_AVAILABLE=false`; tier A now carries a BACKTEST-PROVISIONAL note and `evidenceStage` on every cell | setupEvidence + study |
+| Probability status | "no probability" conflated several distinct reasons | `probabilityStatus: AVAILABLE \| UNCALIBRATED \| NO_SKILL \| INSUFFICIENT_N \| STALE` on `ShortTermForecast`, machine-readable | model.ts |
+| Gate monotonicity | a gate must never let a *worse* input yield a *higher* action | property tests: worsening ANY single policy input never raises `decisionStatus`; degrading ANY `composeCeiling` input never raises the ceiling rank | monotonicity tests |
+| Completeness ≠ quality | a score of 100 on 2-of-6 checks read the same as 100-of-6 | `PhaseResult` gains `completeness`/`scoredChecks`/`totalChecks` (populated in `buildReport`); confirmed `scoreFromChecks` already excludes no-data (not an unknown-as-credit bug) | types + FrameworkService |
+
+### Honest triage of the remaining review items (still NOT done)
+
+Real and accepted; deferred because they need external data, prospective time,
+or multi-day infra — classified, not hidden:
+
+- **BLOCKED_EXTERNAL**: PIT survivorship-free universe (membership + delistings +
+  symbol-history) — no licensed source. This is why Tier A is now labelled
+  `BACKTEST_PROVISIONAL` rather than "verified"; it cannot be promoted to
+  `PIT_VALIDATED` until this lands. Reviewer's #1 blocker; unchanged.
+- **NOT_CANONICAL**: Yahoo is the sole price/level source; no independent
+  canonical (e.g. NSE) cross-check, and forecast/backtest/level price domains
+  are not yet reconciled to one adjusted basis across providers.
+- **REQUIRES_PROSPECTIVE_TIME**: prospective (out-of-sample, forward-dated)
+  confirmation of every setup×horizon cell — the `PROSPECTIVE_CONFIRMED` stage
+  exists in the type but no cell has earned it yet; needs accumulated live cohorts
+  through the now-fill-aware, now-reconciled shadow ledger.
+- **STATISTICAL_STRINGENCY**: the 80% EV lower-bound gate does not yet correct
+  for multiplicity across the setup×horizon grid (family-wise / FDR); a single
+  cell clearing 80% LCB in isolation overstates grid-wide confidence.
+- **INFRA (multi-day follow-up branches)**: durable queue + leased worker + PITR,
+  immutable decision snapshots (hash-pinned inputs), account-scoped portfolio
+  correlated-gap risk engine, independent-validation process separation.
+- **AI_SEMANTIC_GROUNDING**: AI remains advisory/cap-only and may not raise an
+  action; end-to-end grounding of its evidence pointers to immutable snapshots
+  is part of the immutable-snapshot infra item, not yet built.
+
+Recommended next branch: immutable decision snapshots (hash-pinned gate inputs)
+— it is the prerequisite for both AI semantic grounding and a trustworthy
+prospective ledger, and is self-contained enough to land without the external
+data blockers.

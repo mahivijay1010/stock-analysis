@@ -138,7 +138,13 @@ export interface PhaseResult {
   phase: number;
   name: string; // e.g. 1, "Macro-Economic Tide"
   status: "done" | "partial" | "unavailable";
-  score: number | null; // 0..100, null if unavailable
+  score: number | null; // 0..100, null if unavailable — QUALITY of the scored checks
+  /** COMPLETENESS, separate from quality: how many checks had data (0..1).
+   *  A score of 100 on 2 of 6 checks is not the same as 100 on 6 of 6.
+   *  Populated by buildReport for every phase. */
+  completeness?: number;
+  scoredChecks?: number;
+  totalChecks?: number;
   weight: number; // owner's weights: macro .10, industry .15, fundamentals .20, valuation .20, technicals .15
   checks: PhaseCheck[];
   missing: string[]; // honest list of what free data cannot provide

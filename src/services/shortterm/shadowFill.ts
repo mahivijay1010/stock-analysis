@@ -25,7 +25,13 @@ export interface OhlcBar {
   close: number;
 }
 
-export type FillOutcome = "NEVER_ENTERED" | "TARGET_FIRST" | "STOP_FIRST" | "TIMEOUT";
+export type FillOutcome =
+  | "NEVER_ENTERED"
+  | "TARGET_FIRST"
+  | "STOP_FIRST"
+  | "TIMEOUT"
+  | "AMBIGUOUS_INTRABAR" // a single bar's low hit the stop AND high hit the target — EOD OHLC cannot order them
+  | "DATA_INVALID"; // malformed OHLC (e.g. high < low) — never scored
 
 export interface BracketResult {
   outcome: FillOutcome;
@@ -39,6 +45,10 @@ export interface BracketResult {
   netRMultiple: number | null; // realized R AFTER round-trip costs (the honest number)
   mfeR: number | null; // best favorable excursion in R while open
   maeR: number | null; // worst adverse excursion in R while open
+  /** True when the exit sequence within a bar could not be determined from EOD
+   *  OHLC and the ADVERSE (stop) outcome was assumed — flagged so it is
+   *  countable and never silently inflates expectancy. */
+  ambiguous: boolean;
 }
 
 const r4 = (x: number): number => Math.round(x * 10000) / 10000;
@@ -69,6 +79,7 @@ export function simulateBracket(opts: {
     netRMultiple: null,
     mfeR: null,
     maeR: null,
+    ambiguous: false,
   };
   if (opts.forward.length === 0 || !(opts.stop > 0) || !(opts.target > opts.stop)) return none;
 
@@ -128,9 +139,14 @@ export function simulateBracket(opts: {
   let holdingDays = 0;
   let mfeR = 0;
   let maeR = 0;
+  let ambiguous = false;
   const lastIdx = Math.min(fillIdx + opts.maxHold, opts.forward.length - 1);
   for (let k = fillIdx + 1; k <= lastIdx; k++) {
     const b = opts.forward[k];
+    if (!(b.high >= b.low) || !(b.high > 0)) {
+      // Malformed candle — refuse to score rather than invent a fill sequence.
+      return { ...none, outcome: "DATA_INVALID", filled: true, fillPrice: r4(fillPrice), fillDate: opts.forward[fillIdx].date, holdingDays: k - fillIdx };
+    }
     mfeR = Math.max(mfeR, (b.high - fillPrice) / risk);
     maeR = Math.min(maeR, (b.low - fillPrice) / risk);
     holdingDays = k - fillIdx;
@@ -138,31 +154,21 @@ export function simulateBracket(opts: {
     const gapTarget = b.open >= opts.target;
     const hitStop = b.low <= opts.stop;
     const hitTarget = b.high >= opts.target;
-    if (gapStop) {
-      outcome = "STOP_FIRST";
-      exitPrice = b.open; // gap through the stop fills at the open
-      exitDate = b.date;
-      break;
-    }
-    if (gapTarget) {
-      outcome = "TARGET_FIRST";
-      exitPrice = b.open;
-      exitDate = b.date;
-      break;
-    }
-    // Same-bar straddle ⇒ assume STOP first (conservative).
-    if (hitStop) {
-      outcome = "STOP_FIRST";
+    // A gap at the open is unambiguous — the open is the first tradeable price.
+    if (gapStop) { outcome = "STOP_FIRST"; exitPrice = b.open; exitDate = b.date; break; }
+    if (gapTarget) { outcome = "TARGET_FIRST"; exitPrice = b.open; exitDate = b.date; break; }
+    // Both levels touched INSIDE one bar: EOD OHLC cannot order them. Flag it
+    // AMBIGUOUS_INTRABAR and assume the ADVERSE (stop) outcome — never the
+    // favorable one — so expectancy is not silently inflated.
+    if (hitStop && hitTarget) {
+      outcome = "AMBIGUOUS_INTRABAR";
       exitPrice = opts.stop;
       exitDate = b.date;
+      ambiguous = true;
       break;
     }
-    if (hitTarget) {
-      outcome = "TARGET_FIRST";
-      exitPrice = opts.target;
-      exitDate = b.date;
-      break;
-    }
+    if (hitStop) { outcome = "STOP_FIRST"; exitPrice = opts.stop; exitDate = b.date; break; }
+    if (hitTarget) { outcome = "TARGET_FIRST"; exitPrice = opts.target; exitDate = b.date; break; }
   }
   if (outcome === "TIMEOUT") holdingDays = lastIdx - fillIdx;
 
@@ -180,6 +186,7 @@ export function simulateBracket(opts: {
     netRMultiple: r4(grossR - costsInR),
     mfeR: r4(mfeR),
     maeR: r4(maeR),
+    ambiguous,
   };
 }
 
