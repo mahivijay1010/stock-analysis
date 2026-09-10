@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from "express";
+import { fundamentalsPanelService } from "../services/intelligence/FundamentalsPanelService";
 import { intelligenceService } from "../services/intelligence/IntelligenceService";
 import { CorrelationWindow, PortfolioAnalyticsPosition } from "../services/intelligence/portfolioAnalytics";
 import { HttpError } from "../types";
@@ -26,7 +27,18 @@ export class IntelligenceController {
   };
 
   get = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try { ok(res, await intelligenceService.readTicker(ticker(req.params.ticker))); } catch (error) { next(error); }
+    try {
+      const t = ticker(req.params.ticker);
+      // SWR read-through: serve stored intelligence immediately; a stale/missing
+      // scraped-fundamentals set triggers a background refresh for the next view.
+      const [stored, panelFundamentals] = await Promise.all([
+        intelligenceService.readTicker(t),
+        fundamentalsPanelService.get(t),
+      ]);
+      ok(res, { ...stored, panelFundamentals });
+    } catch (error) {
+      next(error);
+    }
   };
 
   refreshMacro = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
