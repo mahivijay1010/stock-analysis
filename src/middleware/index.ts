@@ -13,11 +13,16 @@ export const errorHandler = (
   const rawStatus = (error as { statusCode?: unknown }).statusCode;
   const statusCode = typeof rawStatus === "number" ? rawStatus : 500;
   if (statusCode >= 500) {
+    // P0 security #62: log the real error server-side, but NEVER leak the
+    // internal exception message (stack details, SQL, secrets) to the client.
     console.error("Error:", error);
+    res.status(statusCode).json({ success: false, error: { message: "Internal Server Error" } });
+    return;
   }
+  // 4xx are intentional, user-facing messages (HttpError) — safe to return.
   res.status(statusCode).json({
     success: false,
-    error: { message: error.message || "Internal Server Error" },
+    error: { message: error.message || "Request failed" },
   });
 };
 
