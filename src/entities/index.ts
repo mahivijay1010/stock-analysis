@@ -60,6 +60,9 @@ export { ForecastOutcome } from "./ForecastOutcome";
 
 export { DecisionSnapshot } from "./DecisionSnapshot";
 
+// Realtime V1 — market-data provenance (scraped/polled readings; live panel only)
+export { MarketSourceSnapshot } from "./MarketSourceSnapshot";
+
 // Phase D — experiment registry (spec §8)
 export { ExperimentRun } from "./ExperimentRun";
 

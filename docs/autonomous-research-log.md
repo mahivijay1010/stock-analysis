@@ -428,3 +428,49 @@ grounds its AI critique through the snapshot-grounding module already shipped, s
 the broker adapter can start collecting prospective 1-minute data immediately
 while the analytical layers keep improving — and it stays REALTIME_SHADOW until
 it beats the EOD engine on prospective evidence.
+
+---
+
+## Scraping MarketDataProvider (2026-09-11) — reviewer's V1 data layer
+
+Built the swappable data-provider abstraction so scraping is the CURRENT
+implementation, not baked into the engine. **515 tests / 43 suites green; tsc
+clean; migration applied.** Under `src/services/realtime/`:
+
+- **marketDataProvider.ts** — `MarketDataProvider` interface (`fetchStock`,
+  `fetchUniverse`, `health`), normalized `MarketSnapshot`, `PriceSource` (the
+  injected, vendor-specific fetch), and `MarketDataMode`
+  (SCRAPED_SNAPSHOT | INTRADAY_CANDLES | STREAMING). `modeAuthorityCeiling` /
+  `capActionByMode`: a scraped snapshot lacks intra-interval observability so it
+  caps live authority at WAIT — it can never justify a live BUY on its own.
+  `snapshotToDataQuality` maps freshness×validity → HEALTHY/DEGRADED/UNAVAILABLE.
+- **snapshotValidation.ts** (PURE firewall) — `validateQuote` (missing price ⇒
+  PARSER_ERROR to catch a markup/selector change; low>high / price∉[low,high] /
+  negative volume / implausible change% / ticker mismatch ⇒ DATA_INVALID),
+  `classifyFreshness` (FRESH/STALE/UNKNOWN_FRESHNESS/FAILED — mandatory),
+  `reconcilePrices` + `buildScrapedSnapshot` (multi-source: agree→median,
+  disagree beyond tol ⇒ SOURCE_DISAGREEMENT/quarantine).
+- **asyncUtils.ts** — `mapWithConcurrency` (never 151 at once; order preserved),
+  `withRetry` (backoff + injectable jitter/sleep for deterministic tests),
+  `withTimeout` (cancels its timer on settle — no dangling handle).
+- **scrapingMarketProvider.ts** — `ScrapingMarketProvider` orchestrates bounded
+  concurrency + per-source retry/timeout, absorbs a source failure as a FAILED
+  quote (never a cycle crash), de-dupes by ticker, reports health.
+  `buildProvenanceRows` emits one `MarketSourceSnapshot` per source with a
+  rawHash + parsingVersion for reproducibility / parser-drift detection.
+- **entity + migration** — `market_source_snapshots` (append-only provenance).
+  Explicitly LIVE-panel only; never feeds `financial_facts` (backtest firewall).
+
+Honesty preserved (reviewer): the mode is labelled SCRAPED_SNAPSHOT (a polling
+snapshot — we know 1430→1436, NOT the intra-interval path), and a
+stale/failed/invalid/disagreeing reading yields dataQuality != HEALTHY, which the
+ranker/gate already treat as no-new-entry.
+
+### Not yet built (next batch)
+- The concrete `PriceSource` implementations (real HTML/endpoint parsers) — the
+  only site-specific piece; kept out of the engine deliberately. Screener stays
+  for fundamentals; a current-price source for live snapshots.
+- Append-only `LivePredictionRevision` + `LiveDecisionEvent` entities and the
+  10-minute scheduler that: scrape → validate → StateDelta → revision →
+  materiality→AI (grounded) → gate (capped by mode) → seal DecisionSnapshot →
+  Opportunity/Actionable rank, all in REALTIME_SHADOW.
