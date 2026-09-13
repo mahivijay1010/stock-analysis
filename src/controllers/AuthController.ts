@@ -30,6 +30,25 @@ export class AuthController {
     }
   };
 
+  /** POST /api/auth/passcode { passcode } → owner session cookie (admin fast-path). */
+  passcode = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { passcode } = (req.body ?? {}) as { passcode?: string };
+      const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+      const { identity, token, expiresAt } = await authService.loginWithPasscode(String(passcode ?? ""), ip);
+      res.cookie(SESSION_COOKIE, token, {
+        httpOnly: true,
+        sameSite: "strict",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        maxAge: TOKEN_TTL * 1000,
+      });
+      ok(res, { account: { id: identity.accountId, username: identity.username }, expiresAt });
+    } catch (err) {
+      next(err);
+    }
+  };
+
   /** POST /api/auth/logout — clears the session cookie. */
   logout = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {

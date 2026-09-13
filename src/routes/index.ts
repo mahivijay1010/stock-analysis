@@ -53,6 +53,7 @@ export const createStockRoutes = (): Router => {
   // header required on all mutations (see src/middleware/auth.ts for the
   // documented choice). Registration disabled — single seeded owner account.
   router.post("/auth/login", requireCsrfHeader, authController.login); //   POST /api/auth/login { username, password }
+  router.post("/auth/passcode", requireCsrfHeader, authController.passcode); // POST /api/auth/passcode { passcode } — admin fast-path
   router.post("/auth/logout", requireAuth, authController.logout); //       POST /api/auth/logout
   router.get("/auth/me", requireAuth, authController.me); //                GET  /api/auth/me
 

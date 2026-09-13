@@ -13,6 +13,7 @@
  *    15 minutes, login answers 429 until the window passes.
  */
 import { DataSource } from "typeorm";
+import { createHash, timingSafeEqual } from "crypto";
 import * as bcrypt from "bcrypt";
 import * as jwt from "jsonwebtoken";
 import { AppDataSource } from "../../config/database";
@@ -69,6 +70,55 @@ export class AuthService {
       expiresIn: TOKEN_TTL_SECONDS,
     });
     return { identity, token, expiresAt: new Date(now + TOKEN_TTL_SECONDS * 1000).toISOString() };
+  }
+
+  /**
+   * Admin passcode fast-path (owner-only convenience): a single secret passcode
+   * logs in as the seeded owner account WITHOUT the username/password. The
+   * passcode lives ONLY in ADMIN_PASSCODE (.env, gitignored) — never in source.
+   * Same session cookie, same brute-force guard, constant-time compare. When
+   * ADMIN_PASSCODE is unset the route is disabled (403), so a default build has
+   * no passcode backdoor.
+   */
+  async loginWithPasscode(passcode: string, ip: string): Promise<{ identity: SessionIdentity; token: string; expiresAt: string }> {
+    const configured = process.env.ADMIN_PASSCODE;
+    if (!configured || configured.length < 6) {
+      throw new HttpError(403, "Passcode login is not enabled (set ADMIN_PASSCODE, ≥6 chars, in .env).");
+    }
+    const key = `passcode|${ip}`;
+    const f = this.failures.get(key);
+    const now = Date.now();
+    if (f && now - f.windowStart < FAILURE_WINDOW_MS && f.count >= MAX_FAILURES) {
+      throw new HttpError(429, "Too many failed passcode attempts. Try again in a few minutes.");
+    }
+
+    const provided = typeof passcode === "string" ? passcode : "";
+    if (!this.constantTimeEquals(provided, configured)) {
+      const cur = f && now - f.windowStart < FAILURE_WINDOW_MS ? f : { count: 0, windowStart: now };
+      cur.count += 1;
+      this.failures.set(key, cur);
+      throw new HttpError(401, "Invalid passcode.");
+    }
+    this.failures.delete(key);
+
+    const ownerUser = process.env.OWNER_USER || "owner";
+    const account = await this.ds.getRepository(Account).findOne({ where: { username: ownerUser } });
+    if (!account) {
+      throw new HttpError(500, `Owner account "${ownerUser}" not found — cannot complete passcode login.`);
+    }
+    const identity: SessionIdentity = { accountId: account.id, username: account.username };
+    const token = jwt.sign({ sub: account.id, username: account.username }, secret(), { algorithm: "HS256", expiresIn: TOKEN_TTL_SECONDS });
+    return { identity, token, expiresAt: new Date(now + TOKEN_TTL_SECONDS * 1000).toISOString() };
+  }
+
+  /** Length-independent constant-time comparison (avoids leaking length via timing). */
+  private constantTimeEquals(a: string, b: string): boolean {
+    const ab = Buffer.from(a, "utf8");
+    const bb = Buffer.from(b, "utf8");
+    // Compare fixed-size digests so unequal lengths don't early-return.
+    const ah = createHash("sha256").update(ab).digest();
+    const bh = createHash("sha256").update(bb).digest();
+    return timingSafeEqual(ah, bh) && ab.length === bb.length;
   }
 
   verifyToken(token: string): SessionIdentity | null {

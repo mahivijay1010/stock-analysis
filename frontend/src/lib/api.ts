@@ -218,6 +218,12 @@ export async function login(req: LoginRequest): Promise<AuthAccount> {
   return readAccount(data);
 }
 
+/** POST /api/auth/passcode — admin fast-path: a single passcode logs in as the owner. */
+export async function loginWithPasscode(passcode: string): Promise<AuthAccount> {
+  const data = await post<unknown>('/api/auth/passcode', { passcode });
+  return readAccount(data);
+}
+
 /** POST /api/auth/logout */
 export function logout(): Promise<unknown> {
   return post<unknown>('/api/auth/logout', {});
