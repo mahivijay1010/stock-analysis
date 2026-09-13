@@ -62,6 +62,8 @@ export { DecisionSnapshot } from "./DecisionSnapshot";
 
 // Realtime V1 — market-data provenance (scraped/polled readings; live panel only)
 export { MarketSourceSnapshot } from "./MarketSourceSnapshot";
+// Realtime V1 — append-only live prediction history + decision events
+export { LivePredictionRevision, LiveDecisionEvent } from "./LiveHistory";
 
 // Phase D — experiment registry (spec §8)
 export { ExperimentRun } from "./ExperimentRun";

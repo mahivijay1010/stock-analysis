@@ -474,3 +474,48 @@ ranker/gate already treat as no-new-entry.
   10-minute scheduler that: scrape → validate → StateDelta → revision →
   materiality→AI (grounded) → gate (capped by mode) → seal DecisionSnapshot →
   Opportunity/Actionable rank, all in REALTIME_SHADOW.
+
+---
+
+## Realtime V1 — live history + 10-minute orchestrator + scraped source (2026-09-13)
+
+Built the keystone of the realtime agent (reviewer priorities 1/2/3). **527 tests
+/ 45 suites green; tsc clean; migrations applied.**
+
+- **Append-only live history** (`LivePredictionRevision`, `LiveDecisionEvent` +
+  migration). Every checkpoint writes a NEW revision (never an update); a
+  transition writes an event with its trigger + grounded evidence ids. Both
+  tables carry a `BEFORE UPDATE OR DELETE` trigger (same admin-GUC override as
+  decision_snapshots) — this prospective dataset is immutable. A unique key
+  `(ticker, evaluated_at, model, feature, policy)` makes a re-run idempotent.
+- **LiveEvaluationOrchestrator** (`liveOrchestrator.ts`) — the 10-minute cycle,
+  coordination only, all analytics + persistence injected (deterministic, unit-
+  tested with a fake provider):
+  * market-closed / empty-universe → honest skip;
+  * NO silent partial universe — a stock with UNAVAILABLE data is a recorded
+    failure, `universeCoverage` is exposed, and the cycle is flagged
+    `lowConfidence` below the threshold (never ranks 140/151 as the whole market);
+  * ranking computed BEFORE persistence so each append-only revision carries its
+    rank; the mode ceiling caps the persisted gate (a SCRAPED_SNAPSHOT BUY ⇒ WAIT);
+  * material change fires the (grounded, cap-only) AI hook; an assessment change
+    writes a LiveDecisionEvent; revisions chain via previousRevisionId;
+  * previous checkpoint held in memory drives the StateDelta — on restart the
+    first cycle has null deltas (honest, not fabricated).
+- **ScrapedPriceSource** (`scrapedPriceSource.ts`) — generic, config-driven
+  (URL builder + CSS selectors), injected `httpGet`, so it is vendor-agnostic
+  and fixture-tested. `parseScrapedNumber` strips ₹/comma/% and returns null on
+  non-numbers (no `Number("")===0` trap; a missing selector ⇒ null ⇒ PARSER_ERROR
+  downstream, never a fake 0).
+
+Also fixed a live-ops issue: the passcode login was returning 403 only because
+the dev server (ts-node-dev, respawns on .ts not .env) predated the ADMIN_PASSCODE
+line. Verified end-to-end: wrong code ⇒ 401, correct code ⇒ 200 owner session.
+
+### Still to wire (owner-supplied / next)
+- Concrete selector config for a chosen personal-use price site (owner supplies
+  URL + selectors to ScrapedPriceSource; Screener stays for fundamentals).
+- The context builder that fuses a scraped snapshot with backend-held daily bars/
+  forecast/setup/EV into a full LiveStockContext, and the real repositories that
+  back the orchestrator's saveRevision/saveEvent/getPreviousRevisionId.
+- The cron wiring (10-min schedule with holiday/session calendar) and the
+  REALTIME_SHADOW dashboard + Realtime-vs-EOD evaluator.
