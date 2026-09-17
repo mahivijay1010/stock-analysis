@@ -15,7 +15,14 @@ the source at the cited `file:line`. Where this review disagrees with
   batch — still open. The setup-expectancy study's rewritten pipeline needs a
   live Postgres + Yahoo fetch to actually re-run in production; that could
   not be done from this checkout.
-- The continuous-learning loop is a separate, not-yet-started follow-up.
+- Batch 3 (continuous learning) — ✅ done, branch `feature/continuous-learning`
+  (ef33011; branched from batch 2's tip, so it contains all three batches'
+  changes), not yet merged. Scoped deliberately: it schedules the existing,
+  already-correct calibration/ensemble/experiment machinery (previously only
+  ever run manually) on a weekly cron job, rather than adding new online
+  retraining of the deterministic engine's hardcoded weights — see the new
+  §12 below for the full writeup and why that scoping is the honest choice
+  here, not a shortcut.
 
 **Bottom line.** The *containment* architecture — the machinery that stops the
 system making a confident claim it has not earned — is real, well built, and
@@ -556,6 +563,70 @@ that are more confident than the data supports.
 honest; the measurements they are guarding are not yet strong enough to justify
 opening the gate — and the highest-value work is fixing the measurement layer,
 not the guardrails.
+
+---
+
+## 12. Continuous learning (batch 3, `feature/continuous-learning`, commit ef33011)
+
+The user asked whether this could be made to "continuously learn from its
+wrong predictions." The honest answer, and what was actually built:
+
+**What this does NOT do, and why not.** It does not retrain
+`quant/engine.ts`'s hardcoded 8-signal weight vector or its `MU_SHRINK`/
+`TILT_SCALE` constants online. Reweighting those against recent performance
+would reopen exactly the in-sample-overfitting failure mode batch 2 spent its
+effort fixing for the short-term setup study (§4.2) — a rule that adapts to
+its own recent errors without a held-out test segment just learns to fit
+noise faster. Direction accuracy staying near a coin flip (§ "Measured truth"
+in `ARCHITECTURE.md`) is very unlikely to change by reweighting a
+hand-designed technical-signal blend; if there is a real, learnable edge in
+this data, finding it needs a proper ML pipeline with the same purge/embargo
+discipline `research/harness.ts` already has — a materially larger project
+than "wire up learning," and one this batch did not attempt.
+
+**What this does do.** The codebase already contained the right machinery for
+the part of "learning" that *is* honestly achievable — recalibrating
+confidence as evidence accumulates — but it only ever ran when a developer
+remembered to invoke `scripts/calibrationRun.ts` by hand:
+
+- `research/calibrationEnsembleRun.ts` (extracted from that script, which is
+  now a thin CLI wrapper around it): re-runs the purged walk-forward harness,
+  fits Platt/isotonic/beta calibrators on an early validation slice, selects
+  the best on a later held-out slice, and reports the final effect on an
+  untouched test segment — unchanged, already-correct discipline. Persists an
+  append-only `ExperimentRun` + `CalibratorRecord` rows, including
+  *rejections* (a calibrator that fails to beat the raw probability
+  out-of-sample is recorded as rejected, not dropped).
+- `ResearchJobsService.weeklyCalibrationRefresh()` additionally re-runs
+  `experiments/runner.ts`'s `runLiveBaselineExperiment` — the champion-vs-
+  baselines comparison that reads newly-resolved `PredictionLog` rows —
+  previously reachable only via an admin POST endpoint, never scheduled.
+- A new `CronService` job, `weekly-calibration-refresh` (06:00 IST Sunday, no
+  trading day), runs both. The composition that isolates one sub-job's
+  failure from the other is a pure, injectable function
+  (`runWeeklyCalibrationRefresh`) with 5 unit tests.
+
+**Why this is safe to run unattended.** Neither sub-job can promote or raise
+anything beyond what its own logic already independently verifies. A
+calibrator only takes effect once `selectCalibrator` has confirmed it beats
+baselines on data it was never fit or selected on, and
+`calibratorRegistry.getLatestPromotedCalibrator` re-checks the `promoted`
+flag at read time — the cron job automates *when* that check runs, not *what*
+it may conclude. `runLiveBaselineExperiment`'s own positive-result branch
+explicitly states it "still requires effective-sample and stability review
+before any promotion." No cron job constructs a `DecisionSnapshot` or writes
+`decisionStatus` — that remains sealed to `decision/policy.ts` alone (§2.3,
+unchanged by any of the three batches).
+
+**What this means in practice.** As independent evidence accumulates week
+over week, the product's "Directional probability unavailable — insufficient
+calibrated evidence" message (§3, item 6) will now update itself
+automatically once (and only once) a calibrator genuinely earns promotion on
+held-out data — rather than waiting indefinitely for someone to remember to
+re-run a script. It also means the experiment registry (`GET
+/api/experiments/latest`) stays current without manual action. It does not,
+and should not, change how skeptical the system is about whether a real
+directional edge exists at all.
 
 ---
 
