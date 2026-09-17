@@ -68,11 +68,11 @@ describe("calculateRoce (Phase 10)", () => {
     expect(calculateRoce(fy({ profitBeforeTax: 90, financeCosts: 10 }), prev).status).toBe("NOT_AVAILABLE");
   });
 
-  test("not meaningful for banks", () => {
+  test("not meaningful for banks/NBFCs/insurers", () => {
     const cur = fy({ profitBeforeTax: 90, financeCosts: 10, totalAssets: 1100, currentLiabilities: 300 });
-    const r = calculateRoce(cur, prev, "BANK");
+    const r = calculateRoce(cur, prev, "FINANCIAL");
     expect(r.status).toBe("NOT_AVAILABLE");
-    expect(r.methodology).toBe("BANK_NOT_MEANINGFUL");
+    expect(r.methodology).toBe("FINANCIAL_NOT_MEANINGFUL");
   });
 });
 
@@ -84,10 +84,10 @@ describe("calculateWorkingCapital (Phase 10)", () => {
     expect(r.inputs.wc_days_of_revenue).toBeCloseTo(45, 0);
   });
 
-  test("refuses when balance-sheet inputs are missing; not meaningful for banks", () => {
+  test("refuses when balance-sheet inputs are missing; not meaningful for banks/NBFCs/insurers", () => {
     expect(calculateWorkingCapital(fy({ currentAssets: 500 })).status).toBe("NOT_AVAILABLE");
-    expect(calculateWorkingCapital(fy({ currentAssets: 500, currentLiabilities: 320 }), "BANK").methodology).toBe(
-      "BANK_NOT_MEANINGFUL"
+    expect(calculateWorkingCapital(fy({ currentAssets: 500, currentLiabilities: 320 }), "FINANCIAL").methodology).toBe(
+      "FINANCIAL_NOT_MEANINGFUL"
     );
   });
 });

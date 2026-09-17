@@ -11,6 +11,18 @@ const round = (v: number, digits = 4): number => Number(v.toFixed(digits));
 const finite = (v: number | null | undefined): v is number =>
   typeof v === "number" && Number.isFinite(v);
 
+/**
+ * FINANCIAL covers banks, NBFCs and insurers: their balance sheets and cash
+ * flow statements are not comparable to an industrial company's (deposits are
+ * both a liability and the "product"; a lender's CFO is dominated by loan
+ * book movements, not operating cash generation). Every ratio below that is
+ * meaningless for a bank is equally meaningless for an NBFC/insurer, so both
+ * get the same refusal — never a hardcoded ticker list (see
+ * classifyIndustryKind in IntelligenceService.ts, which classifies by the
+ * universe's own sector field).
+ */
+export type IndustryKind = "FINANCIAL" | "NON_FINANCIAL";
+
 function unavailable(
   metric: string,
   period: string,
@@ -82,8 +94,20 @@ export function calculateRoe(
 }
 
 /** CFO - positive cash paid for PPE/intangibles. CapEx sign is normalized here. */
-export function calculateFcf(current: AnnualFinancials): MetricResult {
+export function calculateFcf(
+  current: AnnualFinancials,
+  industryKind: IndustryKind = "NON_FINANCIAL"
+): MetricResult {
   const formula = "CFO - abs(CapEx cash paid)";
+  if (industryKind === "FINANCIAL") {
+    return unavailable(
+      "fcf",
+      current.period,
+      formula,
+      "CFO-CapEx free cash flow is not meaningful for a bank/NBFC/insurer — CFO is dominated by loan-book and deposit movements, not operating cash generation.",
+      "FINANCIAL_NOT_MEANINGFUL"
+    );
+  }
   if (!finite(current.cfo) || !finite(current.capex)) {
     return unavailable("fcf", current.period, formula, "Cash from operations and CapEx are required.");
   }
@@ -101,16 +125,16 @@ export function calculateFcf(current: AnnualFinancials): MetricResult {
 
 export function calculateCurrentRatio(
   current: AnnualFinancials,
-  industryKind: "BANK" | "NON_FINANCIAL" = "NON_FINANCIAL"
+  industryKind: IndustryKind = "NON_FINANCIAL"
 ): MetricResult {
   const formula = "Current assets / current liabilities";
-  if (industryKind === "BANK") {
+  if (industryKind === "FINANCIAL") {
     return unavailable(
       "current_ratio",
       current.period,
       formula,
-      "Current ratio is not comparable for a bank balance sheet.",
-      "BANK_NOT_MEANINGFUL"
+      "Current ratio is not comparable for a bank/NBFC/insurer balance sheet.",
+      "FINANCIAL_NOT_MEANINGFUL"
     );
   }
   if (!finite(current.currentAssets) || !finite(current.currentLiabilities) || current.currentLiabilities === 0) {
@@ -131,16 +155,16 @@ export function calculateCurrentRatio(
 export function calculateRoic(
   current: AnnualFinancials,
   previous: AnnualFinancials | null,
-  industryKind: "BANK" | "NON_FINANCIAL" = "NON_FINANCIAL"
+  industryKind: IndustryKind = "NON_FINANCIAL"
 ): MetricResult {
   const formula = "EBIT * (1 - effective tax rate) / average(equity + debt - cash) * 100";
-  if (industryKind === "BANK") {
+  if (industryKind === "FINANCIAL") {
     return unavailable(
       "roic",
       current.period,
       formula,
-      "Industrial invested-capital ROIC is not valid for banks.",
-      "BANK_REQUIRES_SPECIALIST_ROIC"
+      "Industrial invested-capital ROIC is not valid for a bank/NBFC/insurer.",
+      "FINANCIAL_REQUIRES_SPECIALIST_ROIC"
     );
   }
   const ebit = finite(current.ebit)
@@ -150,6 +174,16 @@ export function calculateRoic(
       : null;
   if (!previous || !finite(ebit) || !finite(current.profitBeforeTax) || !finite(current.taxExpense)) {
     return unavailable("roic", current.period, formula, "EBIT, PBT, tax and opening invested capital are required.");
+  }
+  // Debt is only "known" from grossDebt, or from the sum of borrowing
+  // sub-concepts when AT LEAST ONE of them is actually reported. If both
+  // grossDebt and every borrowing sub-concept are absent, debt is UNKNOWN —
+  // never silently imputed as 0 (a missing filing line is not the same as a
+  // genuinely debt-free balance sheet, and defaulting to 0 here inflates ROIC).
+  const debtNowKnown = finite(current.grossDebt) || finite(current.borrowingsCurrent) || finite(current.borrowingsNoncurrent);
+  const debtPrevKnown = finite(previous.grossDebt) || finite(previous.borrowingsCurrent) || finite(previous.borrowingsNoncurrent);
+  if (!debtNowKnown || !debtPrevKnown) {
+    return unavailable("roic", current.period, formula, "Debt (gross debt, or at least one borrowing sub-concept) is required for both periods — a missing filing line is not assumed to mean zero debt.");
   }
   const debtNow = finite(current.grossDebt)
     ? current.grossDebt
@@ -187,11 +221,11 @@ export function calculateRoic(
 export function calculateRoce(
   current: AnnualFinancials,
   previous: AnnualFinancials | null,
-  industryKind: "BANK" | "NON_FINANCIAL" = "NON_FINANCIAL"
+  industryKind: IndustryKind = "NON_FINANCIAL"
 ): MetricResult {
   const formula = "EBIT / average(total assets - current liabilities) * 100";
-  if (industryKind === "BANK") {
-    return unavailable("roce", current.period, formula, "Capital-employed ROCE is not valid for banks.", "BANK_NOT_MEANINGFUL");
+  if (industryKind === "FINANCIAL") {
+    return unavailable("roce", current.period, formula, "Capital-employed ROCE is not valid for a bank/NBFC/insurer.", "FINANCIAL_NOT_MEANINGFUL");
   }
   const ebit = finite(current.ebit)
     ? current.ebit
@@ -230,11 +264,11 @@ export function calculateRoce(
  */
 export function calculateWorkingCapital(
   current: AnnualFinancials,
-  industryKind: "BANK" | "NON_FINANCIAL" = "NON_FINANCIAL"
+  industryKind: IndustryKind = "NON_FINANCIAL"
 ): MetricResult {
   const formula = "Current assets - current liabilities";
-  if (industryKind === "BANK") {
-    return unavailable("working_capital", current.period, formula, "Working capital is not comparable for a bank balance sheet.", "BANK_NOT_MEANINGFUL");
+  if (industryKind === "FINANCIAL") {
+    return unavailable("working_capital", current.period, formula, "Working capital is not comparable for a bank/NBFC/insurer balance sheet.", "FINANCIAL_NOT_MEANINGFUL");
   }
   if (!finite(current.currentAssets) || !finite(current.currentLiabilities)) {
     return unavailable("working_capital", current.period, formula, "Current assets and current liabilities are required.");

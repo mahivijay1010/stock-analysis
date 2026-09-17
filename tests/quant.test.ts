@@ -422,6 +422,55 @@ describe('backtest.backtestBars', () => {
     expect(s1.actualPct).toBeCloseTo(expected, 4);
   });
 
+  // Regression for docs/system-trust-review.md §5.2: predictions are built by
+  // analyzeBars on the ADJUSTED close series (rescaled to today's price
+  // units), but actualPct used to be graded against the RAW close. A split
+  // inside the horizon window then injected a spurious "actual" move the
+  // model was never scored fairly against.
+  test('actualPct is graded on the adjusted-close basis, not the raw close, across a split', () => {
+    // A 2-for-1 split effective at index 266: the RAW close/open/high/low
+    // halve from that bar onward (as a real split feed reports it), while
+    // adjustedClose is back-adjusted to stay continuous with the pre-split
+    // trend (the true return series) — exactly what Yahoo's adjclose does.
+    const SPLIT_AT = 266;
+    const splitBars: Bar[] = bars.slice(0, 272).map((b, i) => {
+      const factor = i >= SPLIT_AT ? 0.5 : 1;
+      return {
+        ...b,
+        open: b.open * factor,
+        high: b.high * factor,
+        low: b.low * factor,
+        close: b.close * factor,
+        adjustedClose: b.close, // continuous, unaffected by the raw-close split
+      };
+    });
+
+    const result = backtestBars('TEST.NS', splitBars, { testDays: 10 });
+    const T = 265; // the day BEFORE the split — horizon 1 spans the split
+    const s1 = result.samples.find((s) => s.date === splitBars[T].date && s.horizonDays === 1)!;
+    expect(s1).toBeDefined();
+
+    // The RAW close ratio is corrupted by the split (halves overnight) —
+    // this is the bug: it would show a ~-50% "actual" move that never happened.
+    const rawPct = (splitBars[T + 1].close / splitBars[T].close - 1) * 100;
+    expect(rawPct).toBeLessThan(-40);
+
+    // The fix: actualPct must come from the adjusted series, which is
+    // continuous across the split and shows the true small daily move.
+    const adjustedPct = (splitBars[T + 1].adjustedClose! / splitBars[T].adjustedClose! - 1) * 100;
+    expect(s1.actualPct).toBeCloseTo(adjustedPct, 4);
+    expect(s1.actualPct).not.toBeCloseTo(rawPct, 0);
+  });
+
+  test('a bar with a missing/invalid adjustedClose falls back to its raw close (no basis mismatch when unadjusted data is genuinely absent)', () => {
+    const prefix = bars.slice(0, 272).map((b) => ({ ...b, adjustedClose: null }));
+    const result = backtestBars('TEST.NS', prefix, { testDays: 10 });
+    const T = 265;
+    const s1 = result.samples.find((s) => s.date === prefix[T].date && s.horizonDays === 1)!;
+    const expected = (prefix[T + 1].close / prefix[T].close - 1) * 100;
+    expect(s1.actualPct).toBeCloseTo(expected, 4);
+  });
+
   test('ZERO LOOKAHEAD: backtest prediction at T equals analyzeBars on the truncated prefix', () => {
     const prefix = bars.slice(0, 272);
     const result = backtestBars('TEST.NS', prefix, { testDays: 10 });

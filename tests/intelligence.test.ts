@@ -30,6 +30,45 @@ describe("provenance-first calculations", () => {
     expect(calculateRoic(current, previous).value).toBeCloseTo(21.9512);
   });
 
+  // Regression for docs/system-trust-review.md §6: when grossDebt AND both
+  // borrowing sub-concepts are absent, debt used to be silently imputed as 0
+  // (via `(borrowingsCurrent ?? 0) + (borrowingsNoncurrent ?? 0)`), inflating
+  // ROIC for a company whose debt is simply unreported — not one that is
+  // genuinely debt-free. calculateRoic must now refuse instead.
+  it("refuses ROIC when debt is entirely unreported, rather than imputing zero debt", () => {
+    const noDebtData = annual("FY2026", "2026-03-31", {
+      ebit: 180, profitBeforeTax: 160, taxExpense: 40, equity: 600, cash: 50,
+      // grossDebt, borrowingsCurrent, borrowingsNoncurrent all left null
+    });
+    const prevNoDebtData = annual("FY2025", "2025-03-31", { equity: 500, cash: 40 });
+    const r = calculateRoic(noDebtData, prevNoDebtData);
+    expect(r.status).toBe("NOT_AVAILABLE");
+    expect(r.value).toBeNull();
+  });
+
+  it("still computes ROIC when debt is known via borrowing sub-concepts (no grossDebt line)", () => {
+    const withSubConcepts = annual("FY2026", "2026-03-31", {
+      ebit: 180, profitBeforeTax: 160, taxExpense: 40, equity: 600, cash: 50,
+      borrowingsCurrent: 30, borrowingsNoncurrent: 70, // sums to the same 100 as `current.grossDebt` above
+    });
+    const prevWithSubConcepts = annual("FY2025", "2025-03-31", {
+      equity: 500, cash: 40, borrowingsCurrent: 40, borrowingsNoncurrent: 80,
+    });
+    const r = calculateRoic(withSubConcepts, prevWithSubConcepts);
+    expect(r.status).toBe("CALCULATED");
+    expect(r.value).toBeCloseTo(21.9512); // same as the grossDebt=100/120 case above
+  });
+
+  it("still computes ROIC when debt is known and genuinely zero (a sub-concept is explicitly 0, not null)", () => {
+    const zeroDebt = annual("FY2026", "2026-03-31", {
+      ebit: 180, profitBeforeTax: 160, taxExpense: 40, equity: 600, cash: 50,
+      borrowingsCurrent: 0, borrowingsNoncurrent: 0,
+    });
+    const prevZeroDebt = annual("FY2025", "2025-03-31", { equity: 500, cash: 40, borrowingsCurrent: 0, borrowingsNoncurrent: 0 });
+    const r = calculateRoic(zeroDebt, prevZeroDebt);
+    expect(r.status).toBe("CALCULATED");
+  });
+
   it("keeps missing inputs unavailable instead of converting them to a failed rule", () => {
     const metric = calculateRoe(current, null);
     expect(metric.status).toBe("NOT_AVAILABLE");
@@ -52,7 +91,9 @@ describe("provenance-first calculations", () => {
   it("returns explicit bear/base/bull DCF and sensitivity assumptions", () => {
     const dcf = calculateDcf({ latestFcf: 100, debt: 20, cash: 10, sharesOutstanding: 10, currentPrice: 100,
       period: "FY2026", sources: [source] });
-    expect(dcf.status).toBe("CALCULATED");
+    // ESTIMATED, not CALCULATED: growth/WACC/terminal-growth are fixed
+    // assumptions, not measured inputs (docs/system-trust-review.md §6).
+    expect(dcf.status).toBe("ESTIMATED");
     expect(dcf.value?.scenarios.map((x) => x.name)).toEqual(["bear", "base", "bull"]);
     expect(dcf.value?.sensitivity.length).toBeGreaterThan(0);
     expect(dcf.value?.scenarios.every((x) => x.assumptions.terminalGrowthPct < x.assumptions.waccPct)).toBe(true);

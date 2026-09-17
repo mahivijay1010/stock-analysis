@@ -1,8 +1,9 @@
 import { createHash } from "crypto";
 import { AppDataSource } from "../../config/database";
+import { NSE_UNIVERSE } from "../../data/nseUniverse";
 import { fundamentalsService } from "../market/FundamentalsService";
 import { marketDataService } from "../market/MarketDataService";
-import { calculateCurrentRatio, calculateFcf, calculateGrowth, calculatePeg, calculateRoce, calculateRoe, calculateRoic, calculateWorkingCapital, evaluateRules } from "./calculations";
+import { calculateCurrentRatio, calculateFcf, calculateGrowth, calculatePeg, calculateRoce, calculateRoe, calculateRoic, calculateWorkingCapital, evaluateRules, IndustryKind } from "./calculations";
 import { calculateDcf } from "./dcf";
 import { extractDocumentEvidence } from "./documentExtraction";
 import { calculateCorrelationMatrix, calculatePortfolioExposure, CorrelationWindow, PortfolioAnalyticsPosition } from "./portfolioAnalytics";
@@ -17,7 +18,39 @@ import { fundamentalsEngine } from "./FundamentalsEngine";
 import { AnnualFinancials, CoverageRow, CrossCheck, DataStatus, FilingDocument, MetricResult, NormalizedFinancialFact, SourceRef } from "./types";
 import { buildAnnualSeries, normalizeXbrl } from "./xbrl";
 
-const BANKS = /^(HDFCBANK|ICICIBANK|AXISBANK|KOTAKBANK|SBIN|INDUSINDBK|FEDERALBNK|BANDHANBNK|IDFCFIRSTB|AUBANK)$/;
+/**
+ * Sector labels in the NSE universe (src/data/nseUniverse.ts) that denote a
+ * bank, NBFC or insurer — the FINANCIAL bucket for calculations.ts's
+ * bank-aware refusals (current ratio, ROIC, ROCE, working capital, FCF, DCF).
+ * This is the PRIMARY classification path.
+ */
+const FINANCIAL_SECTORS = new Set(["Banking", "Financial Services", "Insurance"]);
+
+/**
+ * Fallback name-pattern match, used ONLY when the ticker is not present in
+ * NSE_UNIVERSE (e.g. an ad-hoc /api/intelligence/:ticker call for a name
+ * outside the tracked universe). This is deliberately broader than the old
+ * hardcoded 10-ticker bank list — it also catches common NBFC/insurer/AMC
+ * naming conventions — but it is a safety net, not the primary mechanism, and
+ * it can still be wrong for an unfamiliar name. Extending NSE_UNIVERSE's
+ * sector field is the correct fix for a ticker this misses.
+ */
+const FINANCIAL_NAME_FALLBACK =
+  /BANK|BNK$|^(SBIN|SBICARD|PNB|CANBK|UNIONBANK|YESBANK|IDBI)$|FIN(SERV|ANCE|VEST)?$|NBFC|HOUSING\.?FIN|HFC$|LIFE$|INSU(RANCE)?$|CARD$|AMC$|CAPITAL$/i;
+
+/** Classify a ticker as FINANCIAL (bank/NBFC/insurer) or NON_FINANCIAL, by
+ *  the universe's own sector field first, falling back to a name pattern
+ *  only for tickers outside the tracked universe. Never a hardcoded ticker
+ *  list as the primary path (that missed 24/34 financial-sector names in the
+ *  151-stock universe — see docs/system-trust-review.md §5.1). */
+export function classifyIndustryKind(ticker: string): IndustryKind {
+  const symbol = ticker.replace(/\.NS$/i, "").toUpperCase();
+  const universeEntry = NSE_UNIVERSE.find((s) => s.ticker.replace(/\.NS$/i, "").toUpperCase() === symbol);
+  if (universeEntry) {
+    return FINANCIAL_SECTORS.has(universeEntry.sector) ? "FINANCIAL" : "NON_FINANCIAL";
+  }
+  return FINANCIAL_NAME_FALLBACK.test(symbol) ? "FINANCIAL" : "NON_FINANCIAL";
+}
 
 export interface RefreshOptions {
   years?: number;
@@ -83,9 +116,9 @@ export class IntelligenceService {
     const consolidation = preferred.length > 0 ? "CONSOLIDATED" : series.length > 0 ? "STANDALONE" : "UNKNOWN";
     const latest = series[0];
     const previous = series[1] ?? null;
-    const kind = BANKS.test(ticker) ? "BANK" : "NON_FINANCIAL";
+    const kind = classifyIndustryKind(ticker);
     const coreMetrics: MetricResult<unknown>[] = latest ? [
-      calculateRoe(latest, previous), calculateRoic(latest, previous, kind), calculateFcf(latest),
+      calculateRoe(latest, previous), calculateRoic(latest, previous, kind), calculateFcf(latest, kind),
       calculateCurrentRatio(latest, kind), calculateGrowth(series),
       calculateRoce(latest, previous, kind), calculateWorkingCapital(latest, kind),
     ] : [
@@ -109,8 +142,8 @@ export class IntelligenceService {
 
     const fcf = coreMetrics.find((m) => m.metric === "fcf");
     const shares = fundamentals?.marketCap && quote?.price ? fundamentals.marketCap / quote.price : null;
-    const dcf = kind === "BANK"
-      ? unavailable("dcf", latest?.period ?? "UNKNOWN", "FCFF DCF is not valid for a bank; use a bank-specific excess-return model.", "BANK_NOT_MEANINGFUL")
+    const dcf = kind === "FINANCIAL"
+      ? unavailable("dcf", latest?.period ?? "UNKNOWN", "FCFF DCF is not valid for a bank/NBFC/insurer; use a bank-specific excess-return model.", "FINANCIAL_NOT_MEANINGFUL")
       : calculateDcf(latest && scalar(fcf!) != null && latest.grossDebt != null && latest.cash != null && shares
         ? { latestFcf: scalar(fcf!)!, debt: latest.grossDebt, cash: latest.cash, sharesOutstanding: shares,
           currentPrice: quote?.price ?? null, period: latest.period,

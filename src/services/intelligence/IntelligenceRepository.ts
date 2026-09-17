@@ -26,7 +26,7 @@ export interface StoredTickerIntelligence {
   roic: number | null;
   fcf: number | null;
   currentRatio: number | null;
-  /** True when the stored current_ratio row is BANK_NOT_MEANINGFUL. */
+  /** True when the stored current_ratio row is FINANCIAL_NOT_MEANINGFUL. */
   currentRatioNotMeaningful: boolean;
   peg: number | null;
   /** Latest annual revenue fact (CONSOLIDATED preferred) — for FCF margin. */
@@ -212,13 +212,16 @@ export class IntelligenceRepository {
           break;
         case "current_ratio":
           entry.currentRatio = calculatedValue;
-          entry.currentRatioNotMeaningful = row.methodology === "BANK_NOT_MEANINGFUL";
+          entry.currentRatioNotMeaningful = row.methodology === "FINANCIAL_NOT_MEANINGFUL";
           break;
         case "peg":
           entry.peg = calculatedValue;
           break;
         case "dcf": {
-          if (row.status !== "CALCULATED" || row.value_json == null) break;
+          // DCF is intentionally stored as ESTIMATED, not CALCULATED — every
+          // driver (growth/WACC/terminal growth) is an assumption, not a
+          // measured input (docs/system-trust-review.md §6).
+          if (row.status !== "ESTIMATED" || row.value_json == null) break;
           const parsed =
             typeof row.value_json === "string" ? safeJson(row.value_json) : row.value_json;
           const scenarios = (parsed as { scenarios?: Array<Record<string, unknown>> })?.scenarios;

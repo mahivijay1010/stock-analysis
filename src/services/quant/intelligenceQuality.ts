@@ -38,8 +38,9 @@ export interface IntelligenceQualityInputs {
   /** Current ratio (current assets / current liabilities). */
   currentRatio: number | null;
   /**
-   * True when the stored current_ratio row is BANK_NOT_MEANINGFUL — the CR
-   * signal is then EXCLUDED from the score (bank-aware), not "missing".
+   * True when the stored current_ratio row is FINANCIAL_NOT_MEANINGFUL — the
+   * CR signal is then EXCLUDED from the score (bank/NBFC/insurer-aware), not
+   * "missing".
    */
   currentRatioNotMeaningful?: boolean;
   /** PEG (trailing PE / historical EPS growth). */

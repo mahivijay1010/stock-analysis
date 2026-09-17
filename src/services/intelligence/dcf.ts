@@ -110,7 +110,13 @@ export function calculateDcf(
       },
       methodology: "FCFF_SCENARIO_DCF",
       sources: inputs.sources ?? [],
-      status: "CALCULATED",
+      // ESTIMATED, not CALCULATED: growth/WACC/terminal-growth are fixed
+      // assumptions (DEFAULT_DCF_SCENARIOS above), identical for every
+      // ticker — not measured inputs, even though FCF/debt/cash/shares are
+      // real filing-derived numbers. CALCULATED would imply the whole output
+      // is as sourced as an XBRL ratio, which it is not
+      // (docs/system-trust-review.md §6).
+      status: "ESTIMATED",
       confidence: "MEDIUM",
       reason: "DCF is assumption-sensitive; bear/base/bull outputs are estimates, not objective truth.",
       calculatedAt: new Date().toISOString(),

@@ -14,6 +14,21 @@ const NEAR_ZERO_ACTUAL_PCT = 0.05;
 const NEAR_ZERO_PREDICTED_PCT = 0.3;
 const MAX_SAMPLES = 50;
 
+/**
+ * Same one-line adjustment policy as market/canonical.ts's analysisCloses —
+ * duplicated here (not imported) because this module is pure and must not
+ * depend on src/services/market. `engine.ts` builds its return distribution
+ * and predictions on this same adjusted-close basis (rescaled to today's
+ * price units); grading actualPct against the RAW close instead (as this
+ * function previously did) let a split or large dividend inside the horizon
+ * window inject a spurious "actual" move the model was never scored fairly
+ * against (docs/system-trust-review.md §5.2).
+ */
+function analysisClose(bar: Bar): number {
+  const adj = bar.adjustedClose;
+  return adj != null && Number.isFinite(adj) && adj > 0 ? adj : bar.close;
+}
+
 function round(x: number, dp: number): number {
   const f = Math.pow(10, dp);
   const r = Math.round(x * f) / f;
@@ -110,7 +125,7 @@ export function backtestBars(
   for (let T = startT; T <= n - 2; T++) {
     // ZERO LOOKAHEAD: the analysis at day T sees bars[0..T] only.
     const analysis = analyzeBars(bars.slice(0, T + 1));
-    const baseClose = bars[T].close;
+    const baseClose = analysisClose(bars[T]);
     if (!(baseClose > 0)) continue;
 
     for (const pred of analysis.predictions) {
@@ -118,7 +133,7 @@ export function backtestBars(
       const futureIdx = T + offset;
       if (futureIdx >= n) continue; // horizon has not matured within the data
 
-      const actualPct = round((bars[futureIdx].close / baseClose - 1) * 100, 4);
+      const actualPct = round((analysisClose(bars[futureIdx]) / baseClose - 1) * 100, 4);
       const predictedPct = pred.expectedReturnPct;
       const correct = isDirectionHit(predictedPct, actualPct);
       const withinBand = actualPct >= pred.low80Pct && actualPct <= pred.high80Pct;
