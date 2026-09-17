@@ -42,38 +42,52 @@ const PATHS = 3000;
 const SEED = 20260908;
 
 /**
- * @param dailyReturns  the stock's own recent daily returns (fractions)
- * @param entry/stop/target1  price levels
- * @param maxHoldDays  time stop in trading days
- * @param costPct + slippagePct  round-trip drag applied to every path
+ * Outer block-bootstrap: resamples of the daily-return pool re-run through
+ * the same inner Monte Carlo, to measure genuine sampling uncertainty from
+ * limited history (see BLOCK_BOOTSTRAP_B/BLOCK_BOOTSTRAP_PATHS/MEAN_BLOCK_LEN
+ * below for the accuracy/cost tradeoff this makes).
  */
-export function computeEvEvidence(opts: {
-  dailyReturns: number[];
-  entry: number;
-  stop: number;
-  target1: number;
-  maxHoldDays: number;
-  costPct: number;
-  slippagePct: number;
-}): EvEvidence | null {
-  const { entry, stop, target1, maxHoldDays } = opts;
-  const pool = opts.dailyReturns.filter((r) => Number.isFinite(r) && r > -1).slice(-260);
-  if (pool.length < 60 || !(entry > 0) || !(stop > 0) || !(target1 > entry) || !(stop < entry)) return null;
+const BLOCK_BOOTSTRAP_B = 120; // outer resamples of history — enough for stable 10th/90th percentiles
+const BLOCK_BOOTSTRAP_PATHS = 250; // inner MC paths PER outer resample — kept high enough that MC noise on each draw's mean stays small relative to genuine across-block variance (reducing this further adds pure simulator noise on top of the resampling uncertainty we're trying to measure, the opposite direction from the bug this replaces)
+const MEAN_BLOCK_LEN = 10; // stationary-bootstrap mean block length (days) — same convention as quant/montecarlo.ts's simulateDailyQuantilesBlock
 
-  const drag = opts.costPct + opts.slippagePct; // % subtracted from every realized outcome
+interface BracketWalkResult {
+  retPct: Float64Array;
+  rMult: Float64Array;
+  mfeR: Float64Array;
+  maeR: Float64Array;
+  targetFirst: number;
+  stopFirst: number;
+  timeout: number;
+}
+
+/**
+ * Runs `paths` bracket-walk simulations against a fixed return pool (sampled
+ * i.i.d. from that pool — the pool itself carries the autocorrelation
+ * structure when it was produced by a block bootstrap upstream). Pure,
+ * deterministic given `rand`.
+ */
+function simulateBracketWalk(
+  pool: number[],
+  paths: number,
+  entry: number,
+  stop: number,
+  target1: number,
+  maxHoldDays: number,
+  drag: number,
+  rand: () => number
+): BracketWalkResult {
   const riskPerShare = entry - stop;
-  const rand = mulberry32(SEED);
   const n = pool.length;
-
-  const retPct: number[] = new Array(PATHS);
-  const rMult: number[] = new Array(PATHS);
-  const mfeR: number[] = new Array(PATHS);
-  const maeR: number[] = new Array(PATHS);
+  const retPct = new Float64Array(paths);
+  const rMult = new Float64Array(paths);
+  const mfeR = new Float64Array(paths);
+  const maeR = new Float64Array(paths);
   let targetFirst = 0;
   let stopFirst = 0;
   let timeout = 0;
 
-  for (let p = 0; p < PATHS; p++) {
+  for (let p = 0; p < paths; p++) {
     let price = entry;
     let bestR = 0;
     let worstR = 0;
@@ -102,33 +116,101 @@ export function computeEvEvidence(opts: {
       timeout++;
     }
     const grossPct = ((outcomePrice - entry) / entry) * 100;
-    const netPct = grossPct - drag;
-    retPct[p] = netPct;
+    retPct[p] = grossPct - drag;
     rMult[p] = (outcomePrice - entry) / riskPerShare;
     mfeR[p] = bestR;
     maeR[p] = worstR;
   }
 
+  return { retPct, rMult, mfeR, maeR, targetFirst, stopFirst, timeout };
+}
+
+/**
+ * Stationary block bootstrap of a return pool (same technique as
+ * quant/montecarlo.ts's simulateDailyQuantilesBlock, applied to the SOURCE
+ * pool rather than to simulated terminal outcomes): walks the pool with
+ * geometric block lengths (mean `meanBlockLen`, wrapping), producing a
+ * resampled pool of the same size that partially preserves autocorrelation
+ * and vol clustering that i.i.d. resampling would destroy.
+ */
+function stationaryBlockResample(pool: number[], meanBlockLen: number, rand: () => number): number[] {
+  const n = pool.length;
+  const pNew = 1 / Math.max(1, meanBlockLen);
+  const out: number[] = new Array(n);
+  let idx = Math.floor(rand() * n);
+  for (let i = 0; i < n; i++) {
+    out[i] = pool[idx];
+    idx = rand() < pNew ? Math.floor(rand() * n) : (idx + 1) % n;
+  }
+  return out;
+}
+
+/**
+ * @param dailyReturns  the stock's own recent daily returns (fractions)
+ * @param entry/stop/target1  price levels
+ * @param maxHoldDays  time stop in trading days
+ * @param costPct + slippagePct  round-trip drag applied to every path
+ */
+export function computeEvEvidence(opts: {
+  dailyReturns: number[];
+  entry: number;
+  stop: number;
+  target1: number;
+  maxHoldDays: number;
+  costPct: number;
+  slippagePct: number;
+}): EvEvidence | null {
+  const { entry, stop, target1, maxHoldDays } = opts;
+  const pool = opts.dailyReturns.filter((r) => Number.isFinite(r) && r > -1).slice(-260);
+  if (pool.length < 60 || !(entry > 0) || !(stop > 0) || !(target1 > entry) || !(stop < entry)) return null;
+
+  const drag = opts.costPct + opts.slippagePct; // % subtracted from every realized outcome
+  const rand = mulberry32(SEED);
+
+  // ── Point estimate: PATHS=3000 i.i.d. draws from the ACTUAL history. This
+  //    is unchanged from before — it is the trade's own expected outcome, not
+  //    the uncertainty about it. ──────────────────────────────────────────
+  const point = simulateBracketWalk(pool, PATHS, entry, stop, target1, maxHoldDays, drag, rand);
+  const retPct = Array.from(point.retPct);
+  const rMult = Array.from(point.rMult);
+
   const sortedRet = [...retPct].sort((a, b) => a - b);
   const sortedR = [...rMult].sort((a, b) => a - b);
-  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  const mean = (xs: number[] | Float64Array) => {
+    let s = 0;
+    for (let i = 0; i < xs.length; i++) s += xs[i];
+    return s / xs.length;
+  };
   const pct = (sorted: number[], q: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(q * sorted.length)))];
   const meanRet = mean(retPct);
-  const sd = Math.sqrt(mean(retPct.map((x) => (x - meanRet) ** 2)));
 
-  // Block-bootstrap the MEAN to get its sampling distribution → 80/95 CIs and
-  // P(mean>0). Effective sample = distinct return-days is capped by pool size,
-  // but path outcomes over maxHold overlap, so we discount to pool/maxHold.
-  const effectiveSamples = Math.max(1, Math.floor(pool.length / Math.max(1, maxHoldDays)));
-  const meanSe = sd / Math.sqrt(effectiveSamples);
-  const bootMeans: number[] = [];
-  const B = 1000;
-  for (let b = 0; b < B; b++) {
-    let s = 0;
-    for (let k = 0; k < effectiveSamples; k++) s += retPct[Math.floor(rand() * PATHS)];
-    bootMeans.push(s / effectiveSamples);
+  // ── Uncertainty: a REAL block bootstrap. §4.1 of the trust review: the old
+  //    code resampled the 3000 already-simulated PATH OUTCOMES (i.i.d. by
+  //    construction, since they came from i.i.d. draws off the same fixed
+  //    pool) — that measured Monte-Carlo dispersion of the simulator, not
+  //    sampling uncertainty of the 260-day HISTORY, and its width was an
+  //    artifact of pool.length/maxHoldDays rather than anything about the
+  //    market. The correct construction resamples the underlying daily-return
+  //    HISTORY in contiguous (stationary) blocks — preserving autocorrelation
+  //    the way i.i.d. resampling would destroy — and RE-RUNS the full
+  //    bracket-walk simulation on each resampled history, so each bootstrap
+  //    draw is a genuine "what if we'd only ever seen this alternate slice of
+  //    market history" estimate of the trade's mean EV. ─────────────────────
+  const bootMeans: number[] = new Array(BLOCK_BOOTSTRAP_B);
+  for (let b = 0; b < BLOCK_BOOTSTRAP_B; b++) {
+    const resampledPool = stationaryBlockResample(pool, MEAN_BLOCK_LEN, rand);
+    const boot = simulateBracketWalk(resampledPool, BLOCK_BOOTSTRAP_PATHS, entry, stop, target1, maxHoldDays, drag, rand);
+    bootMeans[b] = mean(boot.retPct);
   }
   bootMeans.sort((a, b) => a - b);
+
+  // independentSamples is now an honest description of what the block
+  // bootstrap actually resamples (distinct history blocks), not a divisor
+  // baked into the CI's width — the CI's width instead falls naturally out
+  // of how much the resampled histories actually disagree with each other.
+  const independentSamples = Math.max(1, Math.floor(pool.length / MEAN_BLOCK_LEN));
+  const bootSd = Math.sqrt(mean(bootMeans.map((x) => (x - mean(bootMeans)) ** 2)));
+
   const worstDecileRet = sortedRet.slice(0, Math.max(1, Math.floor(0.1 * PATHS)));
   const worstDecileR = sortedR.slice(0, Math.max(1, Math.floor(0.1 * PATHS)));
 
@@ -136,24 +218,24 @@ export function computeEvEvidence(opts: {
   return {
     meanEvAfterCostsPct: round(meanRet),
     medianEvAfterCostsPct: round(pct(sortedRet, 0.5)),
-    evStdErrorPct: round(meanSe),
+    evStdErrorPct: round(bootSd),
     ev80LowerPct: round(pct(bootMeans, 0.1)),
     ev80UpperPct: round(pct(bootMeans, 0.9)),
     ev95LowerPct: round(pct(bootMeans, 0.025)),
     ev95UpperPct: round(pct(bootMeans, 0.975)),
     expectedShortfallPct: round(mean(worstDecileRet)),
     downsideP10Pct: round(pct(sortedRet, 0.1)),
-    probabilityEvPositive: round(bootMeans.filter((m) => m > 0).length / B),
-    independentSamples: effectiveSamples,
+    probabilityEvPositive: round(bootMeans.filter((m) => m > 0).length / BLOCK_BOOTSTRAP_B),
+    independentSamples,
     expectedR: round(mean(rMult)),
     medianR: round(pct(sortedR, 0.5)),
     p10R: round(pct(sortedR, 0.1)),
     cvarR: round(mean(worstDecileR)),
-    historicalMfeR: round(mean(mfeR)),
-    historicalMaeR: round(mean(maeR)),
-    targetReachRate: round(targetFirst / PATHS),
-    stopHitRate: round(stopFirst / PATHS),
-    timeoutRate: round(timeout / PATHS),
+    historicalMfeR: round(mean(point.mfeR)),
+    historicalMaeR: round(mean(point.maeR)),
+    targetReachRate: round(point.targetFirst / PATHS),
+    stopHitRate: round(point.stopFirst / PATHS),
+    timeoutRate: round(point.timeout / PATHS),
   };
 }
 

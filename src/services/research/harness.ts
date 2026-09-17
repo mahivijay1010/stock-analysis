@@ -105,7 +105,7 @@ export interface HarnessResult {
 
 const flat = (r: number): 0 | 1 => (r > 0 ? 1 : 0); // stated flat-day rule
 
-function metricsFor(
+export function metricsFor(
   model: string,
   modelVersion: string,
   h: number,
@@ -209,12 +209,22 @@ function metricsFor(
         )
       : null;
 
+  // Overlap-adjusted independent-observation count. preds is a POOLED
+  // cross-sectional array (many tickers per date), so preds.length/td used to
+  // over-count by roughly the ticker count — a 30d horizon with 40 tickers ×
+  // 100 dates reported ~190 "effective samples" from ~5 truly independent
+  // windows. The correct divisor is DISTINCT DATES / td, matching the
+  // convention already used correctly in decision/policy.ts's
+  // effectiveSamples() and monitoring/ModelHealthService.ts's `effective`
+  // (docs/system-trust-review.md §4.6).
+  const distinctDates = new Set(preds.map((p) => p.date)).size;
+
   return {
     model,
     modelVersion,
     horizonDays: h,
     rawSamples: preds.length,
-    effectiveSamples: Math.max(1, Math.floor(preds.length / td)),
+    effectiveSamples: Math.max(1, Math.floor(distinctDates / td)),
     nonOverlappingSamples: nonOverlap.length,
     direction: {
       hitRatePct,

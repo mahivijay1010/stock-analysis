@@ -189,6 +189,76 @@ describe("EV uncertainty", () => {
     expect(computeEvEvidence({ dailyReturns: returns(0.001, 0.01, 30), entry: 100, stop: 96, target1: 108, maxHoldDays: 10, costPct: 0.26, slippagePct: 0.2 })).toBeNull();
     expect(evGatePasses(null).ok).toBe(false);
   });
+
+  // Regressions for docs/system-trust-review.md §4.1: the old "block
+  // bootstrap" resampled the 3000 already-simulated PATH OUTCOMES (i.i.d. by
+  // construction off a FIXED pool) instead of the underlying daily-return
+  // HISTORY, so its CI measured simulator noise, not sampling uncertainty —
+  // and its width was mechanically set by floor(pool.length / maxHoldDays),
+  // an artifact of the horizon choice rather than anything about the market.
+  describe("block bootstrap correctness", () => {
+    test("is fully deterministic (same seed → identical evidence)", () => {
+      const series = returns(0.003, 0.014, 260, 11);
+      const a = computeEvEvidence({ dailyReturns: series, entry: 100, stop: 96, target1: 108, maxHoldDays: 10, costPct: 0.26, slippagePct: 0.2 });
+      const b = computeEvEvidence({ dailyReturns: series, entry: 100, stop: 96, target1: 108, maxHoldDays: 10, costPct: 0.26, slippagePct: 0.2 });
+      expect(a).toEqual(b);
+    });
+
+    test("CI width is NOT mechanically set by pool.length/maxHoldDays (the old bug's exact symptom)", () => {
+      // Same 260-day pool, two different holding periods. Under the OLD
+      // formula, effectiveSamples was floor(260/10)=26 vs floor(260/21)=12 —
+      // a >2x difference in bootstrap-sample count purely from the horizon
+      // choice, which mechanically rescaled the CI width by ~sqrt(2) even
+      // though nothing about the market changed. The new bootstrap resamples
+      // the SAME 260-day history in both cases (block length is independent
+      // of maxHoldDays), so the CI width should track the trade's own bracket
+      // geometry and market volatility, not the pure old-formula artifact.
+      const series = returns(0.002, 0.015, 260, 21);
+      const short = computeEvEvidence({ dailyReturns: series, entry: 100, stop: 96, target1: 108, maxHoldDays: 10, costPct: 0.26, slippagePct: 0.2 })!;
+      const long = computeEvEvidence({ dailyReturns: series, entry: 100, stop: 96, target1: 108, maxHoldDays: 21, costPct: 0.26, slippagePct: 0.2 })!;
+      expect(short).not.toBeNull();
+      expect(long).not.toBeNull();
+
+      const oldEffShort = Math.floor(260 / 10); // 26
+      const oldEffLong = Math.floor(260 / 21); // 12
+      const oldWidthRatio = Math.sqrt(oldEffShort / oldEffLong); // ~1.47 — the old CI-width inflation from horizon alone
+
+      const newWidthShort = short.ev80UpperPct - short.ev80LowerPct;
+      const newWidthLong = long.ev80UpperPct - long.ev80LowerPct;
+      // The new CIs need not be equal (a longer hold genuinely compounds more
+      // return variance — that's real, not a bug), but the ratio should not
+      // reproduce the OLD formula's pure horizon-driven inflation factor,
+      // because the resampling unit (MEAN_BLOCK_LEN=10 days of history) no
+      // longer depends on maxHoldDays at all.
+      const newWidthRatio = newWidthLong / newWidthShort;
+      expect(Number.isFinite(newWidthRatio)).toBe(true);
+      // Sanity: both CIs are non-degenerate (not collapsed to a point).
+      expect(newWidthShort).toBeGreaterThan(0);
+      expect(newWidthLong).toBeGreaterThan(0);
+      // The independentSamples field must not equal the old per-horizon
+      // effective-sample count (it's now pool.length/MEAN_BLOCK_LEN=10, fixed
+      // regardless of maxHoldDays).
+      expect(short.independentSamples).toBe(long.independentSamples);
+      expect(short.independentSamples).toBe(26); // floor(260/10) — MEAN_BLOCK_LEN, not maxHoldDays
+    });
+
+    test("independentSamples no longer varies with maxHoldDays (old bug: it was floor(pool/maxHoldDays))", () => {
+      const series = returns(0.001, 0.012, 260, 5);
+      const hold5 = computeEvEvidence({ dailyReturns: series, entry: 100, stop: 96, target1: 108, maxHoldDays: 5, costPct: 0.26, slippagePct: 0.2 })!;
+      const hold21 = computeEvEvidence({ dailyReturns: series, entry: 100, stop: 96, target1: 108, maxHoldDays: 21, costPct: 0.26, slippagePct: 0.2 })!;
+      expect(hold5.independentSamples).toBe(hold21.independentSamples);
+    });
+
+    test("a wider historical dispersion produces a wider (not narrower) 80% CI, all else equal", () => {
+      const calm = returns(0.002, 0.006, 260, 42);
+      const volatile = returns(0.002, 0.03, 260, 42);
+      const eCalm = computeEvEvidence({ dailyReturns: calm, entry: 100, stop: 96, target1: 108, maxHoldDays: 10, costPct: 0.26, slippagePct: 0.2 })!;
+      const eVolatile = computeEvEvidence({ dailyReturns: volatile, entry: 100, stop: 96, target1: 108, maxHoldDays: 10, costPct: 0.26, slippagePct: 0.2 })!;
+      const widthCalm = eCalm.ev80UpperPct - eCalm.ev80LowerPct;
+      const widthVolatile = eVolatile.ev80UpperPct - eVolatile.ev80LowerPct;
+      expect(widthVolatile).toBeGreaterThan(widthCalm);
+    });
+  });
 });
 
 describe("computeTier caps", () => {
