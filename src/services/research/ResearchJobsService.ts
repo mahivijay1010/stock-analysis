@@ -21,6 +21,8 @@ import { simulateBracket, toAdjustedOhlc } from "../shortterm/shadowFill";
 import { HORIZON_TD, ShortTermHorizon } from "../shortterm/types";
 import { LIVE_AUTHORITY } from "../shortterm/shortTermHealth";
 import { modelGovernanceService } from "./governance";
+import { runCalibrationEnsembleRefresh, CalibrationEnsembleRunResult } from "./calibrationEnsembleRun";
+import { runLiveBaselineExperiment } from "../experiments/runner";
 
 /**
  * Shadow-ledger accounting identity (durability guard). Every logged shadow
@@ -210,6 +212,63 @@ export class ResearchJobsService {
     }
     return { snapshots: rows.length, transitions };
   }
+
+  /**
+   * Weekly continuous-learning refresh (docs/system-trust-review.md batch 3):
+   * re-runs the calibration/ensemble study (research/calibrationEnsembleRun.ts
+   * — fit-on-early-val / select-on-late-val / report-on-untouched-test,
+   * unchanged discipline, previously only ever run by a developer invoking
+   * scripts/calibrationRun.ts by hand) and the live champion-vs-baselines
+   * experiment (experiments/runner.ts's runLiveBaselineExperiment — reads
+   * PredictionLog rows the nightly eveningVerify job has newly resolved).
+   *
+   * Neither call can promote or raise anything beyond what its own
+   * already-correct, independently-audited logic decides: selectCalibrator
+   * only marks `promoted: true` after verifying held-out improvement, and
+   * runLiveBaselineExperiment's positive branch explicitly states it "still
+   * requires effective-sample and stability review before any promotion" —
+   * this method only automates WHEN those checks run, not what they may
+   * conclude.
+   */
+  async weeklyCalibrationRefresh(): Promise<WeeklyCalibrationRefreshResult> {
+    return runWeeklyCalibrationRefresh({
+      runCalibration: () => runCalibrationEnsembleRefresh({}),
+      runExperiment: () => runLiveBaselineExperiment(),
+    });
+  }
+}
+
+export interface WeeklyCalibrationRefreshResult {
+  calibration: CalibrationEnsembleRunResult | { error: string };
+  experimentRunId: string | { error: string };
+}
+
+/**
+ * PURE composition of the two sub-jobs, with each call's failure isolated so
+ * one does not sink the other (mirrors CronService's per-job guarded()
+ * isolation) — extracted from weeklyCalibrationRefresh so this isolation
+ * behaviour is directly unit-testable with fake deps, without a live DB.
+ */
+export async function runWeeklyCalibrationRefresh(deps: {
+  runCalibration: () => Promise<CalibrationEnsembleRunResult>;
+  runExperiment: () => Promise<{ id: string }>;
+}): Promise<WeeklyCalibrationRefreshResult> {
+  let calibration: CalibrationEnsembleRunResult | { error: string };
+  try {
+    calibration = await deps.runCalibration();
+  } catch (err) {
+    calibration = { error: err instanceof Error ? err.message : String(err) };
+  }
+
+  let experimentRunId: string | { error: string };
+  try {
+    const run = await deps.runExperiment();
+    experimentRunId = run.id;
+  } catch (err) {
+    experimentRunId = { error: err instanceof Error ? err.message : String(err) };
+  }
+
+  return { calibration, experimentRunId };
 }
 
 export const researchJobsService = new ResearchJobsService();

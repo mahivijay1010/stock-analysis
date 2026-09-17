@@ -7,6 +7,14 @@
  *  - 18:30 IST Mon-Fri  verify matured PredictionLog rows against real bars
  *                       (fills actual_return / prediction_correct) and refresh
  *                       ModelPerformance aggregates for affected tickers.
+ *  - 06:00 IST Sunday   continuous-learning refresh (docs/system-trust-review.md
+ *                       batch 3): re-fits calibrators/ensemble on the latest
+ *                       walk-forward harness run and re-runs the champion-vs-
+ *                       baselines experiment against newly-resolved
+ *                       PredictionLog rows. Can only PROMOTE via each
+ *                       sub-job's own already-correct, independently-verified
+ *                       out-of-sample check — this job automates WHEN that
+ *                       check runs, never what it may conclude.
  *  - 00:00 IST daily    delete Analysis rows older than 365 days.
  *                       NEVER deletes PredictionLog or ModelPerformance rows —
  *                       those are the permanent accuracy record.
@@ -95,6 +103,17 @@ export class CronService {
         run: () => this.monthlyGovernanceReview(),
       },
       {
+        // Continuous-learning refresh (docs/system-trust-review.md batch 3):
+        // re-fits calibrators + ensemble on the latest walk-forward harness
+        // run, and re-runs the champion-vs-baselines experiment against
+        // newly-resolved PredictionLog rows. Sunday (no trading day) so a
+        // full settled week of resolved predictions is available and it
+        // never contends with the weekday scan/verify jobs.
+        name: "weekly-calibration-refresh",
+        expression: "0 6 * * 0",
+        run: () => this.weeklyCalibrationRefresh(),
+      },
+      {
         // Global macro (RBI + FRED India CPI/GDP + MoSPI when configured);
         // series are universe-wide, not per-ticker. 07:30 IST on the 1st.
         name: "monthly-macro-refresh",
@@ -149,6 +168,25 @@ export class CronService {
     const { researchJobsService } = await import("./research/ResearchJobsService");
     const r = await researchJobsService.monthlyGovernanceReview();
     console.log(`🏛️ [CRON] governance review: ${r.snapshots} snapshots, ${r.transitions} demotions`);
+  }
+
+  /** 06:00 IST Sunday — continuous-learning refresh: calibration/ensemble + live baseline experiment. */
+  private async weeklyCalibrationRefresh(): Promise<void> {
+    const { researchJobsService } = await import("./research/ResearchJobsService");
+    const r = await researchJobsService.weeklyCalibrationRefresh();
+    if ("error" in r.calibration) {
+      console.error(`🎯 [CRON] calibration refresh failed: ${r.calibration.error}`);
+    } else {
+      console.log(
+        `🎯 [CRON] calibration refresh: run ${r.calibration.experimentRunId}, ` +
+          `${r.calibration.calibratorsPromoted}/${r.calibration.calibratorsFit} calibrators promoted`
+      );
+    }
+    if (typeof r.experimentRunId === "object") {
+      console.error(`🎯 [CRON] live baseline experiment failed: ${r.experimentRunId.error}`);
+    } else {
+      console.log(`🎯 [CRON] live baseline experiment: run ${r.experimentRunId}`);
+    }
   }
 
   /** 07:30 IST on the 1st — global macro refresh (RBI + FRED India series + MoSPI). */
