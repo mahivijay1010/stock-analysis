@@ -94,8 +94,17 @@ export class ModelGovernanceService {
       { key: "calibrator-platt-1d", scope: "calibration", state: "CANDIDATE", reason: "promoted on held-out 1d evidence (~26 indep obs); display horizon 30d remains withheld" },
       { key: "meta-label-lgbm", scope: "trade-probability", state: "SHADOW", reason: "failed Brier-vs-base-rate pre-registered bar (0.1639 vs 0.1635)" },
       { key: "mc-block-bootstrap", scope: "forecast-distribution", state: "RETIRED", reason: "iid coverage closer to nominal (run 3a591851); pre-registered rule keeps iid" },
-      { key: "setup-mean-reversion-5-10d", scope: "short-term-setup", state: "CANDIDATE", reason: "backtest TIER A (+0.117R, CI>0, BH-sig); awaiting prospective shadow authority" },
-      { key: "setup-mean-reversion-10-21d", scope: "short-term-setup", state: "CANDIDATE", reason: "backtest TIER A (+0.146R, CI>0, BH-sig); awaiting prospective shadow authority" },
+      // These two rows previously asserted CANDIDATE from the setup-expectancy
+      // study's v1 methodology (+0.117R / +0.146R, in-sample, block-length-1
+      // pseudo-bootstrap over per-date means — see
+      // docs/system-trust-review.md §4.2). v2 (scripts/setupExpectancyStudy.ts,
+      // st-setup-expectancy-v2) fixed the train/test split, block bootstrap,
+      // and overlap-adjusted independent-date count; that number is NOT the
+      // same measurement and has not yet been re-run against these specific
+      // numbers. Downgraded to SHADOW pending a v2 re-read — re-promote only
+      // from a v2 result, with its evidence_run_id/report, not this seed.
+      { key: "setup-mean-reversion-5-10d", scope: "short-term-setup", state: "SHADOW", reason: "v1 backtest showed TIER A (+0.117R, CI>0, BH-sig) but that methodology was in-sample with a block-length-1 pseudo-bootstrap; downgraded pending re-read under st-setup-expectancy-v2 (out-of-sample, real block bootstrap)" },
+      { key: "setup-mean-reversion-10-21d", scope: "short-term-setup", state: "SHADOW", reason: "v1 backtest showed TIER A (+0.146R, CI>0, BH-sig) but that methodology was in-sample with a block-length-1 pseudo-bootstrap; downgraded pending re-read under st-setup-expectancy-v2 (out-of-sample, real block bootstrap)" },
       { key: "stat-har-rv", scope: "forecast-distribution", state: "SHADOW", reason: "conditional-σ coverage 79.7% ≈ nominal at 30d — interval-generation candidate (baseline-completion run)" },
       { key: "stat-ewma", scope: "forecast-return", state: "RETIRED", reason: "drift extrapolation catastrophic at 30d (BSS −0.672, MAE 12.7%)" },
     ];
