@@ -16,7 +16,7 @@ export const createApp = (): Application => {
   // explicitly. Additional origins via FRONTEND_ORIGINS (comma-separated).
   const allowedOrigins = new Set(
     [
-      "http://localhost:3000",
+      "http://localhost:3001",
       "http://127.0.0.1:3000",
       ...(process.env.FRONTEND_ORIGINS ?? "").split(",").map((o) => o.trim()),
     ].filter(Boolean),
