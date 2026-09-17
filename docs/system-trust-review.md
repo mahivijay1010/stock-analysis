@@ -12,9 +12,9 @@ the source at the cited `file:line`. Where this review disagrees with
   from batch 1's tip, so it contains both batches' changes), not yet merged.
   §4.4 (shrinkage dead code) and §4.5 (volforecast selection bias) were in
   scope for this review but not part of the user's requested statistics
-  batch — still open. The setup-expectancy study's rewritten pipeline needs a
-  live Postgres + Yahoo fetch to actually re-run in production; that could
-  not be done from this checkout.
+  batch — still open. **The v2 study has since been re-run against a real
+  local Postgres + live Yahoo fetch (2026-09-17): 0/12 setup×horizon cells
+  reach TIER A out-of-sample — see §4.2 and §13 for the full result.**
 - Batch 3 (continuous learning) — ✅ done, branch `feature/continuous-learning`
   (ef33011; branched from batch 2's tip, so it contains all three batches'
   changes), not yet merged. Scoped deliberately: it schedules the existing,
@@ -218,14 +218,26 @@ This is the CI behind the `ev80LowerPct > 0` entry gate.
 > `independentEntryDates` is now `floor(rawDates/horizonMaxTD)`.
 > `expectancyR` (gross) and `expectancyAfterCosts` (net) are now genuinely
 > different numbers. Rewritten as `st-setup-expectancy-v2` — **not comparable
-> to prior runs' numbers**; needs a live Postgres + Yahoo fetch to re-run in
-> production (`npx ts-node --transpile-only scripts/setupExpectancyStudy.ts`),
-> which this fix could not do from this checkout. 8 unit tests in
-> `tests/setup-expectancy-study.test.ts` cover the pure per-cell logic.
-> `governance.ts`'s two setup-mean-reversion seed rows (citing the old
-> +0.117R/+0.146R) were downgraded from CANDIDATE to SHADOW pending a v2
-> re-read, since `ON CONFLICT DO NOTHING` meant the stale claim would
-> otherwise persist as documentation indefinitely.
+> to prior runs' numbers**. 8 unit tests in `tests/setup-expectancy-study.test.ts`
+> cover the pure per-cell logic. `governance.ts`'s two setup-mean-reversion
+> seed rows (citing the old +0.117R/+0.146R) were downgraded from CANDIDATE
+> to SHADOW pending a v2 re-read, since `ON CONFLICT DO NOTHING` meant the
+> stale claim would otherwise persist as documentation indefinitely.
+>
+> **Re-run against production infrastructure, 2026-09-17** (local Postgres +
+> live Yahoo, full 151-ticker universe, 22,377 trades over 5 years): the
+> train/test split produced 203 train / 50 val / 29 cal / 76 test dates
+> (22 purged, 3 embargoed). **Every one of the 12 setup×horizon cells came
+> back negative out-of-sample** — including the two MEAN_REVERSION cells the
+> old v1 methodology had shown as TIER A (+0.117R/+0.146R in-sample):
+> MEAN_REVERSION 10-21d was **−0.111R** and 5-10d was **−0.141R** on the held-out
+> test segment, with 80%+ of that BH-insignificant. **0/12 cells reach TIER A;
+> Deflated Sharpe on the best cell (MEAN_REVERSION 10-21d) is 0 — nowhere near
+> the ≥0.95 bar, meaning it isn't distinguishable from noise even before
+> accounting for the setup-threshold search.** This is exactly the outcome
+> the fix predicted was possible: the v1 numbers were an in-sample/block-
+> length-1-bootstrap artifact, not a real edge. See §13 for the full result
+> and what it means for the product.
 
 `scripts/setupExpectancyStudy.ts:117` labels itself "Block bootstrap by date"
 but resamples **per-date means** — block length 1. That removes cross-sectional
@@ -506,11 +518,12 @@ highest-value follow-up.
 5. ✅ **FIXED** (`fix/statistical-integrity`, 518b657) — Either implement a
    real block bootstrap in `evUncertainty.ts` or rename the output so it does
    not claim to be a sampling CI of the data. (§4.1)
-6. ✅ **FIXED** (`fix/statistical-integrity`, 3eff648) — Give the
-   setup-expectancy study a train/test split; use the existing
-   `dateBlockBootstrap`; divide `independentEntryDates` by holding period.
-   (§4.2) — *needs a live production re-run before the new numbers can be
-   trusted; not done from this checkout.*
+6. ✅ **FIXED and RE-RUN** (`fix/statistical-integrity`, 3eff648; re-run
+   2026-09-17 against live Postgres + Yahoo) — Give the setup-expectancy
+   study a train/test split; use the existing `dateBlockBootstrap`; divide
+   `independentEntryDates` by holding period. (§4.2) — *result: 0/12
+   cells reach TIER A out-of-sample; the prior v1 "TIER A" MEAN_REVERSION
+   cells are negative on the held-out test segment. See §13.*
 7. ✅ **FIXED** (`fix/statistical-integrity`, 518b657) — Fix `harness.ts:217`
    to divide distinct dates, not pooled rows. (§4.6)
 8. ✅ **PARTIALLY FIXED** (`fix/statistical-integrity`, 3eff648) — Call the
@@ -551,13 +564,17 @@ real, enforced in multiple independent places, and backed by DB triggers and
 passing tests.
 
 **Can you trust it as a basis for money?** Not yet, and the code agrees — it
-says so at `policy.ts:367`. The specific gap is that the evidence pipeline
-which *would* eventually unlock action contains in-sample expectancy, CIs that
-do not measure sampling uncertainty, overlap counts inflated by roughly the
-holding period, and multiple-testing correction over only the final step. If
-those are fixed and still show an edge, the edge is real. If action were
-unlocked on the current evidence machinery, it would be unlocked on numbers
-that are more confident than the data supports.
+says so at `policy.ts:367`. The specific gap was that the evidence pipeline
+which *would* eventually unlock action contained in-sample expectancy, CIs
+that did not measure sampling uncertainty, overlap counts inflated by roughly
+the holding period, and multiple-testing correction over only the final step.
+Those have since been fixed (batch 2) and the study re-run against real
+production infrastructure (§13): **the answer came back negative** — 0 of 12
+setup×horizon cells reach TIER A out-of-sample, and the two cells the old
+methodology had called TIER A are net-negative on held-out data. That is not
+a disappointing result; it is the system working as designed. It would have
+been a worse outcome to leave the broken methodology in place and let it
+eventually unlock a BUY on evidence that was never real.
 
 **The one-sentence characterisation:** the guardrails are production-grade and
 honest; the measurements they are guarding are not yet strong enough to justify
@@ -630,5 +647,119 @@ directional edge exists at all.
 
 ---
 
-*Generated by independent code review. Educational tool — not SEBI-registered
-investment advice.*
+## 13. Production verification run, 2026-09-17 — the fixed pipelines actually executed
+
+Everything in §§2–12 was verified by reading code. This section is different:
+it is what the rewritten pipelines actually produced when run against a real
+local Postgres 16 instance and live Yahoo Finance data, on the
+`feature/continuous-learning` branch (all three batches applied). Environment
+setup: created the `postgres` role and `stock_analysis` database locally, ran
+all 21 pending TypeORM migrations (including the append-only triggers on
+`decision_snapshots` and `live_prediction_revisions` referenced in §3), then
+ran three scripts against it.
+
+### 13.1 Setup-expectancy study v2 (§4.2) — the headline result
+
+`npx ts-node --transpile-only scripts/setupExpectancyStudy.ts`, full
+151-ticker universe, 5 years of daily bars, 22,377 trades generated, clean
+exit, zero errors.
+
+Split: 203 train / 50 validation / 29 calibration / **76 test** dates (22
+dates purged for label-overlap, 3 embargoed). Out-of-sample result on the
+held-out test segment — **every cell negative**:
+
+| Setup | Horizon | n | E[R] (net) | CI lower | P(>0) | BH | Tier |
+|---|---|---|---|---|---|---|---|
+| MEAN_REVERSION | 10-21d | 115 | **−0.111** | −0.223 | 0 | no | C |
+| MEAN_REVERSION | 5-10d | 115 | **−0.141** | −0.294 | 0.024 | no | C |
+| MOMENTUM_CONTINUATION | 10-21d | 135 | −0.171 | −0.260 | 0 | no | C |
+| MOMENTUM_CONTINUATION | 5-10d | 135 | −0.181 | −0.289 | 0 | no | C |
+| MOMENTUM_CONTINUATION | 3-5d | 135 | −0.195 | −0.379 | 0.001 | no | C |
+| MEAN_REVERSION | 3-5d | 115 | −0.211 | −0.418 | 0.056 | no | C |
+| PULLBACK_IN_UPTREND | 5-10d | 328 | −0.256 | −0.292 | 0 | no | C |
+| PULLBACK_IN_UPTREND | 3-5d | 328 | −0.264 | −0.343 | 0 | no | C |
+| PULLBACK_IN_UPTREND | 10-21d | 328 | −0.266 | −0.274 | 0 | no | C |
+| VOLATILITY_CONTRACTION | 10-21d | 275 | −0.408 | −0.414 | 0 | no | C |
+| VOLATILITY_CONTRACTION | 5-10d | 275 | −0.414 | −0.496 | 0 | no | C |
+| VOLATILITY_CONTRACTION | 3-5d | 275 | −0.415 | −0.563 | 0 | no | C |
+
+**0/12 cells reach TIER A.** Deflated Sharpe on the best cell
+(MEAN_REVERSION 10-21d) is **0** — nowhere near the ≥0.95 bar, i.e. not
+distinguishable from selection luck even at `nTrials=12` (a floor that
+under-counts the true search space per §4.3's remaining caveat).
+
+**The in-sample (full-history, non-evidentiary) numbers for comparison** —
+this is the discrepancy the fix exists to catch:
+
+| Setup | Horizon | n (full history) | E[R] in-sample |
+|---|---|---|---|
+| MEAN_REVERSION | 10-21d | 622 | **+0.137** |
+| MEAN_REVERSION | 5-10d | 622 | **+0.111** |
+| MOMENTUM_CONTINUATION | 10-21d | 1943 | +0.080 |
+
+The old v1 methodology reported MEAN_REVERSION 10-21d at +0.146R and 5-10d at
++0.117R (`governance.ts`'s pre-batch-2 CANDIDATE seed, §4.2) — numbers that
+match this run's in-sample column almost exactly. **The out-of-sample test
+segment shows the opposite sign.** This is precisely the in-sample/
+block-length-1-bootstrap artifact §4.2 predicted: a rule (and, likely, entry/
+stop/target geometry) that looked good over the whole history it was
+implicitly shaped against, and does not hold up on data it never touched.
+
+**What this means for the product:** nothing changes for a user today — these
+setups were already `usableForEntry: false` under the v1 methodology once the
+live-shadow-authority gate (§ "structural note" in §4.3) is accounted for, and
+they remain `false` under v2. What changes is that the *evidence record*
+`ScanService` and `setupEvidence.ts` read is now honest: a future developer
+looking at `short_term_model_performance` will see a correctly-labeled
+out-of-sample failure instead of a stale in-sample success. The two
+`governance.ts` CANDIDATE rows this review downgraded to SHADOW in batch 2
+were downgraded correctly — re-promoting them would now require explaining
+away a negative out-of-sample result, not just re-running the old script.
+
+### 13.2 Calibration/ensemble refresh (§12) — ran end-to-end, produced an honest split verdict
+
+`npx ts-node --transpile-only scripts/calibrationRun.ts` (the same logic the
+new weekly cron job calls), 39 of 40 tickers processed (1 skipped, insufficient
+bars), clean exit.
+
+- **1-day horizon**: enough independent hold-out evidence (~26 independent
+  observations) for 5 of 12 models to have a calibrator promoted — modest
+  Brier improvements verified on the untouched test segment (e.g.
+  `champion-quant-v1`: 0.2524 → 0.2519; `stat-ewma`: 0.2835 → 0.2512).
+- **7-day horizon**: only ~4 independent hold-out observations — every model
+  correctly refused ("insufficient calibration evidence... directional
+  probability stays unavailable").
+- **30-day horizon**: only ~1 independent hold-out observation — every model
+  correctly refused, and the ensemble reports `test brier null n=0`
+  (no members were eligible).
+
+This is the calibration discipline working exactly as designed: real,
+verified improvement where there is enough independent data (1d), honest
+refusal where there is not (7d/30d) — not a uniform "yes" or "no" but a
+result that tracks how much genuine evidence actually exists at each horizon.
+
+### 13.3 The full weekly-cron code path (`ResearchJobsService.weeklyCalibrationRefresh`)
+
+Ran the exact function the new `weekly-calibration-refresh` cron job calls
+(not a re-implementation) directly. Both sub-jobs succeeded on this run
+(`calibratorsFit: 36, calibratorsPromoted: 5`, plus a completed
+`live-baseline-eval` experiment run persisted to `experiment_runs`) — the
+failure-isolation path (§12) was verified separately by the 5 unit tests in
+`tests/weekly-calibration-refresh.test.ts` with fault-injected fakes, since a
+real successful run naturally can't exercise the failure branch.
+
+### 13.4 What this confirms about the review as a whole
+
+The fact that fixing the methodology *changed the answer* — from "TIER A,
+positive edge" to "0/12 cells, negative on held-out data" — is the strongest
+available evidence that batch 2's fixes were not cosmetic. A methodology
+change that leaves the substantive conclusion unchanged is much less
+persuasive than one that reverses it. This result should be read as
+confirmation that the original `docs/system-trust-review.md` finding (§4.2)
+was correct to flag the v1 study as untrustworthy, not as a disappointing
+outcome to work around.
+
+---
+
+*Generated by independent code review, with production verification.
+Educational tool — not SEBI-registered investment advice.*
