@@ -4,6 +4,13 @@
 the source at the cited `file:line`. Where this review disagrees with
 `ARCHITECTURE.md`, the code is treated as the truth.
 
+**Remediation status (updated 2026-09-17):** Batch 1 of 3 — the four
+correctness bugs (§5.1, §5.2, plus two more found during implementation, all
+marked ✅ below) — is committed on branch `fix/correctness-bugs` (commit
+c33feba), not yet merged to `main`. Statistical-integrity fixes (§4, the P1
+list in §10) and the continuous-learning loop are separate, not-yet-started
+follow-up batches.
+
 **Bottom line.** The *containment* architecture — the machinery that stops the
 system making a confident claim it has not earned — is real, well built, and
 genuinely unusual. The *estimation* layer underneath it is a large body of
@@ -235,7 +242,13 @@ rate, Brier or coverage.
 
 ## 5. Correctness bugs
 
-### 5.1 Bank detection misses most Indian financials — highest-impact bug
+### 5.1 Bank detection misses most Indian financials — highest-impact bug — **FIXED** (`fix/correctness-bugs`, commit c33feba)
+
+> Fixed by `classifyIndustryKind()` (`IntelligenceService.ts`), which
+> classifies by the universe's own sector field first (Banking/Financial
+> Services/Insurance), with a name-pattern fallback only for tickers outside
+> `NSE_UNIVERSE`. `calculateFcf` is now bank-gated too. Regression coverage in
+> `tests/industry-classification.test.ts`.
 
 `IntelligenceService.ts:20` detects banks with a **hardcoded 10-ticker regex**.
 The universe (`nseUniverse.ts`) contains **151 stocks, of which 34 are
@@ -252,7 +265,12 @@ For the 10 matched tickers the refusals are clean and well tagged. For the
 other 24 the engine emits confident, meaningless ratios. FCF is never
 bank-gated at all, for any ticker.
 
-### 5.2 Backtest grades predictions on a different price basis
+### 5.2 Backtest grades predictions on a different price basis — **FIXED** (`fix/correctness-bugs`, commit c33feba)
+
+> Fixed by a local `analysisClose()` helper in `backtest.ts` (adjustedClose ??
+> close, matching the policy `engine.ts` builds predictions on). Regression
+> test in `tests/quant.test.ts` simulates a 2-for-1 split and confirms
+> `actualPct` is no longer corrupted.
 
 Predictions are built on the **adjusted + rescaled** close series
 (`engine.ts:141`) but the realized return is computed from the **raw** close
@@ -298,7 +316,7 @@ instead of an abstention:
 | `backtest.ts:91` | Empty probability buckets report `meanPredicted: 0, observedUpFreq: 0` |
 | `MacroService.ts:104` | `vs200dmaPct` defaults to 0 when SMA200 is null → awards **10 points** for a 200-DMA never computed; `r60dPct ?? 0` → "stable INR" → **18 of 25 points**. The human-readable `notes` narrate these as measurements |
 | `MarketDataService.ts:482` | `previousClose ?? price` → a fabricated **0.00% change** presented as a real quote, with no flag |
-| `calculations.ts:156` | ROIC debt imputed as `(borrowingsCurrent ?? 0) + (borrowingsNoncurrent ?? 0)` → **debt = 0** when both absent, inflating ROIC silently |
+| `calculations.ts:156` | ~~ROIC debt imputed as `(borrowingsCurrent ?? 0) + (borrowingsNoncurrent ?? 0)` → debt = 0 when both absent, inflating ROIC silently~~ — **FIXED** (`fix/correctness-bugs`, commit c33feba): now refuses unless debt is known from `grossDebt` or at least one borrowing sub-concept |
 | `rank.ts:68` | Missing rank components imputed as z = 0 with no renormalization; single-ticker percentile hardcoded to 50 |
 | `indicators.ts:74,120` | RSI 50 / %B 0.5 for degenerate inputs |
 | `yahoo.ts:197` | Missing volume → 0, persisted to DB |
@@ -315,10 +333,13 @@ own computed growth series.
 Share count is itself inferred: `marketCap / price` (`IntelligenceService.ts:111`),
 not a filed figure, with no unit reconciliation against XBRL values.
 
-The result is labelled `status: "CALCULATED"` and carries the **XBRL filing
+~~The result is labelled `status: "CALCULATED"` and carries the **XBRL filing
 URLs as its sources** — even though `DataStatus` has an `"ESTIMATED"` value
-available. It does attach an assumption-sensitivity caveat, but a number whose
-every driver is a guess should not be tier-tagged as sourced from filings.
+available.~~ **FIXED** (`fix/correctness-bugs`, commit c33feba): relabeled
+`status: "ESTIMATED"`; `IntelligenceRepository.ts`'s row parser updated to
+match. The hardcoded scenario constants themselves (growth/WACC/terminal
+growth identical for every ticker) are unchanged — that is a P2 item (§10.10),
+not a labeling bug — but the metric no longer overstates how sourced it is.
 
 ---
 
@@ -397,15 +418,26 @@ highest-value follow-up.
 ## 10. Remediation, in priority order
 
 **P0 — correctness**
-1. Replace the 10-ticker `BANKS` regex with a sector/industry classification
-   driven by the universe's own `sector` field, and extend bank-aware refusals
-   to NBFCs and insurers. Gate FCF too. (§5.1)
-2. Grade backtests on the same adjusted basis used to generate the prediction.
-   (§5.2)
+1. ✅ **FIXED** (`fix/correctness-bugs`, c33feba) — Replace the 10-ticker
+   `BANKS` regex with a sector/industry classification driven by the
+   universe's own `sector` field, and extend bank-aware refusals to NBFCs and
+   insurers. Gate FCF too. (§5.1)
+2. ✅ **FIXED** (`fix/correctness-bugs`, c33feba) — Grade backtests on the
+   same adjusted basis used to generate the prediction. (§5.2)
 3. Return `null`, not `0`, for zero-sample backtest horizons and empty
-   calibration buckets. (§6)
+   calibration buckets. (§6) — *deferred: every current consumer already
+   guards on `samples > 0` / `n > 0` before reading these fields, so this is
+   a type-contract change (`number` → `number | null`) with no active bug
+   today; folding it into the P1 statistics batch instead of a standalone
+   correctness fix.*
 4. Make the AVOID vetoes fire on unknown inputs, or correct the fail-closed
    comment. (§5.3)
+5. ✅ **FIXED** (`fix/correctness-bugs`, c33feba, found during implementation,
+   not originally listed) — ROIC silently imputed debt as 0 when both
+   `grossDebt` and every borrowing sub-concept were absent. Now refuses. (§6)
+6. ✅ **FIXED** (`fix/correctness-bugs`, c33feba, found during implementation)
+   — DCF was labeled `status: "CALCULATED"` despite every driver being a
+   hardcoded assumption; relabeled `"ESTIMATED"`. (§6)
 
 **P1 — statistical integrity**
 5. Either implement a real block bootstrap in `evUncertainty.ts` or rename the
