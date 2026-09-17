@@ -4,12 +4,18 @@
 the source at the cited `file:line`. Where this review disagrees with
 `ARCHITECTURE.md`, the code is treated as the truth.
 
-**Remediation status (updated 2026-09-17):** Batch 1 of 3 — the four
-correctness bugs (§5.1, §5.2, plus two more found during implementation, all
-marked ✅ below) — is committed on branch `fix/correctness-bugs` (commit
-c33feba), not yet merged to `main`. Statistical-integrity fixes (§4, the P1
-list in §10) and the continuous-learning loop are separate, not-yet-started
-follow-up batches.
+**Remediation status (updated 2026-09-17):**
+- Batch 1 (correctness bugs, §5.1/§5.2 + two more found along the way) —
+  ✅ done, branch `fix/correctness-bugs` (c33feba, bc60968), not yet merged.
+- Batch 2 (statistical integrity, §4.1/§4.2/§4.6 fully fixed, §4.3 partially)
+  — ✅ done, branch `fix/statistical-integrity` (518b657, 3eff648; branched
+  from batch 1's tip, so it contains both batches' changes), not yet merged.
+  §4.4 (shrinkage dead code) and §4.5 (volforecast selection bias) were in
+  scope for this review but not part of the user's requested statistics
+  batch — still open. The setup-expectancy study's rewritten pipeline needs a
+  live Postgres + Yahoo fetch to actually re-run in production; that could
+  not be done from this checkout.
+- The continuous-learning loop is a separate, not-yet-started follow-up.
 
 **Bottom line.** The *containment* architecture — the machinery that stops the
 system making a confident claim it has not earned — is real, well built, and
@@ -158,7 +164,20 @@ This is a materially better honesty posture than most retail analytics code.
 These matter most, because each is a place where a *statistical guarantee is
 claimed by name* and the code does something weaker.
 
-### 4.1 The EV confidence interval that gates every entry is not a block bootstrap
+### 4.1 The EV confidence interval that gates every entry is not a block bootstrap — **FIXED** (`fix/statistical-integrity`, commit 518b657)
+
+> Fixed with a genuine nested block bootstrap: `stationaryBlockResample()`
+> resamples the daily-return HISTORY itself in contiguous blocks, and
+> `simulateBracketWalk()` (the trade's own bracket simulation, extracted for
+> reuse) is re-run on each of 120 resampled histories. `independentSamples`
+> is now `pool.length/10` (fixed block length), no longer
+> `pool.length/maxHoldDays` — it stops varying with the trade's own holding
+> period. 4 regression tests in `tests/short-term-v2.test.ts` prove
+> determinism, the CI no longer reproduces the old horizon-driven inflation
+> factor, and a genuinely more volatile history now produces a wider CI.
+> Point estimates (mean/median/R-stats) are unchanged. Cost: ~150ms/call
+> (from a few ms), paid only for tickers that clear upstream gates on a
+> 30-min-cached scan — measured acceptable.
 
 `evUncertainty.ts:119` comments "Block-bootstrap the MEAN". There are no
 blocks. The loop resamples the **simulator's own 3,000 path outcomes**:
@@ -181,7 +200,25 @@ Consequences:
 
 This is the CI behind the `ev80LowerPct > 0` entry gate.
 
-### 4.2 The setup-expectancy study is in-sample and its "block bootstrap" has block length 1
+### 4.2 The setup-expectancy study is in-sample and its "block bootstrap" has block length 1 — **FIXED** (`fix/statistical-integrity`, commit 3eff648)
+
+> Fixed: the study now splits the shared entry calendar with the existing
+> `buildPurgedSplits` (purge = longest horizon's hold in calendar days,
+> embargo 5 days) and reads every promotable tier ONLY from the ~20% test
+> segment (in-sample numbers still computed, labeled "not evidentiary", for
+> comparison). The block-length-1 resample is replaced with a real
+> `dateBlockBootstrap` at block length = the horizon's calendar-day hold.
+> `independentEntryDates` is now `floor(rawDates/horizonMaxTD)`.
+> `expectancyR` (gross) and `expectancyAfterCosts` (net) are now genuinely
+> different numbers. Rewritten as `st-setup-expectancy-v2` — **not comparable
+> to prior runs' numbers**; needs a live Postgres + Yahoo fetch to re-run in
+> production (`npx ts-node --transpile-only scripts/setupExpectancyStudy.ts`),
+> which this fix could not do from this checkout. 8 unit tests in
+> `tests/setup-expectancy-study.test.ts` cover the pure per-cell logic.
+> `governance.ts`'s two setup-mean-reversion seed rows (citing the old
+> +0.117R/+0.146R) were downgraded from CANDIDATE to SHADOW pending a v2
+> re-read, since `ON CONFLICT DO NOTHING` meant the stale claim would
+> otherwise persist as documentation indefinitely.
 
 `scripts/setupExpectancyStudy.ts:117` labels itself "Block bootstrap by date"
 but resamples **per-date means** — block length 1. That removes cross-sectional
@@ -203,7 +240,18 @@ And `expectancyAfterCosts` is literally assigned the same value as
 `expectancyR` (`setupExpectancyStudy.ts:157`) — the before/after-cost
 distinction shown downstream is cosmetic.
 
-### 4.3 Multiple-testing correction covers only the last step
+### 4.3 Multiple-testing correction covers only the last step — **PARTIALLY FIXED** (`fix/statistical-integrity`, commit 3eff648)
+
+> `deflatedSharpeRatio` and `probabilityOfBacktestOverfitting` are now wired
+> into the study: DSR on the best-Sharpe test-segment cell with
+> `nTrials` = cells examined, PBO over 8 time-blocks across eligible cells,
+> both persisted and printed in the verdict. **Not fixed**: `nTrials` is
+> stated as a floor — it still cannot see the ~40 hand-tuned setup-threshold
+> and ATR-multiple-geometry degrees of freedom spent during earlier
+> development, so DSR/PBO here under-state the true search space. BH's family
+> is still only the setup×horizon cells (now correctly the ~9-15 TEST-segment
+> cells rather than the full-history cells, an improvement, but the family
+> size itself is unchanged).
 
 BH itself is correctly implemented (`shrinkage.ts:74`). But the family is only
 the ~15 setup×horizon cells. Outside the correction: the ~40 hand-tuned setup
@@ -227,13 +275,21 @@ then reports that same maximum as the chosen model's OOS R². Taking the max of
 two noisy estimates over ~60 overlapping days and reporting it as unbiased is
 selection bias. In-sample R² also ships in the same object (`:603`).
 
-### 4.6 Overlap adjustment is implemented three inconsistent ways
+### 4.6 Overlap adjustment is implemented three inconsistent ways — **FIXED** (`fix/statistical-integrity`, commit 518b657)
+
+> `harness.ts`'s `metricsFor` now divides `distinctDates` (not pooled rows) by
+> `td`, matching the other two implementations. `metricsFor` exported for
+> direct testing; 4 regression tests in `tests/harness-overlap.test.ts` prove
+> the corrected divisor against the old formula on the exact 40-tickers×100-dates
+> scenario this section describes. Newey–West SE's narrower scope (MAE only)
+> is unchanged — not part of this fix.
 
 - `policy.ts:57` — `floor(raw/30)` ✅
 - `ModelHealthService.ts:99` — `floor(distinctDates/overlap)` ✅
-- `harness.ts:217` — `floor(preds.length/td)` on **pooled cross-sectional
-  rows** ❌ — over-counts by roughly the ticker count (40 tickers × 100 dates
-  at 30d → ~190 "effective samples" from ~5 truly independent windows).
+- ~~`harness.ts:217` — `floor(preds.length/td)` on pooled cross-sectional
+  rows ❌ — over-counts by roughly the ticker count (40 tickers × 100 dates
+  at 30d → ~190 "effective samples" from ~5 truly independent windows).~~
+  now `floor(distinctDates/td)` ✅
 
 Newey–West SE is correctly implemented but applied **only to MAE**, not to hit
 rate, Brier or coverage.
@@ -440,15 +496,24 @@ highest-value follow-up.
    hardcoded assumption; relabeled `"ESTIMATED"`. (§6)
 
 **P1 — statistical integrity**
-5. Either implement a real block bootstrap in `evUncertainty.ts` or rename the
-   output so it does not claim to be a sampling CI of the data. (§4.1)
-6. Give the setup-expectancy study a train/test split; use the existing
+5. ✅ **FIXED** (`fix/statistical-integrity`, 518b657) — Either implement a
+   real block bootstrap in `evUncertainty.ts` or rename the output so it does
+   not claim to be a sampling CI of the data. (§4.1)
+6. ✅ **FIXED** (`fix/statistical-integrity`, 3eff648) — Give the
+   setup-expectancy study a train/test split; use the existing
    `dateBlockBootstrap`; divide `independentEntryDates` by holding period.
-   (§4.2)
-7. Fix `harness.ts:217` to divide distinct dates, not pooled rows. (§4.6)
-8. Call the DSR/PBO code that already exists, with `nTrials` reflecting the real
-   search space. (§4.3)
-9. Stop reporting the selection-winning OOS R² as unbiased. (§4.5)
+   (§4.2) — *needs a live production re-run before the new numbers can be
+   trusted; not done from this checkout.*
+7. ✅ **FIXED** (`fix/statistical-integrity`, 518b657) — Fix `harness.ts:217`
+   to divide distinct dates, not pooled rows. (§4.6)
+8. ✅ **PARTIALLY FIXED** (`fix/statistical-integrity`, 3eff648) — Call the
+   DSR/PBO code that already exists, with `nTrials` reflecting the real
+   search space. (§4.3) — *`nTrials` is still a floor that can't see the
+   setup-threshold search from earlier development; genuinely closing this
+   would mean re-deriving the setup rules themselves inside a train/test
+   split, a much larger change than wiring in the existing functions.*
+9. Stop reporting the selection-winning OOS R² as unbiased. (§4.5) — *not
+   in scope for the statistics batch actually requested; still open.*
 
 **P2 — honesty of presentation**
 10. Relabel the DCF `ESTIMATED`, and stop attaching filing URLs as its sources;
