@@ -10,6 +10,7 @@ import {
   ForecastController,
   UpstoxAuthController,
   LiveFeedController,
+  EvidenceController,
 } from "../controllers";
 import { createAdminRoutes } from "./admin";
 import { requireAuth, requireAuthOrAdminKey, requireCsrfHeader } from "../middleware/auth";
@@ -48,6 +49,7 @@ export const createStockRoutes = (): Router => {
   const authController = new AuthController();
   const upstoxAuthController = new UpstoxAuthController();
   const liveFeedController = new LiveFeedController();
+  const evidenceController = new EvidenceController();
   const ledgerController = new LedgerController();
   const forecastController = new ForecastController();
   const shortTermController = new ShortTermController();
@@ -79,6 +81,17 @@ export const createStockRoutes = (): Router => {
   router.get("/live/rows", liveFeedController.rows); //                     GET  /api/live/rows
   router.post("/live/start", requireAuth, liveFeedController.start); //     POST /api/live/start { tickers? }
   router.post("/live/stop", requireAuth, liveFeedController.stop); //       POST /api/live/stop
+
+  // ── Evidence ledger: the transparency surface ─────────────────────────────
+  // Reads the append-only ledgers and shows what was predicted, what was
+  // WRONG, and what changed as a result. Unauthenticated on purpose: the page
+  // that argues against the system's own output must be as reachable as the
+  // recommendations are.
+  router.get("/evidence", evidenceController.bundle); //                    GET  /api/evidence?limit=200
+  router.get("/evidence/predictions", evidenceController.predictions); //   GET  /api/evidence/predictions?limit=
+  router.get("/evidence/calibrators", evidenceController.calibrators); //   GET  /api/evidence/calibrators
+  router.get("/evidence/governance", evidenceController.governance); //     GET  /api/evidence/governance
+  router.get("/evidence/experiments", evidenceController.experiments); //   GET  /api/evidence/experiments
 
   // ── Watchlist (spec §3: follow ≠ own; removing never touches holdings) ───
   router.get("/watchlist", requireAuth, ledgerController.listWatchlist); //         GET    /api/watchlist

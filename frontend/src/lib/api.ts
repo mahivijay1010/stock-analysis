@@ -32,6 +32,7 @@ import type {
   WatchlistItem,
   LiveFeedRow,
   LiveFeedStatus,
+  EvidenceBundle,
   UpstoxAuthStatus,
 } from './types';
 
@@ -716,6 +717,14 @@ export function startLiveFeed(tickers?: string[]): Promise<LiveFeedStatus> {
 
 export function stopLiveFeed(): Promise<LiveFeedStatus> {
   return post<LiveFeedStatus>('/api/live/stop', {});
+}
+
+/**
+ * The evidence ledger. One round trip; the backend orders wrong predictions
+ * first so the client never has to decide what to surface.
+ */
+export function getEvidence(limit = 200): Promise<EvidenceBundle> {
+  return get<EvidenceBundle>(`/api/evidence?limit=${limit}`);
 }
 
 /** Upstox authorization state — never returns the token itself. */

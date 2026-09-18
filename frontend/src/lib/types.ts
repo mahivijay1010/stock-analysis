@@ -1222,3 +1222,108 @@ export interface UpstoxAuthStatus {
   loginUrl: string;
   note: string;
 }
+
+// ── Evidence ledger (GET /api/evidence) ──────────────────────────────────────
+// The transparency surface: what was predicted, what was WRONG, and what
+// changed as a result. Nullable fields are null because the ledger has no
+// value there — never because the frontend should substitute a guess.
+
+export type PredictionGrade = 'WRONG' | 'CORRECT' | 'PENDING';
+
+export interface PredictionLedgerRow {
+  id: string;
+  ticker: string;
+  predictionDate: string;
+  targetDate: string | null;
+  horizonDays: number | null;
+  modelVersion: string;
+  predictedDirection: string;
+  predictedProbability: number;
+  confidence: number | null;
+  expectedReturnPct: number | null;
+  actualReturnPct: number | null;
+  actualDirection: string | null;
+  grade: PredictionGrade;
+  errorPct: number | null;
+  outcomeDate: string | null;
+  recommendationGiven: string | null;
+}
+
+export interface PredictionLedger {
+  rows: PredictionLedgerRow[];
+  total: number;
+  graded: number;
+  wrong: number;
+  correct: number;
+  pending: number;
+  hitRatePct: number | null;
+  meanAbsErrorPct: number | null;
+  sampleWarning: string | null;
+}
+
+export interface EvidenceCalibrator {
+  id: string;
+  modelName: string;
+  horizonDays: number;
+  calibratorType: string | null;
+  version: string | null;
+  effectiveSamples: number;
+  brierBefore: number;
+  brierAfter: number | null;
+  eceBefore: number;
+  eceAfter: number | null;
+  brierImprovement: number | null;
+  promoted: boolean;
+  verdict: string;
+  trainingStart: string | null;
+  trainingEnd: string | null;
+  createdAt: string;
+}
+
+export interface EvidenceGovernance {
+  modelKey: string;
+  scope: string;
+  state: string;
+  reasons: string[];
+  evidenceRunId: string | null;
+  updatedAt: string;
+}
+
+export interface EvidenceExperiment {
+  id: string;
+  name: string;
+  kind: string;
+  modelVersion: string;
+  status: string;
+  usedFinalTest: boolean;
+  metrics: Record<string, unknown> | null;
+  baselines: Record<string, unknown> | null;
+  notes: string | null;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface EvidenceSummary {
+  version: string;
+  asOf: string;
+  predictionsTotal: number;
+  predictionsGraded: number;
+  predictionsWrong: number;
+  predictionsPending: number;
+  calibratorsTrained: number;
+  calibratorsPromoted: number;
+  calibratorsRejected: number;
+  governedModels: number;
+  modelsNotLive: number;
+  experimentsRun: number;
+  headline: string;
+}
+
+export interface EvidenceBundle {
+  summary: EvidenceSummary;
+  predictions: PredictionLedger;
+  calibrators: EvidenceCalibrator[];
+  governance: EvidenceGovernance[];
+  experiments: EvidenceExperiment[];
+}

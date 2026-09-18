@@ -15,6 +15,7 @@ import {
   Gauge,
   Menu,
   Radio,
+  ScrollText,
   Settings,
   X,
   type LucideIcon, Zap } from 'lucide-react';
@@ -29,6 +30,7 @@ export type TabId =
   | 'short-term'
   | 'live'
   | 'track-record'
+  | 'evidence'
   | 'stock'
   | 'sandbox'
   | 'diagnostics';
@@ -42,6 +44,7 @@ const PRIMARY: NavItem[] = [
   { id: 'short-term', label: 'Short-Term', short: 'Short', description: '1–21 session setups', icon: Zap },
   { id: 'live', label: 'Live', short: 'Live', description: 'Real-time NSE monitoring', icon: Radio },
   { id: 'track-record', label: 'Track Record', short: 'Record', description: 'Measured model evidence', icon: Gauge },
+  { id: 'evidence', label: 'Evidence', short: 'Evidence', description: 'Predictions, misses & what changed', icon: ScrollText },
 ];
 
 /** Secondary destinations (gear menu): the sandbox desk + protected diagnostics. */
