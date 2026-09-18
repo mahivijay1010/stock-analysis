@@ -8,3 +8,4 @@ export { LedgerController } from "./LedgerController";
 export { ForecastController } from "./ForecastController";
 export { ShortTermController } from "./ShortTermController";
 export { UpstoxAuthController } from "./UpstoxAuthController";
+export { LiveFeedController } from "./LiveFeedController";

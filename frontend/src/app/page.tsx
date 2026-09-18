@@ -7,6 +7,7 @@ import { TabPanel } from '@/components/motion';
 import { PortfolioView } from '@/components/portfolio/PortfolioView';
 import { DiscoverView } from '@/components/DiscoverView';
 import { ShortTermView } from '@/components/shortterm/ShortTermView';
+import { LiveView } from '@/components/live/LiveView';
 import { TrackRecordView } from '@/components/TrackRecordView';
 import { StockDetailView } from '@/components/analyze/AnalyzeView';
 import { SandboxView } from '@/components/admin/AdminView';
@@ -18,6 +19,7 @@ const CANONICAL_TABS: readonly TabId[] = [
   'watchlist',
   'discover',
   'short-term',
+  'live',
   'track-record',
   'stock',
   'sandbox',
@@ -180,6 +182,7 @@ export default function Home() {
               )}
               {tab === 'discover' && <DiscoverView onOpenStock={openStock} />}
               {tab === 'short-term' && <ShortTermView />}
+              {tab === 'live' && <LiveView />}
               {tab === 'track-record' && <TrackRecordView />}
               {tab === 'diagnostics' && <TrackRecordView diagnosticsOpen />}
               {tab === 'stock' && (

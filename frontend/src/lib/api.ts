@@ -30,6 +30,9 @@ import type {
   UniverseStockRow,
   VolForecastResponse,
   WatchlistItem,
+  LiveFeedRow,
+  LiveFeedStatus,
+  UpstoxAuthStatus,
 } from './types';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5101';
@@ -694,4 +697,28 @@ export function getShortTermAiUsage(): Promise<{
   mode: string;
 }> {
   return get('/api/short-term/ai-usage');
+}
+
+// ── Live market feed (STREAMING) ─────────────────────────────────────────────
+
+/** Feed lifecycle + health. Reads are open; start/stop need a session. */
+export function getLiveStatus(): Promise<LiveFeedStatus> {
+  return get<LiveFeedStatus>('/api/live/status');
+}
+
+export function getLiveRows(): Promise<{ rows: LiveFeedRow[]; status: LiveFeedStatus }> {
+  return get<{ rows: LiveFeedRow[]; status: LiveFeedStatus }>('/api/live/rows');
+}
+
+export function startLiveFeed(tickers?: string[]): Promise<LiveFeedStatus> {
+  return post<LiveFeedStatus>('/api/live/start', tickers ? { tickers } : {});
+}
+
+export function stopLiveFeed(): Promise<LiveFeedStatus> {
+  return post<LiveFeedStatus>('/api/live/stop', {});
+}
+
+/** Upstox authorization state — never returns the token itself. */
+export function getUpstoxAuthStatus(): Promise<UpstoxAuthStatus> {
+  return get<UpstoxAuthStatus>('/api/auth/upstox/status');
 }

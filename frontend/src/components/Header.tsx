@@ -14,6 +14,7 @@ import {
   FlaskConical,
   Gauge,
   Menu,
+  Radio,
   Settings,
   X,
   type LucideIcon, Zap } from 'lucide-react';
@@ -26,6 +27,7 @@ export type TabId =
   | 'watchlist'
   | 'discover'
   | 'short-term'
+  | 'live'
   | 'track-record'
   | 'stock'
   | 'sandbox'
@@ -38,6 +40,7 @@ const PRIMARY: NavItem[] = [
   { id: 'watchlist', label: 'Watchlist', short: 'Watch', description: 'Positions & live signals', icon: Eye },
   { id: 'discover', label: 'Discover', short: 'Discover', description: 'Opportunity universe', icon: Compass },
   { id: 'short-term', label: 'Short-Term', short: 'Short', description: '1–21 session setups', icon: Zap },
+  { id: 'live', label: 'Live', short: 'Live', description: 'Real-time NSE monitoring', icon: Radio },
   { id: 'track-record', label: 'Track Record', short: 'Record', description: 'Measured model evidence', icon: Gauge },
 ];
 

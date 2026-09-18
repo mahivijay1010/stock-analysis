@@ -1167,3 +1167,58 @@ export interface CommitteeLatestResponse {
   review: AiReviewRecord | null;
   note: string;
 }
+
+// ── Live market feed (STREAMING mode) ────────────────────────────────────────
+
+export interface LiveFeedRow {
+  ticker: string;
+  instrumentKey: string;
+  name: string;
+  sector: string;
+  price: number | null;
+  changePct: number | null;
+  dayHigh: number | null;
+  dayLow: number | null;
+  open: number | null;
+  observedVolume: number | null;
+  freshness: string;
+  dataQuality: string;
+  ageSeconds: number | null;
+  tickCount: number;
+  completedBars: number;
+  notes: string[];
+}
+
+export interface LiveFeedHealth {
+  state: string;
+  lastTickAt: number | null;
+  subscribed: number;
+  reason?: string;
+}
+
+export interface LiveFeedStatus {
+  running: boolean;
+  mode: string;
+  authorityCeiling: string;
+  health: LiveFeedHealth | null;
+  universeSize: number;
+  subscribed: number;
+  unresolved: string[];
+  ticksAccepted: number;
+  ticksRejected: number;
+  securitiesWithData: number;
+  tokenState: string;
+  startedAt: string | null;
+  note: string;
+}
+
+export interface UpstoxAuthStatus {
+  configured: boolean;
+  missing: string[];
+  tokenState: string;
+  expiresAt: string | null;
+  minutesRemaining: number | null;
+  reason: string;
+  loginUrl: string;
+  note: string;
+}

@@ -9,6 +9,7 @@ import {
   LedgerController,
   ForecastController,
   UpstoxAuthController,
+  LiveFeedController,
 } from "../controllers";
 import { createAdminRoutes } from "./admin";
 import { requireAuth, requireAuthOrAdminKey, requireCsrfHeader } from "../middleware/auth";
@@ -46,6 +47,7 @@ export const createStockRoutes = (): Router => {
   const quantController = new QuantController();
   const authController = new AuthController();
   const upstoxAuthController = new UpstoxAuthController();
+  const liveFeedController = new LiveFeedController();
   const ledgerController = new LedgerController();
   const forecastController = new ForecastController();
   const shortTermController = new ShortTermController();
@@ -67,6 +69,16 @@ export const createStockRoutes = (): Router => {
   router.get("/auth/upstox/login", upstoxAuthController.login); //          GET  /api/auth/upstox/login (302 → Upstox)
   router.get("/auth/upstox/callback", upstoxAuthController.callback); //    GET  /api/auth/upstox/callback?code=&state=
   router.get("/auth/upstox/status", upstoxAuthController.status); //        GET  /api/auth/upstox/status (no token exposed)
+
+  // ── Live market feed (STREAMING mode) ────────────────────────────────────
+  // Reads are open; start/stop are authenticated POSTs because they open a
+  // broker connection and consume the daily Upstox token. Ticks drive
+  // MONITORING only — a real-time feed raises the DATA mode, never the
+  // evidence bar that gates an entry.
+  router.get("/live/status", liveFeedController.status); //                 GET  /api/live/status
+  router.get("/live/rows", liveFeedController.rows); //                     GET  /api/live/rows
+  router.post("/live/start", requireAuth, liveFeedController.start); //     POST /api/live/start { tickers? }
+  router.post("/live/stop", requireAuth, liveFeedController.stop); //       POST /api/live/stop
 
   // ── Watchlist (spec §3: follow ≠ own; removing never touches holdings) ───
   router.get("/watchlist", requireAuth, ledgerController.listWatchlist); //         GET    /api/watchlist
