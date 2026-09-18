@@ -105,6 +105,30 @@ export function computePositionSize(opts: {
 
 // ── Portfolio-level risk manager (S6) ───────────────────────────────────────
 
+/**
+ * Equity drawdown from peak, %, over the realized paper P&L history — the
+ * input the drawdown kill switch needs (docs/system-trust-review.md §5.4
+ * flagged it as inert because ScanService passed null). PURE.
+ *
+ * Equity starts at `budgetInr`; each entry is one day's realized P&L in
+ * chronological order. Drawdown is measured on the CURRENT equity vs the
+ * running peak (Varsity RM 11.3, "recovery trauma": −5% needs +5.3% back,
+ * −10% needs +11.1%, −60% needs +150%). Returns 0 with no history and null
+ * only when the budget is not a positive number.
+ */
+export function computeEquityDrawdownPct(budgetInr: number, dailyRealizedPnlInr: number[]): number | null {
+  if (!(budgetInr > 0)) return null;
+  let equity = budgetInr;
+  let peak = budgetInr;
+  for (const pnl of dailyRealizedPnlInr) {
+    if (!Number.isFinite(pnl)) continue;
+    equity += pnl;
+    if (equity > peak) peak = equity;
+  }
+  if (!(peak > 0)) return -100;
+  return Math.round(((equity - peak) / peak) * 10000) / 100;
+}
+
 export const RISK_LIMITS = {
   maxOpenRiskPctOfBudget: 2.0, // sum of open lossAtStop
   maxOpenPositions: 5,

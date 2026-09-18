@@ -3,13 +3,18 @@
  * not hardcoded forever. EV calculations must include every leg + slippage.
  */
 
+export type CostProductType = "DELIVERY_EQUITY" | "INTRADAY_EQUITY";
+
 export interface TransactionCostSchedule {
   version: string;
   effectiveFrom: string;
   market: "NSE";
-  productType: "DELIVERY_EQUITY";
+  productType: CostProductType;
   values: {
     brokeragePctPerSide: number; // discount brokers: 0 for delivery
+    /** Discount-broker intraday brokerage is "₹X or Y% per order, whichever is
+     *  LOWER". When set, per-side brokerage = min(this flat ₹, pct × order value). */
+    brokerageFlatInrPerOrderCap?: number;
     sttPctBuy: number;
     sttPctSell: number;
     exchangeTxnPctPerSide: number;
@@ -38,14 +43,49 @@ export const COST_SCHEDULE_2024_10: TransactionCostSchedule = {
   },
 };
 
-export function activeCostSchedule(): TransactionCostSchedule {
-  return COST_SCHEDULE_2024_10;
+/**
+ * India INTRADAY-equity schedule (docs/intraday-study-notes.md §1.5). It is a
+ * genuinely different schedule from delivery, not a discount on it: STT is
+ * 0.025% on the SELL side only (vs 0.1% both legs), stamp duty 0.003% (vs
+ * 0.015%), no DP charge (no delivery, nothing leaves the demat), but discount
+ * brokerage is NOT zero — ₹20 or 0.03% per executed order, whichever is lower
+ * (Zerodha's published schedule). The flat ₹40 round-trip brokerage floor is
+ * exactly why SEBI found 79% of sub-₹5k-ticket intraday traders lose: it does
+ * not shrink with the trade. Any intraday P&L/EV must use THIS schedule.
+ */
+export const COST_SCHEDULE_INTRADAY_2024_10: TransactionCostSchedule = {
+  version: "in-intraday-2024-10",
+  effectiveFrom: "2024-10-01",
+  market: "NSE",
+  productType: "INTRADAY_EQUITY",
+  values: {
+    brokeragePctPerSide: 0.03,
+    brokerageFlatInrPerOrderCap: 20,
+    sttPctBuy: 0,
+    sttPctSell: 0.025,
+    exchangeTxnPctPerSide: 0.00297,
+    sebiFeesPctPerSide: 0.0001,
+    stampDutyPctBuy: 0.003,
+    gstPctOnBrokerageAndTxn: 18,
+    dpChargeInrPerSellOrder: 0,
+  },
+};
+
+export function activeCostSchedule(productType: CostProductType = "DELIVERY_EQUITY"): TransactionCostSchedule {
+  return productType === "INTRADAY_EQUITY" ? COST_SCHEDULE_INTRADAY_2024_10 : COST_SCHEDULE_2024_10;
+}
+
+/** Per-side brokerage as a % of order value, honouring a flat-₹ cap when the schedule has one. */
+function brokeragePctPerSide(v: TransactionCostSchedule["values"], orderValueInr: number): number {
+  if (v.brokerageFlatInrPerOrderCap == null || !(orderValueInr > 0)) return v.brokeragePctPerSide;
+  const flatAsPct = (v.brokerageFlatInrPerOrderCap / orderValueInr) * 100;
+  return Math.min(v.brokeragePctPerSide, flatAsPct);
 }
 
 /** Round-trip percentage cost for a given order value (excl. slippage). */
 export function roundTripCostPct(orderValueInr: number, s: TransactionCostSchedule = activeCostSchedule()): number {
   const v = s.values;
-  const perSideTxn = v.exchangeTxnPctPerSide + v.sebiFeesPctPerSide + v.brokeragePctPerSide;
+  const perSideTxn = v.exchangeTxnPctPerSide + v.sebiFeesPctPerSide + brokeragePctPerSide(v, orderValueInr);
   const gst = (2 * perSideTxn * v.gstPctOnBrokerageAndTxn) / 100;
   const pct = v.sttPctBuy + v.sttPctSell + 2 * perSideTxn + v.stampDutyPctBuy + gst;
   const dpPct = orderValueInr > 0 ? (v.dpChargeInrPerSellOrder / orderValueInr) * 100 : 0;

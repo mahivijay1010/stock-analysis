@@ -35,7 +35,7 @@ import { classifySetup } from "./setups";
 import { buildTradePlan } from "./entryExit";
 import { buildShortTermForecast, bracketExpectedValuePct, expectedHoldingDaysFor } from "./model";
 import { evaluateGates, rankingScoreV2 } from "./ranking";
-import { computePositionSize, assessPortfolioRisk } from "./sizing";
+import { computePositionSize, assessPortfolioRisk, computeEquityDrawdownPct } from "./sizing";
 import { computeEvEvidence, evGatePasses } from "./evUncertainty";
 import { setupEvidenceService } from "./setupEvidence";
 import { assessLevels } from "./plausibility";
@@ -151,12 +151,23 @@ export class ShortTermScanService {
          FROM short_term_paper_trades WHERE status = 'CLOSED'`
     ).catch(() => [{ today: "0", week: "0" }]);
     const budget = params.budgetInr ?? 100_000;
+    // Drawdown kill switch input (system-trust-review §5.4 flagged this as
+    // inert — it was hardcoded null). Equity curve = budget + cumulative
+    // realized paper P&L by exit date; drawdown = current equity vs running
+    // peak (Varsity RM 11.3 "recovery trauma"). No closed trades ⇒ 0%, and
+    // the switch simply cannot fire — never fabricated.
+    const dailyPnl: Array<{ d: string; pnl: string | null }> = await AppDataSource.query(
+      `SELECT exit_date::text AS d, COALESCE(SUM((metrics->>'pnlInr')::numeric),0)::text AS pnl
+         FROM short_term_paper_trades WHERE status = 'CLOSED' AND exit_date IS NOT NULL
+        GROUP BY exit_date ORDER BY exit_date ASC`
+    ).catch(() => []);
+    const equityDrawdownPct = computeEquityDrawdownPct(budget, dailyPnl.map((r) => Number(r.pnl ?? 0)));
     const riskManager = assessPortfolioRisk({
       budgetInr: budget,
       openPositions: openPaper.map((p) => ({ lossAtStop: Number(p.loss_at_stop ?? 0), sector: p.sector ?? "UNKNOWN" })),
       realizedTodayInr: Number(realized[0]?.today ?? 0),
       realizedWeekInr: Number(realized[0]?.week ?? 0),
-      equityDrawdownPct: null, // populated once paper history exists
+      equityDrawdownPct,
     });
 
     // ── STAGE 0: deterministic scan over the filtered universe ──────────────
@@ -303,6 +314,8 @@ export class ShortTermScanService {
         atr14: plan.atr14,
         ev: evEvidence,
         gapPctRecent: f.gapPct,
+        // Varsity 19.5: S&R more than 4% from the stop ⇒ skip the chart.
+        supportPrice: f.supportDistPct != null ? f.price * (1 - f.supportDistPct / 100) : null,
       });
       entryQuality && (entryQuality.score = Math.max(0, (entryQuality.score ?? 50) - plausibility.qualityPenalty));
 

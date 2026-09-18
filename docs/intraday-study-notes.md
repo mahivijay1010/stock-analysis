@@ -184,25 +184,25 @@ Legend: **✅ aligned** · **≈ partial** · **❌ gap**
 | Beginners avoid day trading; EOD bars even for day trades (TA 19.2) | Entire short-term stack runs on **completed daily bars only**; `LiveMarketDataProvider`: quotes are "display/monitoring only"; no intraday interval fetched anywhere | ✅ — the system *is* Varsity's beginner path |
 | Nifty-50-class liquid universe; ≥5 lakh shares/day (TA 19.4) | `nseUniverse.ts` (151 liquid names); `SIZING_LIMITS.maxParticipationPctOfAdv = 2` of 20d ADV; `minAdvInr` filter | ✅ |
 | Checklist 1 — recognisable candlestick pattern | `setups.ts` classifies *structural* setups (pullback/VCP/breakout/momentum/mean-reversion) from SMA/ATR/RSI features, not candlestick patterns | ≈ different vocabulary, same role |
-| Checklist 2 — stop ≈ S&R; skip if S&R >4% from stop (TA 11.4, 19.5) | `entryExit.ts`: stop = swing support − 0.25/0.75 ATR (structure-first) ✅; `plausibility.ts` checks stop ≥ 1 ATR from noise | ≈ **the "S&R more than 4% from the stop → skip" rule is not encoded** |
+| Checklist 2 — stop ≈ S&R; skip if S&R >4% from stop (TA 11.4, 19.5) | `entryExit.ts`: stop = swing support − 0.25/0.75 ATR (structure-first); `plausibility.ts` now also fails `stopStructural` when the stop is > 4% (`MAX_STOP_TO_SUPPORT_PCT`) from the nearest support, which `tiers.ts` caps at tier B | ✅ **encoded 2026-09-18** |
 | S&R needs ≥3 well-spaced touches, 2-year lookback (TA 11) | `features.ts` supportDistPct from swing structure; lookback is the 5y/2y bar window | ≈ touch-count not enforced |
 | Checklist 3 — volume ≥ 10-day avg both days; avoid low-volume days (TA 12) | `features.ts relVolume` = today / **20-day** avg; breakout requires ≥1.3×; <0.7× = "weak participation" *penalty* | ≈ window 20d vs 10d; low volume is a score penalty, not a hard skip |
 | Checklist 4 — trade with the primary trend (TA 18.6) | `setups.ts uptrend` (price > SMA50 > SMA200); `regimeEngine.ts` market/stock regime, cap-only | ✅ |
 | Checklist 5 — indicators size the bet, never veto (TA 15.4) | RSI/ADX are **hard conditions** inside several setups (e.g. RSI 35–60 for pullback, ADX > 25 for momentum) | ≈ stricter than doctrine (conservative direction) — acceptable, but note it inverts Varsity's "twist" |
-| Checklist 6 — **RRR ≥ 1.5 or drop the trade** (TA 18.5) | `entryExit.ts`: target1 = entry + 1.5 ATR; pullback/momentum stop = entry − 1.5 ATR ⇒ **RRR to T1 ≈ 1.0 by construction**; `rewardRiskToTarget1` is computed and `entryQuality.ts` scores it (−/+5) but **nothing gates on it** | ❌ **no hard RRR gate; T1 geometry sits below Varsity's minimum** |
+| Checklist 6 — **RRR ≥ 1.5 or drop the trade** (TA 18.5) | Correction to the first draft of these notes: a hard gate *did* exist — `ranking.ts GATE_THRESHOLDS.minRewardRisk1`, at **1.2**, below both Varsity's 1.3 floor and its 1.5 active-trader minimum. Now **1.5**. Stops were *not* tightened and T1 was *not* stretched (the file's own rule); consequence: pullback/momentum geometry (1.5-ATR stop vs 1.5-ATR T1 ⇒ RRR≈1.0) is excluded unless structure gives a closer stop — which is the doctrine | ✅ **gate raised 2026-09-18** |
 | "Deciding not to trade is a decision" (TA 19.5) | Scan returns UP TO 5, zero forced picks; live verdict on 2026-09-17: 0/12 cells usable | ✅ |
 | "Do nothing till target or stop" (TA 19.5) | State machine + shadow ledger resolves on completed bars; no discretionary exits | ✅ |
-| Risk per trade 1–3% (RM 14.1) | `riskPerTradePct` is user-supplied, bounded **0.01–5%**, no default | ≈ **upper bound 5% exceeds doctrine; no 1–1.5% default** |
+| Risk per trade 1–3% (RM 14.1) | Correction: a default *does* exist — `types.ts DEFAULT_SCAN_PARAMS.riskPerTradePct = 0.5%`, *below* the professional range (conservative, kept). The controller ceiling was 5%; now **3%** | ✅ **ceiling lowered 2026-09-18** |
 | Per-share loss includes costs + gap (RM 13.4 spirit) | `sizing.ts`: riskPerShare + cost/slippage + `GAP_BUFFER_ATR 0.2` | ✅ stricter than Varsity |
 | Percentage-volatility sizing (RM 13.4) | Only the gap buffer uses ATR; no ATR-fluctuation cap as an alternative sizing method | ≈ |
 | Reduced-total-equity: re-base risk after each fill (RM 12.2) | `RISK_LIMITS.maxOpenRiskPctOfBudget = 2.0` (sum of open loss-at-stop), `maxOpenPositions = 5`, sector ≤ 50% | ✅ equivalent discipline |
 | Stop when the day/week goes wrong (TA 19.5, RM 11.3) | `RISK_LIMITS`: daily loss 1.5%, weekly 3.0% → entries disabled | ✅ |
-| Recovery trauma / drawdown halt (RM 11.3) | `drawdownKillSwitchPct = 6.0` exists but `ScanService` passes `equityDrawdownPct: null` | ❌ **inert** (already flagged, review §5.4) |
+| Recovery trauma / drawdown halt (RM 11.3) | `drawdownKillSwitchPct = 6.0`; `ScanService` now feeds it from the real paper equity curve via pure `computeEquityDrawdownPct(budget, dailyRealizedPnl)` (current equity vs running peak). No closed trades ⇒ 0%, never fabricated | ✅ **live 2026-09-18** (closes review §5.4) |
 | Kelly capped, never raw (RM 14.2) | Admin desk: half-Kelly, f* clamp 0.25, b precedence measured > DCF > structural | ✅ same philosophy |
 | Gambler's fallacy — odds don't change after a streak | Deterministic sizing from budget × risk%, never from recent P&L | ✅ |
 | Journal to defeat attribution bias (RM 16.4) | `PredictionLog`, shadow ledger, `PaperTrade.entry_context`, immutable via DB triggers | ✅ better than a journal |
 | Confirmation-bias guard | Fail-closed gates; AI cap-only; BH-FDR; out-of-sample study | ✅ |
-| Intraday cost schedule (STT 0.025% sell-only; ₹20/order) | `costs.ts` has **only the delivery schedule** | ❌ needed before any intraday P&L is computed |
+| Intraday cost schedule (STT 0.025% sell-only; ₹20/order) | `costs.ts COST_SCHEDULE_INTRADAY_2024_10`, selectable via `activeCostSchedule("INTRADAY_EQUITY")`; brokerage = min(₹20, 0.03%) per side, so the flat ₹40 round trip dominates small tickets (≈0.106% on ₹4k vs ≈0.036% on ₹1 cr) — SEBI's <₹5k finding, in numbers. Delivery schedule untouched | ✅ **added 2026-09-18** — not yet consumed by any plan (no intraday surface exists) |
 | SEBI base-rate disclosure on any intraday surface | Not present (no intraday surface exists) | ❌ |
 | No leverage by default (SEBI 5× cap) | Sizing is cash-only; no margin modeled | ✅ (keep it that way) |
 
@@ -251,18 +251,27 @@ would have to *enforce*, not merely display.
 
 ## 4. What to build next, in order — small, each independently testable
 
-1. **Intraday cost schedule** in `costs.ts` (`COST_SCHEDULE_INTRADAY_*`: STT
-   0.025% sell-side, brokerage min(₹20, 0.03%)/order, no DP), selectable per
-   plan. Prerequisite for every other intraday number.
-2. **Hard RRR gate** in the short-term pipeline: `rewardRiskToTarget1 < 1.5`
-   → not entry-eligible (positional). Re-examine T1 = 1.5 ATR vs 1.5 ATR
-   stop — either the target basis or the gate has to change; today they
-   contradict Varsity by construction.
-3. **"S&R more than 4% from the stop → skip"** in `plausibility.ts`.
-4. **Risk-per-trade default 1.5%, warn > 3%, cap 3%** in
-   `ShortTermController` bounds (currently 0.01–5%).
-5. **Wire `equityDrawdownPct`** from paper equity so the −6% kill switch is
-   live (review §5.4).
+**Items 1–5 done 2026-09-18** (`feature/continuous-learning`; tests in
+`tests/intraday-doctrine.test.ts`, 50 suites / 578 tests green). Two findings
+from implementing them corrected this document's first draft: the RRR gate
+already existed at 1.2 (raised to 1.5, not created), and a 0.5% risk default
+already existed (kept; only the 5% ceiling came down to 3%).
+
+1. ✅ **Intraday cost schedule** in `costs.ts` (`COST_SCHEDULE_INTRADAY_2024_10`:
+   STT 0.025% sell-side, brokerage min(₹20, 0.03%)/order, no DP), selectable
+   via `activeCostSchedule("INTRADAY_EQUITY")`. Not yet consumed — nothing
+   intraday exists to consume it.
+2. ✅ **RRR gate raised 1.2 → 1.5** (`ranking.ts GATE_THRESHOLDS.minRewardRisk1`).
+   Stops and targets untouched, per the file's own rule; setups whose
+   structure cannot reach 1.5 are excluded — the doctrine, not a workaround.
+3. ✅ **"S&R more than 4% from the stop → skip"** in `plausibility.ts`
+   (`MAX_STOP_TO_SUPPORT_PCT`, new `stopToSupportPct` field; `ScanService`
+   passes the swing-support price; `tiers.ts` already caps at B on
+   `!stopStructural`).
+4. ✅ **Risk-per-trade ceiling 5% → 3%** in `ShortTermController`; default
+   0.5% kept.
+5. ✅ **`equityDrawdownPct` wired** from the paper-trade equity curve
+   (`computeEquityDrawdownPct`, pure, tested) so the −6% kill switch is live.
 6. **`INTRADAY_CANDLES` provider** — Yahoo `interval=5m` first (keyless,
    ~15-min DELAYED, rate-limited; labelled as such; `capActionByMode` already
    caps it at WAIT), so 15-min context, VWAP and slippage *measurement* become

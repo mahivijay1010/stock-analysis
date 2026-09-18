@@ -178,7 +178,7 @@ describe("gates — fewer than five is the honest default", () => {
     target3: null,
     targetBasis: "ATR",
     expectedHoldingDays: 7,
-    rewardRiskToTarget1: 1.3,
+    rewardRiskToTarget1: 1.6, // ≥ GATE_THRESHOLDS.minRewardRisk1 (1.5, Varsity 18.6) so this fixture isolates OTHER gates
     rewardRiskToTarget2: 2,
     atr14: 10,
     annualVolPct: 30,

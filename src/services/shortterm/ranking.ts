@@ -14,7 +14,15 @@ export const GATE_THRESHOLDS = {
   maxZeroVolumeBars20: 1,
   maxBarAgeDays: 4,
   minSetupScore: 45,
-  minRewardRisk1: 1.2,
+  // Varsity TA 18.5/18.6: "for every Rs.1 you risk your expected return should
+  // be at least Rs.1.3 or higher"; "For an active trader, I would suggest a
+  // RRR of at least 1.5" — and a trade that ticks every other box at RRR≈1.0
+  // is DROPPED. Was 1.2. Raising the gate, not tightening stops or stretching
+  // targets: the stop stays structural and T1 stays honest, so a setup whose
+  // geometry cannot reach 1.5 (pullback/momentum: 1.5-ATR stop vs 1.5-ATR T1
+  // ⇒ RRR≈1.0 by construction) is now excluded — which is the doctrine.
+  // docs/intraday-study-notes.md §2, §4 item 2.
+  minRewardRisk1: 1.5,
   minEvAfterCostsPct: 0.25,
   maxAtrPct: 6,
   maxSlippagePct: 0.6,

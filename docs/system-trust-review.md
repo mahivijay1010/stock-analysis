@@ -360,10 +360,17 @@ never less". The `AVOID_NEW_ENTRY` vetoes are null-guarded
 **cannot fire**, so a genuinely hostile stock degrades to `WAIT` rather than
 `AVOID`. True for Gate 2, false for Gate 1.
 
-### 5.4 Inert safety machinery
+### 5.4 Inert safety machinery — **PARTIALLY FIXED** (`feature/continuous-learning`, 2026-09-18)
 
-`RISK_LIMITS.drawdownKillSwitchPct` never triggers — `ScanService.ts:159`
-passes `equityDrawdownPct: null`. Similarly `stabilityDelta` is hardcoded null
+> The drawdown kill switch is now live: `ScanService` computes
+> `equityDrawdownPct` from the closed paper-trade equity curve via the pure,
+> tested `computeEquityDrawdownPct(budget, dailyRealizedPnl)` in `sizing.ts`
+> (current equity vs running peak; no history ⇒ 0%, never fabricated). Done
+> as item 5 of `docs/intraday-study-notes.md` §4. **`stabilityDelta` is still
+> hardcoded null** — the forecast-confidence ceiling of 90 remains.
+
+~~`RISK_LIMITS.drawdownKillSwitchPct` never triggers — `ScanService.ts:159`
+passes `equityDrawdownPct: null`.~~ Similarly `stabilityDelta` is hardcoded null
 (`DecisionService.ts:339`), so forecast-confidence has a reachable maximum of
 **90, not 100**, silently tightening the 60 gate.
 

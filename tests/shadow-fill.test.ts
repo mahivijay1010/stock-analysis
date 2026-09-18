@@ -97,7 +97,7 @@ describe("toAdjustedOhlc (#8)", () => {
 describe("scan param validation (P0 #47)", () => {
   test("rejects negative budget, extreme risk %, and min>max", () => {
     expect(() => parseParams({ budgetInr: -5 })).toThrow(HttpError);
-    expect(() => parseParams({ riskPerTradePct: 50 })).toThrow(/between 0.01 and 5/);
+    expect(() => parseParams({ riskPerTradePct: 50 })).toThrow(/between 0.01 and 3/);
     expect(() => parseParams({ priceMin: 500, priceMax: 100 })).toThrow(/cannot exceed/);
     expect(() => parseParams({ horizon: "99d" })).toThrow(/horizon must be/);
   });

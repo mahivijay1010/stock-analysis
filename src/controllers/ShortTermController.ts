@@ -47,7 +47,11 @@ export function parseParams(src: Record<string, unknown>): Partial<ScanParams> {
     priceMin,
     priceMax,
     horizon: enumOr(src.horizon, ["1-3d", "3-5d", "5-10d", "10-21d"] as const, "horizon"),
-    riskPerTradePct: bounded(src.riskPerTradePct, "riskPerTradePct", 0.01, 5) ?? undefined,
+    // Varsity RM 14.1: "professional traders do not risk more than 1 to 3% of
+    // their capital on any single trade" (worked example 1.5%). Ceiling was 5%.
+    // The default (types.ts DEFAULT_SCAN_PARAMS, 0.5%) is deliberately BELOW
+    // the professional range — conservative is not a doctrinal violation.
+    riskPerTradePct: bounded(src.riskPerTradePct, "riskPerTradePct", 0.01, 3) ?? undefined,
     strategy: enumOr(src.strategy, ["ALL", "PULLBACK", "BREAKOUT", "MOMENTUM", "MEAN_REVERSION"] as const, "strategy"),
     sector: typeof src.sector === "string" && src.sector && src.sector !== "ALL" ? src.sector : null,
     minAdvInr: bounded(src.minAdvInr, "minAdvInr", 0, 1e12),
