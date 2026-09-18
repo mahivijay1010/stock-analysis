@@ -1,0 +1,3 @@
+# Live session logs — one JSONL file per trading day, written by
+# scripts/liveSessionMonitor.ts. Raw observations, not committed.
+*.jsonl
