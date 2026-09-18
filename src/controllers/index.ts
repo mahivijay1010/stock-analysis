@@ -10,3 +10,4 @@ export { ShortTermController } from "./ShortTermController";
 export { UpstoxAuthController } from "./UpstoxAuthController";
 export { LiveFeedController } from "./LiveFeedController";
 export { EvidenceController } from "./EvidenceController";
+export { LearningJournalController } from "./LearningJournalController";

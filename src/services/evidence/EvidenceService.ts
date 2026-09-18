@@ -136,8 +136,34 @@ export interface EvidenceSummary {
   headline: string;
 }
 
+/**
+ * Whether the learning loop is actually RUNNING.
+ *
+ * Every table in this file can be empty for two very different reasons: the
+ * system is new, or the jobs that fill them silently stopped months ago.
+ * Those look identical on every other screen, so the pipeline's own heartbeat
+ * is reported explicitly rather than inferred from row counts.
+ */
+export interface PipelineJob {
+  jobName: string;
+  lastRunAt: string | null;
+  lastStatus: string | null;
+  lastDurationMs: number | null;
+  lastError: string | null;
+  runs: number;
+  failures: number;
+}
+
+export interface PipelineHealth {
+  /** True when no scheduled job has EVER recorded an execution. */
+  neverRun: boolean;
+  jobs: PipelineJob[];
+  note: string;
+}
+
 export interface EvidenceBundle {
   summary: EvidenceSummary;
+  pipeline: PipelineHealth;
   predictions: PredictionLedger;
   calibrators: CalibratorRow[];
   governance: GovernanceRow[];
@@ -362,13 +388,65 @@ export class EvidenceService {
     }));
   }
 
+  /**
+   * The learning loop's heartbeat, read from cron_execution_logs.
+   *
+   * `neverRun` is the single most important field on this whole surface: if it
+   * is true, every empty table below is empty because nothing has executed —
+   * not because the system has honestly found nothing. Those two states are
+   * indistinguishable from row counts alone, which is why this is reported
+   * separately rather than inferred.
+   */
+  async pipeline(): Promise<PipelineHealth> {
+    const rows: Record<string, unknown>[] = await AppDataSource.query(
+      `SELECT job_name,
+              MAX(execution_start) AS last_run_at,
+              COUNT(*) AS runs,
+              COUNT(*) FILTER (WHERE status <> 'success') AS failures
+         FROM cron_execution_logs
+        GROUP BY job_name
+        ORDER BY MAX(execution_start) DESC`
+    );
+
+    const jobs: PipelineJob[] = [];
+    for (const r of rows) {
+      const [last]: Record<string, unknown>[] = await AppDataSource.query(
+        `SELECT status, execution_duration_ms, error_summary
+           FROM cron_execution_logs
+          WHERE job_name = $1
+          ORDER BY execution_start DESC
+          LIMIT 1`,
+        [r.job_name]
+      );
+      jobs.push({
+        jobName: String(r.job_name),
+        lastRunAt: r.last_run_at ? iso(r.last_run_at) : null,
+        lastStatus: last?.status ? String(last.status) : null,
+        lastDurationMs: num(last?.execution_duration_ms),
+        lastError: last?.error_summary ? String(last.error_summary) : null,
+        runs: Number(r.runs ?? 0),
+        failures: Number(r.failures ?? 0),
+      });
+    }
+
+    const neverRun = jobs.length === 0;
+    return {
+      neverRun,
+      jobs,
+      note: neverRun
+        ? "No scheduled job has ever recorded an execution. The prediction, grading and calibration tables below are empty because nothing has run — not because the system examined the data and found nothing. Until the daily jobs execute, this system is not learning."
+        : "Scheduled jobs write one row per attempt, failures included. A job whose last run failed has stopped contributing to the learning loop even though earlier rows remain.",
+    };
+  }
+
   /** Everything the tab needs, in one round trip. */
   async bundle(predictionLimit = 200): Promise<EvidenceBundle> {
-    const [predictions, calibrators, governance, experiments] = await Promise.all([
+    const [predictions, calibrators, governance, experiments, pipeline] = await Promise.all([
       this.predictions(predictionLimit),
       this.calibrators(),
       this.governance(),
       this.experiments(),
+      this.pipeline(),
     ]);
 
     const promoted = calibrators.filter((c) => c.promoted).length;
@@ -388,8 +466,9 @@ export class EvidenceService {
         governedModels: governance.length,
         modelsNotLive: notLive,
         experimentsRun: experiments.length,
-        headline: this.headline(predictions, calibrators.length - promoted, notLive),
+        headline: this.headline(predictions, calibrators.length - promoted, notLive, pipeline),
       },
+      pipeline,
       predictions,
       calibrators,
       governance,
@@ -403,7 +482,12 @@ export class EvidenceService {
    * The failure mode this guards against is a summary line that technically
    * holds while leaving a reader more confident than the evidence warrants.
    */
-  private headline(p: PredictionLedger, rejected: number, notLive: number): string {
+  private headline(p: PredictionLedger, rejected: number, notLive: number, pipeline: PipelineHealth): string {
+    // A dead pipeline outranks every other statement: if nothing is running,
+    // no reading of the tables below is meaningful.
+    if (pipeline.neverRun) {
+      return "No scheduled job has ever run, so nothing below is being updated. The system is not currently learning from its mistakes — it is only holding what was written by hand.";
+    }
     if (p.graded === 0) {
       return `No prediction has matured yet: ${p.total} logged, ${p.pending} still awaiting their target date. There is no track record to report.`;
     }

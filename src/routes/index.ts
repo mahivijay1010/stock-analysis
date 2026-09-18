@@ -11,6 +11,7 @@ import {
   UpstoxAuthController,
   LiveFeedController,
   EvidenceController,
+  LearningJournalController,
 } from "../controllers";
 import { createAdminRoutes } from "./admin";
 import { requireAuth, requireAuthOrAdminKey, requireCsrfHeader } from "../middleware/auth";
@@ -50,6 +51,7 @@ export const createStockRoutes = (): Router => {
   const upstoxAuthController = new UpstoxAuthController();
   const liveFeedController = new LiveFeedController();
   const evidenceController = new EvidenceController();
+  const journalController = new LearningJournalController();
   const ledgerController = new LedgerController();
   const forecastController = new ForecastController();
   const shortTermController = new ShortTermController();
@@ -92,6 +94,16 @@ export const createStockRoutes = (): Router => {
   router.get("/evidence/calibrators", evidenceController.calibrators); //   GET  /api/evidence/calibrators
   router.get("/evidence/governance", evidenceController.governance); //     GET  /api/evidence/governance
   router.get("/evidence/experiments", evidenceController.experiments); //   GET  /api/evidence/experiments
+
+  // ── Learning journal: pre-registered expectations, graded after the fact ──
+  // Reads are open like the rest of the evidence surface. Writes are
+  // authenticated because a registered claim is immutable — it can never be
+  // edited or withdrawn, so writing one is a commitment.
+  router.get("/journal", journalController.bundle); //                                        GET  /api/journal?limit=200
+  router.get("/journal/due", journalController.due); //                                       GET  /api/journal/due
+  router.post("/journal/expectations", requireAuth, journalController.register); //           POST /api/journal/expectations
+  router.post("/journal/expectations/:id/resolve", requireAuth, journalController.resolve); //POST /api/journal/expectations/:id/resolve
+  router.post("/journal/lessons", requireAuth, journalController.lesson); //                  POST /api/journal/lessons
 
   // ── Watchlist (spec §3: follow ≠ own; removing never touches holdings) ───
   router.get("/watchlist", requireAuth, ledgerController.listWatchlist); //         GET    /api/watchlist

@@ -40,6 +40,7 @@ import { rankService } from "./RankService";
 import { sessionCalendarService } from "./forecast/SessionCalendarService";
 import { forecastService } from "./forecast/ForecastService";
 import { decisionService } from "./decision/DecisionService";
+import { AppDataSource } from "../config/database";
 
 const TZ = "Asia/Kolkata";
 
@@ -350,6 +351,20 @@ export class CronService {
   // ── Internals ──────────────────────────────────────────────────────────────
 
   /** Belt-and-braces overlap guard (in addition to node-cron's noOverlap). */
+  /**
+   * Run a scheduled job and PERSIST the attempt.
+   *
+   * Previously this logged only to the console, which meant the learning loop
+   * left no durable trace: a failed grading run vanished on the next restart,
+   * and `cron_execution_logs` stayed empty forever. That is precisely the
+   * evidence needed to answer "is this system actually training itself, or has
+   * it silently stopped?", so every attempt is now written to the table —
+   * failures included, with their error text.
+   *
+   * The log write is best-effort and never masks the job: a logging failure
+   * must not turn a successful refresh into a reported failure, and the job's
+   * own error is always re-surfaced on the console.
+   */
   private async guarded(name: string, run: () => Promise<void>): Promise<void> {
     if (this.running.has(name)) {
       console.warn(`⚠️ [CRON] ${name} still running — skipping this trigger`);
@@ -357,13 +372,30 @@ export class CronService {
     }
     this.running.add(name);
     const started = Date.now();
+    const startedAt = new Date();
+    let status = "success";
+    let errorSummary: string | null = null;
+
     try {
       await run();
       console.log(`✓ [CRON] ${name} finished in ${((Date.now() - started) / 1000).toFixed(1)}s`);
     } catch (err) {
+      status = "failed";
+      errorSummary = err instanceof Error ? `${err.message}\n${err.stack ?? ""}`.slice(0, 4000) : String(err).slice(0, 4000);
       console.error(`✗ [CRON] ${name} failed:`, err);
     } finally {
       this.running.delete(name);
+      try {
+        await AppDataSource.query(
+          `INSERT INTO cron_execution_logs
+             (job_name, execution_start, execution_end, execution_duration_ms, status, error_summary)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [name, startedAt, new Date(), Date.now() - started, status, errorSummary]
+        );
+      } catch (logErr) {
+        // Never let bookkeeping failure masquerade as job failure.
+        console.error(`⚠️ [CRON] could not persist execution log for ${name}:`, logErr);
+      }
     }
   }
 }

@@ -101,15 +101,48 @@ describe("EvidenceService.predictions — the ledger cannot flatter the model", 
 });
 
 describe("EvidenceService.bundle — the headline states the least flattering truth", () => {
-  function mockBundle(totals: Record<string, string>, rows: Record<string, unknown>[] = []): void {
+  /**
+   * bundle() fans out over predictions (rows + totals), calibrators,
+   * governance, experiments and the cron heartbeat. `jobsHaveRun` controls
+   * the last of those: with no cron rows the pipeline reads as never-run,
+   * which deliberately overrides every other headline.
+   */
+  function mockBundle(
+    totals: Record<string, string>,
+    rows: Record<string, unknown>[] = [],
+    jobsHaveRun = true
+  ): void {
     q.mockReset();
-    // bundle() fans out: predictions (rows, totals), calibrators, governance, experiments.
     q.mockImplementation(async (sql: string) => {
       if (/FROM prediction_logs\b/.test(sql) && /COUNT/.test(sql)) return [totals];
       if (/FROM prediction_logs/.test(sql)) return rows;
+      if (/FROM cron_execution_logs/.test(sql)) {
+        if (!jobsHaveRun) return [];
+        return /GROUP BY/.test(sql)
+          ? [{ job_name: "evening-verify-predictions", last_run_at: new Date(), runs: "5", failures: "0" }]
+          : [{ status: "success", execution_duration_ms: 1200, error_summary: null }];
+      }
       return [];
     });
   }
+
+  test("a pipeline that has NEVER run overrides every other headline", async () => {
+    // Both matured predictions were wrong, but that is not the leading fact:
+    // if nothing is running, no reading of the tables below is meaningful.
+    mockBundle({ total: "25", wrong: "2", correct: "0", pending: "23" }, [row()], false);
+    const b = await new EvidenceService().bundle();
+    expect(b.pipeline.neverRun).toBe(true);
+    expect(b.summary.headline).toMatch(/No scheduled job has ever run/);
+    expect(b.summary.headline).toMatch(/not currently learning/);
+  });
+
+  test("once jobs have run, the heartbeat reports their last status", async () => {
+    mockBundle({ total: "25", wrong: "2", correct: "0", pending: "23" }, [row()]);
+    const b = await new EvidenceService().bundle();
+    expect(b.pipeline.neverRun).toBe(false);
+    expect(b.pipeline.jobs[0].jobName).toBe("evening-verify-predictions");
+    expect(b.pipeline.jobs[0].lastStatus).toBe("success");
+  });
 
   test("with nothing matured it refuses to claim a track record", async () => {
     mockBundle({ total: "25", wrong: "0", correct: "0", pending: "25" });

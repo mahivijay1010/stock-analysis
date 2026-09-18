@@ -33,6 +33,7 @@ import type {
   LiveFeedRow,
   LiveFeedStatus,
   EvidenceBundle,
+  JournalBundle,
   UpstoxAuthStatus,
 } from './types';
 
@@ -725,6 +726,11 @@ export function stopLiveFeed(): Promise<LiveFeedStatus> {
  */
 export function getEvidence(limit = 200): Promise<EvidenceBundle> {
   return get<EvidenceBundle>(`/api/evidence?limit=${limit}`);
+}
+
+/** The learning journal: pre-registered expectations and the lessons drawn. */
+export function getJournal(limit = 200): Promise<JournalBundle> {
+  return get<JournalBundle>(`/api/journal?limit=${limit}`);
 }
 
 /** Upstox authorization state — never returns the token itself. */

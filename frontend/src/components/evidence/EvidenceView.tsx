@@ -1,10 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BookOpen, CheckCircle2, ChevronDown, FlaskConical, RefreshCw, ShieldAlert, XCircle } from 'lucide-react';
-import { getEvidence } from '@/lib/api';
+import { Activity, AlertTriangle, BookOpen, CheckCircle2, ChevronDown, FlaskConical, Lightbulb, RefreshCw, ShieldAlert, Target, XCircle } from 'lucide-react';
+import { getEvidence, getJournal } from '@/lib/api';
 import type {
   EvidenceBundle,
+  ExpectationRow,
+  JournalBundle,
+  LessonRow,
+  PipelineHealth,
   EvidenceCalibrator,
   EvidenceExperiment,
   EvidenceGovernance,
@@ -36,17 +40,20 @@ import type {
  *    promotions, because the refusals are what make the promotions credible.
  */
 
-type Tab = 'predictions' | 'learning' | 'governance' | 'experiments';
+type Tab = 'predictions' | 'journal' | 'learning' | 'governance' | 'experiments';
 
 export function EvidenceView() {
   const [bundle, setBundle] = useState<EvidenceBundle | null>(null);
+  const [journal, setJournal] = useState<JournalBundle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('predictions');
 
   const refresh = useCallback(async () => {
     try {
-      setBundle(await getEvidence());
+      const [b, j] = await Promise.all([getEvidence(), getJournal()]);
+      setBundle(b);
+      setJournal(j);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not reach the analysis server');
@@ -89,6 +96,8 @@ export function EvidenceView() {
         <>
           {/* The headline is written by the backend to be the LEAST flattering
               true statement available, so it is rendered verbatim. */}
+          <PipelineBanner pipeline={bundle!.pipeline} />
+
           <section className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
             <div className="flex gap-3">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
@@ -130,6 +139,9 @@ export function EvidenceView() {
             <TabButton id="predictions" tab={tab} setTab={setTab} icon={<BookOpen className="h-3.5 w-3.5" />}>
               Prediction ledger ({s.predictionsTotal})
             </TabButton>
+            <TabButton id="journal" tab={tab} setTab={setTab} icon={<Target className="h-3.5 w-3.5" />}>
+              Journal ({journal ? journal.summary.open + journal.summary.resolved : 0})
+            </TabButton>
             <TabButton id="learning" tab={tab} setTab={setTab} icon={<CheckCircle2 className="h-3.5 w-3.5" />}>
               What it learned ({s.calibratorsTrained})
             </TabButton>
@@ -142,6 +154,7 @@ export function EvidenceView() {
           </nav>
 
           {tab === 'predictions' && <PredictionsPanel bundle={bundle!} />}
+          {tab === 'journal' && <JournalPanel journal={journal} />}
           {tab === 'learning' && <LearningPanel calibrators={bundle!.calibrators} />}
           {tab === 'governance' && <GovernancePanel rows={bundle!.governance} />}
           {tab === 'experiments' && <ExperimentsPanel rows={bundle!.experiments} />}
@@ -543,4 +556,256 @@ function Stat({
 
 function Empty({ children }: { children: React.ReactNode }) {
   return <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-slate-500">{children}</div>;
+}
+
+// ── The learning loop's heartbeat ────────────────────────────────────────────
+
+/**
+ * Whether the system is actually running.
+ *
+ * An empty ledger has two very different causes — a new system, or jobs that
+ * silently stopped — and they look identical everywhere else. When nothing has
+ * ever run this renders as the loudest element on the page, because in that
+ * state no other number below can be read as evidence of anything.
+ */
+function PipelineBanner({ pipeline }: { pipeline: PipelineHealth }) {
+  const [open, setOpen] = useState(false);
+  const failing = pipeline.jobs.filter((j) => j.lastStatus && j.lastStatus !== 'success');
+
+  if (pipeline.neverRun) {
+    return (
+      <section className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4">
+        <div className="flex gap-3">
+          <Activity className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+          <div className="space-y-1">
+            <p className="font-medium text-rose-200">The learning loop has never run</p>
+            <p className="text-sm text-slate-300">{pipeline.note}</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section
+      className={`rounded-xl border p-4 ${
+        failing.length > 0 ? 'border-amber-500/30 bg-amber-500/5' : 'border-white/10 bg-white/[0.02]'
+      }`}
+    >
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-start justify-between gap-3 text-left">
+        <div className="flex gap-3">
+          <Activity className={`mt-0.5 h-4 w-4 shrink-0 ${failing.length > 0 ? 'text-amber-400' : 'text-emerald-400'}`} />
+          <div>
+            <p className="font-medium text-slate-200">
+              Learning loop: {pipeline.jobs.length} job{pipeline.jobs.length === 1 ? '' : 's'} recorded
+              {failing.length > 0 && <span className="text-amber-300"> · {failing.length} last failed</span>}
+            </p>
+            <p className="mt-0.5 text-xs text-slate-400">{pipeline.note}</p>
+          </div>
+        </div>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-1.5 border-t border-white/10 pt-3">
+          {pipeline.jobs.map((j) => (
+            <div key={j.jobName} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="text-slate-300">{j.jobName}</span>
+              <span className="flex items-center gap-2">
+                <span className="text-slate-500">
+                  {j.runs} run{j.runs === 1 ? '' : 's'}
+                  {j.failures > 0 && <span className="text-amber-400"> · {j.failures} failed</span>}
+                </span>
+                <span className={j.lastStatus === 'success' ? 'text-emerald-300' : 'text-rose-300'}>
+                  {j.lastStatus ?? '—'}
+                </span>
+                <span className="text-slate-600">{j.lastRunAt ? j.lastRunAt.slice(0, 16).replace('T', ' ') : '—'}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ── The journal: what we said would happen, before it happened ───────────────
+
+function JournalPanel({ journal }: { journal: JournalBundle | null }) {
+  if (!journal) return <Empty>Loading the journal…</Empty>;
+  const { summary: s, expectations, lessons } = journal;
+
+  const wrong = expectations.filter((e) => e.status === 'WRONG');
+  const open = expectations.filter((e) => e.status === 'OPEN');
+  const others = expectations.filter((e) => e.status !== 'WRONG' && e.status !== 'OPEN');
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-slate-400">
+        Everything else on this page is recorded <em>after</em> the outcome is known, which is exactly when hindsight
+        can rewrite the story. The journal holds claims registered{' '}
+        <strong className="text-slate-300">before</strong> their resolution date, each with the condition that would
+        prove it wrong fixed at the moment of writing. A claim here can never be edited or withdrawn — only resolved,
+        once.
+      </p>
+
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-slate-300">{s.headline}</div>
+
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Stat label="Open commitments" value={String(s.open)} tone="muted" sub="registered, not yet due" />
+        <Stat
+          label="Overdue"
+          value={String(s.overdue)}
+          tone={s.overdue > 0 ? 'bad' : 'muted'}
+          sub={s.overdue > 0 ? 'past due and ungraded — these teach nothing' : 'nothing awaiting grading'}
+        />
+        <Stat
+          label="Resolved"
+          value={s.accuracyPct != null ? `${s.correct}/${s.resolved} (${s.accuracyPct}%)` : `${s.correct}/${s.resolved}`}
+          tone={s.wrong > s.correct ? 'warn' : 'muted'}
+          sub={s.sampleWarning ?? 'graded against the stated criterion'}
+        />
+        <Stat
+          label="Lessons that changed something"
+          value={`${s.lessonsThatChangedSomething}/${s.lessons}`}
+          tone="muted"
+          sub="a lesson that changed nothing is still recorded"
+        />
+      </section>
+
+      {expectations.length === 0 ? (
+        <Empty>
+          No expectation registered yet. Until the system states what it expects <em>before</em> the outcome, there is
+          nothing here that can train it.
+        </Empty>
+      ) : (
+        <>
+          {wrong.length > 0 && (
+            <ExpectationGroup title="Proved wrong — the claims that failed their own criterion" rows={wrong} />
+          )}
+          {open.length > 0 && <ExpectationGroup title="Open commitments — awaiting their resolution date" rows={open} />}
+          {others.length > 0 && <ExpectationGroup title="Other resolutions" rows={others} />}
+        </>
+      )}
+
+      <section>
+        <h2 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-slate-200">
+          <Lightbulb className="h-3.5 w-3.5" /> Lessons
+        </h2>
+        {lessons.length === 0 ? (
+          <Empty>No lesson recorded yet.</Empty>
+        ) : (
+          <div className="space-y-2">
+            {lessons.map((l) => (
+              <LessonCard key={l.id} lesson={l} />
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ExpectationGroup({ title, rows }: { title: string; rows: ExpectationRow[] }) {
+  return (
+    <section>
+      <h2 className="mb-2 text-sm font-medium text-slate-200">{title}</h2>
+      <div className="space-y-2">
+        {rows.map((e) => (
+          <article
+            key={e.id}
+            className={`rounded-xl border p-4 ${
+              e.status === 'WRONG'
+                ? 'border-rose-500/25 bg-rose-500/[0.04]'
+                : e.overdue
+                  ? 'border-amber-500/25 bg-amber-500/[0.04]'
+                  : 'border-white/10 bg-white/[0.02]'
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <ExpectationChip status={e.status} overdue={e.overdue} />
+                <span className="font-medium text-slate-200">{e.subject}</span>
+                <span className="text-[11px] text-slate-600">
+                  {e.scope} · {e.source}
+                </span>
+              </div>
+              <span className="text-[11px] text-slate-500">
+                registered {e.registeredAt.slice(0, 10)} · due {e.resolveAfter.slice(0, 10)}
+              </span>
+            </div>
+
+            <p className="mt-2 text-sm text-slate-300">{e.claim}</p>
+            {/* The falsification criterion is shown next to the claim, always:
+                it is what makes the grading checkable rather than a matter of
+                opinion after the fact. */}
+            <p className="mt-1 text-xs text-slate-500">
+              <span className="text-slate-400">Wrong if:</span> {e.falsifiableIf}
+            </p>
+
+            {e.confidence != null && (
+              <p className="mt-1 text-xs text-slate-500">stated confidence {(e.confidence * 100).toFixed(0)}%</p>
+            )}
+
+            {e.resolutionNote && (
+              <p className="mt-2 border-t border-white/5 pt-2 text-xs text-slate-400">
+                <span className="text-slate-300">What happened:</span> {e.resolutionNote}
+                {e.actualValue != null && <span className="tabular-nums"> ({e.actualValue})</span>}
+              </p>
+            )}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ExpectationChip({ status, overdue }: { status: ExpectationRow['status']; overdue: boolean }) {
+  if (status === 'OPEN' && overdue) {
+    return (
+      <span className="inline-flex rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-300">
+        OVERDUE
+      </span>
+    );
+  }
+  const tone =
+    status === 'WRONG'
+      ? 'bg-rose-500/15 text-rose-300'
+      : status === 'CORRECT'
+        ? 'bg-emerald-500/15 text-emerald-300'
+        : status === 'PARTIAL'
+          ? 'bg-sky-500/15 text-sky-300'
+          : 'bg-slate-500/15 text-slate-400';
+  return <span className={`inline-flex rounded px-1.5 py-0.5 text-[11px] font-medium ${tone}`}>{status}</span>;
+}
+
+function LessonCard({ lesson: l }: { lesson: LessonRow }) {
+  const acted = l.actionTaken !== 'NONE';
+  return (
+    <article className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex rounded bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-slate-300">
+            {l.category}
+          </span>
+          {l.modelKey && <span className="text-[11px] text-slate-500">{l.modelKey}</span>}
+        </div>
+        <span className="text-[11px] text-slate-500">{l.createdAt.slice(0, 10)}</span>
+      </div>
+      <p className="mt-2 text-xs text-slate-400">
+        <span className="text-slate-300">Observed:</span> {l.observation}
+      </p>
+      <p className="mt-1 text-sm text-slate-300">{l.lesson}</p>
+      <p className="mt-2 text-xs">
+        <span
+          className={`inline-flex rounded px-1.5 py-0.5 text-[11px] font-medium ${
+            acted ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-500/15 text-slate-400'
+          }`}
+        >
+          {acted ? l.actionTaken : 'CHANGED NOTHING'}
+        </span>
+        {l.actionDetail && <span className="ml-2 text-slate-400">{l.actionDetail}</span>}
+      </p>
+    </article>
+  );
 }

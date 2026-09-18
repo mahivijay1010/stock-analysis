@@ -1320,10 +1320,91 @@ export interface EvidenceSummary {
   headline: string;
 }
 
+export interface PipelineJob {
+  jobName: string;
+  lastRunAt: string | null;
+  lastStatus: string | null;
+  lastDurationMs: number | null;
+  lastError: string | null;
+  runs: number;
+  failures: number;
+}
+
+export interface PipelineHealth {
+  neverRun: boolean;
+  jobs: PipelineJob[];
+  note: string;
+}
+
 export interface EvidenceBundle {
   summary: EvidenceSummary;
+  pipeline: PipelineHealth;
   predictions: PredictionLedger;
   calibrators: EvidenceCalibrator[];
   governance: EvidenceGovernance[];
   experiments: EvidenceExperiment[];
+}
+
+// ── Learning journal (GET /api/journal) ──────────────────────────────────────
+// Pre-registered expectations, graded after the fact, plus the lessons drawn
+// from them. A claim is immutable once written; only its resolution is added.
+
+export type ExpectationStatus = 'OPEN' | 'CORRECT' | 'WRONG' | 'PARTIAL' | 'UNRESOLVABLE';
+export type LessonAction =
+  | 'NONE' | 'THRESHOLD' | 'FEATURE' | 'GOVERNANCE' | 'DATA_FIX' | 'CODE_FIX' | 'STUDY_QUEUED';
+
+export interface ExpectationRow {
+  id: string;
+  scope: string;
+  subject: string;
+  claim: string;
+  falsifiableIf: string;
+  metric: string | null;
+  predictedValue: number | null;
+  predictedLow: number | null;
+  predictedHigh: number | null;
+  confidence: number | null;
+  registeredAt: string;
+  resolveAfter: string;
+  source: string;
+  modelVersion: string | null;
+  policyVersion: string | null;
+  status: ExpectationStatus;
+  actualValue: number | null;
+  resolutionNote: string | null;
+  resolvedAt: string | null;
+  overdue: boolean;
+}
+
+export interface LessonRow {
+  id: string;
+  expectationId: string | null;
+  modelKey: string | null;
+  category: string;
+  observation: string;
+  lesson: string;
+  actionTaken: LessonAction;
+  actionDetail: string | null;
+  confirmedByRunId: string | null;
+  createdAt: string;
+}
+
+export interface JournalSummary {
+  version: string;
+  open: number;
+  overdue: number;
+  resolved: number;
+  correct: number;
+  wrong: number;
+  accuracyPct: number | null;
+  sampleWarning: string | null;
+  lessons: number;
+  lessonsThatChangedSomething: number;
+  headline: string;
+}
+
+export interface JournalBundle {
+  summary: JournalSummary;
+  expectations: ExpectationRow[];
+  lessons: LessonRow[];
 }
