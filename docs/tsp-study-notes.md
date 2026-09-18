@@ -209,19 +209,29 @@ Ordered, small, each independently testable. None of these is "copy a constant
 from a futures study into an Indian equity system" — that would be exactly the
 unvalidated-threshold problem `docs/system-trust-review.md` exists to prevent.
 
-1. **Add a fill-ratio slippage model alongside the current one.**
-   `slippageRatio ∈ [0,1]`, fill = `stop + (high − stop) × ratio` for longs.
-   This is *measurable* from real fills, unlike the present percentage model.
-   It does not replace `estimateSlippagePct` until it has been calibrated —
-   it exists so that calibration becomes possible at all.
+1. ✅ **DONE 2026-09-18 — fill-ratio slippage model, alongside the current one.**
+   `costs.ts` gains `fillPriceFromRatio` (fill = `stop + (high − stop) × ratio`
+   for a BUY, mirrored for a SELL), `slippageRatioFromFill` (the inverse — the
+   calibration primitive), and `ratioToSlippagePct` (a bridge to the existing
+   percentage model). Every term is observable, so the ratio can be measured
+   from real fills. **Nothing switched over**: `estimateSlippagePct` is
+   untouched and still the model in use, because importing the futures study's
+   numbers into Indian equities would be the unvalidated-threshold mistake
+   `docs/system-trust-review.md` exists to prevent. 23 tests in
+   `tests/slippage-model.test.ts`, including the article's own worked example
+   ($1.00 gross → $0.00 net at ratio 0.5) and price→ratio→price invertibility.
 
-2. **Sweep slippage in the expectancy study (Skid conclusion 3).** Re-run
-   `setupExpectancyStudy.ts` across slippage ratios 0.0 → 1.0 and record where
-   each setup×horizon cell's expectancy crosses zero. That number — "this
-   setup survives up to a slippage ratio of X" — is a robustness statistic the
-   system currently cannot produce. Given the 2026-09-17 result was already
-   0/12 cells positive at the *assumed* slippage, this mostly quantifies *how
-   far* from viable each cell is, which is still worth knowing.
+2. ✅ **DONE 2026-09-18 — slippage stress sweep (Skid conclusion 3).**
+   `setupExpectancyStudy.ts` now stores each trade's `costR`, `slippageR` and
+   `entryOverRisk` separately, and `slippageStress()` re-prices slippage at
+   multiples [0, 0.5, 1, 1.5, 2, 3, 5] of the modelled baseline, reporting
+   `survivesUpToMultiple` and an interpolated `breakEvenMultiple` per cell.
+   Persisted on every test cell and printed as its own table.
+   **Two caveats carried in the output itself:** the sweep is analytic (worse
+   fills never change *which* bar resolves a trade), so the break-even is an
+   **upper bound**; and it scales a baseline that is itself uncalibrated.
+   It is reporting-only — `tierFromEvidence` reads six fields and
+   `slippageStress` is not among them, so it cannot influence a tier.
 
 3. **Calibrate the ratio from real fills once intraday data accumulates.** The
    `DelayedCandlesProvider`/Upstox feed makes observed fills possible for the

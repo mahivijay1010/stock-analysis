@@ -99,6 +99,87 @@ export interface Trade {
   rGross: number; // realized R-multiple, BEFORE costs
   rNet: number; // realized R-multiple, net of costs (dragR subtracted)
   outcome: "TARGET_FIRST" | "STOP_FIRST" | "TIMEOUT";
+  /** Fixed transaction cost in R units (brokerage/STT/stamp — NOT slippage). */
+  costR: number;
+  /** Modelled slippage in R units at the study's baseline assumption. */
+  slippageR: number;
+  /** entry/risk — converts a %-of-price cost into R units. Lets the sweep
+   *  re-price slippage analytically without re-simulating every bracket. */
+  entryOverRisk: number;
+}
+
+/**
+ * Slippage stress sweep (docs/tsp-study-notes.md §4 item 2, from Seykota's TSP
+ * "Skid and Trading Frequency" conclusion 3: "We can impose strict slippage
+ * assumption to system and to see if the system can survive under such stress
+ * test ... we can examine whether a system would be robust in reality or not").
+ *
+ * Re-prices each trade's slippage at a multiple of the study's baseline model
+ * and reports where the cell's after-cost expectancy crosses zero. That
+ * break-even multiple is a ROBUSTNESS statistic the study could not previously
+ * produce: "this setup survives up to Nx the modelled slippage".
+ *
+ * Analytic, not a re-simulation: slippage enters expectancy linearly
+ * (rNet = rGross − costR − slippageR), so scaling slippageR is exact. It does
+ * NOT re-run the bracket walk, so it cannot capture second-order effects —
+ * worse fills never change WHICH bar stops a trade here. That makes the
+ * break-even multiple an UPPER bound on robustness, and the note says so.
+ *
+ * PURE.
+ */
+export interface SlippageStressPoint {
+  multiple: number;
+  expectancyAfterCosts: number;
+  positive: boolean;
+}
+
+export interface SlippageStressResult {
+  baselineExpectancy: number;
+  /** Largest swept multiple at which expectancy is still > 0; null if none. */
+  survivesUpToMultiple: number | null;
+  /** Interpolated multiple where expectancy crosses 0; null if never positive. */
+  breakEvenMultiple: number | null;
+  points: SlippageStressPoint[];
+  note: string;
+}
+
+export function slippageStress(ts: Trade[], multiples: number[] = [0, 0.5, 1, 1.5, 2, 3, 5]): SlippageStressResult {
+  const expectancyAt = (m: number): number => mean(ts.map((t) => t.rGross - t.costR - t.slippageR * m));
+  const points: SlippageStressPoint[] = multiples
+    .slice()
+    .sort((a, b) => a - b)
+    .map((multiple) => {
+      const e = round4(expectancyAt(multiple));
+      return { multiple, expectancyAfterCosts: e, positive: e > 0 };
+    });
+
+  const baseline = round4(expectancyAt(1));
+  let survivesUpToMultiple: number | null = null;
+  for (const p of points) if (p.positive) survivesUpToMultiple = p.multiple;
+
+  // Linear interpolation of the zero crossing between the last positive and
+  // first negative point (expectancy is linear in the multiple, so this is exact).
+  let breakEvenMultiple: number | null = null;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (a.positive && !b.positive) {
+      const span = b.expectancyAfterCosts - a.expectancyAfterCosts;
+      breakEvenMultiple = span === 0 ? a.multiple : round4(a.multiple + (a.expectancyAfterCosts / -span) * (b.multiple - a.multiple));
+      break;
+    }
+  }
+
+  return {
+    baselineExpectancy: baseline,
+    survivesUpToMultiple,
+    breakEvenMultiple,
+    points,
+    note:
+      "Slippage re-priced as a multiple of costs.ts's modelled estimate, which is itself uncalibrated " +
+      "(docs/system-trust-review.md §8). Analytic re-pricing only: worse fills do not change which bar " +
+      "resolves a trade, so the break-even multiple is an UPPER bound on robustness.",
+  };
 }
 
 function mean(xs: number[]): number {
@@ -232,7 +313,12 @@ async function main(): Promise<void> {
           const risk = entry - stop;
           const maxHold = HORIZON_TD[h].max;
           const orderVal = 100_000;
-          const dragR = ((roundTripCostPct(orderVal) + estimateSlippagePct({ atrPct: f.atrPct, relVolume: f.relVolume, orderValueInr: orderVal, advInr: f.advInr20 })) / 100) * (entry / risk);
+          const entryOverRisk = entry / risk;
+          const costPct = roundTripCostPct(orderVal);
+          const slipPct = estimateSlippagePct({ atrPct: f.atrPct, relVolume: f.relVolume, orderValueInr: orderVal, advInr: f.advInr20 });
+          const costR = (costPct / 100) * entryOverRisk;
+          const slippageR = (slipPct / 100) * entryOverRisk;
+          const dragR = costR + slippageR;
 
           let outcome: Trade["outcome"] = "TIMEOUT";
           let exit = closes[Math.min(i + maxHold, bars.length - 1)];
@@ -243,7 +329,11 @@ async function main(): Promise<void> {
             if (bars[k].high >= target) { outcome = "TARGET_FIRST"; exit = target; break; }
           }
           const grossR = (exit - entry) / risk;
-          trades.push({ date: bars[i].date, setupType: setup.setupType, horizon: h, rGross: round4(grossR), rNet: round4(grossR - dragR), outcome });
+          trades.push({
+            date: bars[i].date, setupType: setup.setupType, horizon: h,
+            rGross: round4(grossR), rNet: round4(grossR - dragR), outcome,
+            costR: round4(costR), slippageR: round4(slippageR), entryOverRisk: round4(entryOverRisk),
+          });
         }
       }
       if (++tk % 25 === 0) console.log(`  • ${tk} tickers, ${trades.length} trades`);
@@ -315,7 +405,10 @@ async function main(): Promise<void> {
   const bh = testCells.length > 0 ? benjaminiHochberg(testCells.map((c) => c.pValue), 0.1) : [];
   const finalTestCells = testCells.map((c, i) => {
     const sig = bh[i]?.significant ?? false;
-    const base = { ...c, bhSignificant: sig, bhAdjustedP: bh[i]?.adjusted ?? 1 } as Record<string, unknown>;
+    // Slippage robustness for THIS cell's test-segment trades (TSP Skid).
+    const cellTrades = testGroups.get(`${c.setupType}|${c.horizon}`) ?? [];
+    const stress = slippageStress(cellTrades);
+    const base = { ...c, bhSignificant: sig, bhAdjustedP: bh[i]?.adjusted ?? 1, slippageStress: stress } as Record<string, unknown>;
     const tier = tierFromEvidence({
       ...(base as never),
       bootstrapExpectancyCI: c.bootstrapExpectancyCI as [number, number],
@@ -399,6 +492,7 @@ async function main(): Promise<void> {
       verdict: `${promotedCount}/${finalTestCells.length} setup×horizon cells qualify for TIER A entry on the OUT-OF-SAMPLE test segment (positive after-cost expectancy, block-bootstrap CI lower > 0, ≥60 overlap-adjusted independent dates, BH-significant)` +
         (bestDsr ? `; best cell (${bestCellKey}) DSR=${bestDsr.deflatedSharpeProbability} (passes ${bestDsr.passes ? "≥0.95" : "< 0.95 — NOT distinguishable from selection luck"})` : "") +
         (pbo ? `; PBO=${pbo.pbo} across ${pbo.combinations} in/out combinations` : "") +
+        `; each cell also carries a slippageStress sweep (TSP Skid) reporting the multiple of modelled slippage at which its expectancy crosses zero` +
         `. Methodology v2 supersedes the v1 in-sample, block-length-1-bootstrap study — numbers are not comparable to prior runs.`,
     })
   );
@@ -412,6 +506,18 @@ async function main(): Promise<void> {
         ` ${String(c.expectancyAfterCosts).padStart(6)} ${String((c.bootstrapExpectancyCI as number[])[0]).padStart(6)} ${String(c.probabilityExpectancyPositive).padStart(5)}  ${c.bhSignificant ? "Y" : "n"}    ${c.evidenceStrength}     ${c.usableForEntry ? "YES" : "no"}`
     );
   }
+  console.log("\nslippage robustness (TSP Skid stress test) — multiple of the modelled slippage each cell survives:");
+  console.log("setup                   hz     E[R]@1x   survives  break-even");
+  for (const c of finalTestCells) {
+    const st = c.slippageStress as SlippageStressResult | undefined;
+    if (!st) continue;
+    console.log(
+      `${String(c.setupType).padEnd(23)} ${String(c.horizon).padEnd(6)} ${String(st.baselineExpectancy).padStart(8)} ` +
+        `${String(st.survivesUpToMultiple ?? "none").padStart(9)} ${String(st.breakEvenMultiple ?? "—").padStart(10)}`
+    );
+  }
+  console.log("(analytic re-pricing ⇒ an UPPER bound; the baseline slippage model is itself uncalibrated)");
+
   console.log(`\nverdict: ${promotedCount}/${finalTestCells.length} cells TIER A (out-of-sample).`);
   if (bestDsr) console.log(`Deflated Sharpe (best cell ${bestCellKey}): ${bestDsr.deflatedSharpeProbability} (${bestDsr.passes ? "PASSES" : "FAILS"} the ≥0.95 selection-luck bar, nTrials=${nTrials})`);
   if (pbo) console.log(`Probability of backtest overfitting: ${pbo.pbo} (${pbo.combinations} combinations)`);

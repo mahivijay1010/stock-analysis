@@ -109,3 +109,115 @@ export function estimateSlippagePct(opts: {
   const base = 0.05 * atr * (1 / Math.sqrt(rv));
   return Math.round(Math.max(0.1, base + impact) * 10000) / 10000;
 }
+
+// ── Fill-ratio slippage model (docs/tsp-study-notes.md §1.1, §4 item 1) ──────
+//
+// The percentage model above cannot be checked against reality: its constants
+// (0.05 × ATR%, 1/√relVolume, 5bp per 1% of ADV, the 0.10% floor) were invented,
+// and nothing observable maps onto them. docs/system-trust-review.md §8 flags
+// that as the weakest calibrated area in the system.
+//
+// Seykota's TSP "Skid and Trading Frequency" study (Stone) models a stop fill
+// instead as a FRACTION OF THE BAR'S ADVERSE EXCURSION BEYOND THE STOP:
+//
+//     fill(buy / cover short) = stop + (high − stop) × ratio
+//     fill(sell / short)      = stop − (stop − low)  × ratio
+//
+// ratio 0 = a perfect fill at the stop; ratio 1 = the worst price the bar
+// printed after the level was breached. The virtue is that every term is
+// OBSERVABLE — stop, high, low and the achieved fill are all recorded — so the
+// ratio can be MEASURED from real fills instead of assumed. That is what makes
+// calibration possible at all.
+//
+// This is deliberately ADDITIVE. Nothing in the pipeline switches to it until
+// it has been calibrated against real Upstox fills; importing the futures
+// study's own numbers into Indian equities would be exactly the
+// unvalidated-threshold mistake the trust review exists to prevent.
+
+/** Perfect fill at the stop — the optimistic bound. */
+export const SLIPPAGE_RATIO_BEST = 0;
+/** Worst price printed in the breaching bar — the pessimistic bound. */
+export const SLIPPAGE_RATIO_WORST = 1;
+/**
+ * Placeholder used ONLY by the stress sweep's mid case. It is a guess, is
+ * labelled as one everywhere it appears, and must be replaced by a measured
+ * value before any number derived from it is trusted.
+ */
+export const SLIPPAGE_RATIO_UNCALIBRATED_MID = 0.5;
+
+export type FillSide = "BUY" | "SELL";
+
+/**
+ * Fill price for a stop that was breached inside a bar. PURE.
+ *
+ * `side` is the direction of the ORDER being filled: a long's protective stop
+ * is a SELL, a stop-entry into a long is a BUY. Slippage always works against
+ * the trader, so BUY fills at or above the stop and SELL at or below it.
+ *
+ * Returns null when the bar could not have filled the order (the level was
+ * never reached) or the inputs are not finite — never a fabricated price.
+ */
+export function fillPriceFromRatio(opts: {
+  side: FillSide;
+  stop: number;
+  barHigh: number;
+  barLow: number;
+  ratio: number;
+}): number | null {
+  const { side, stop, barHigh, barLow, ratio } = opts;
+  if (![stop, barHigh, barLow, ratio].every((v) => Number.isFinite(v))) return null;
+  if (!(barHigh >= barLow) || !(stop > 0)) return null;
+  const r = Math.min(SLIPPAGE_RATIO_WORST, Math.max(SLIPPAGE_RATIO_BEST, ratio));
+
+  if (side === "BUY") {
+    if (barHigh < stop) return null; // never traded up to the level
+    return stop + (barHigh - stop) * r;
+  }
+  if (barLow > stop) return null; // never traded down to the level
+  return stop - (stop - barLow) * r;
+}
+
+/**
+ * Recover the realised slippage ratio from an ACHIEVED fill. PURE — this is
+ * the calibration primitive: run it over real fills and the distribution of
+ * ratios is the empirical slippage model, replacing today's invented one.
+ *
+ * Returns null when the bar offers no adverse excursion to normalise against
+ * (high == stop for a buy), because the ratio is undefined there rather than 0.
+ */
+export function slippageRatioFromFill(opts: {
+  side: FillSide;
+  stop: number;
+  barHigh: number;
+  barLow: number;
+  actualFill: number;
+}): number | null {
+  const { side, stop, barHigh, barLow, actualFill } = opts;
+  if (![stop, barHigh, barLow, actualFill].every((v) => Number.isFinite(v))) return null;
+  if (!(barHigh >= barLow)) return null;
+
+  const excursion = side === "BUY" ? barHigh - stop : stop - barLow;
+  if (!(excursion > 0)) return null; // no adverse room in this bar ⇒ undefined
+  const slip = side === "BUY" ? actualFill - stop : stop - actualFill;
+  // A better-than-stop fill clamps to 0 rather than reporting negative slippage.
+  return Math.min(SLIPPAGE_RATIO_WORST, Math.max(SLIPPAGE_RATIO_BEST, slip / excursion));
+}
+
+/**
+ * Express a fill ratio as a percentage of the entry price, so it can be
+ * compared against — or eventually replace — estimateSlippagePct. PURE.
+ * Per-side, not round trip.
+ */
+export function ratioToSlippagePct(opts: {
+  side: FillSide;
+  stop: number;
+  barHigh: number;
+  barLow: number;
+  ratio: number;
+  referencePrice: number;
+}): number | null {
+  const fill = fillPriceFromRatio(opts);
+  if (fill == null || !(opts.referencePrice > 0)) return null;
+  const slip = opts.side === "BUY" ? fill - opts.stop : opts.stop - fill;
+  return Math.round((slip / opts.referencePrice) * 100 * 10000) / 10000;
+}
