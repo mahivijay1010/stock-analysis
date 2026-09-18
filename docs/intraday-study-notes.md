@@ -306,6 +306,40 @@ already existed (kept; only the 5% ceiling came down to 3%).
    ~15-min DELAYED, rate-limited; labelled as such; `capActionByMode` already
    caps it at WAIT), so 15-min context, VWAP and slippage *measurement* become
    possible. Real-time needs a broker feed — the owner's decision.
+6b. ✅ **REAL-TIME feed — Angel One SmartAPI (owner's choice, 2026-09-18).**
+   The owner asked for real-time rather than delayed/degraded data and chose
+   Angel One (free with a demat account; the alternatives priced at the time
+   were Dhan/Upstox/Fyers free tiers and Zerodha Kite Connect at ₹500/mo).
+   - `realtime/angelOneAuth.ts`: `loginByPassword` with clientcode + PIN + a
+     TOTP derived from the BASE32 seed, returning jwtToken/refreshToken/
+     feedToken. TOTP is implemented directly on Node `crypto` (RFC 6238,
+     HMAC-SHA1, 30s, 6 digits) and verified against the RFC's published test
+     vectors — `otplib` v13 is ESM-only and breaks both `tsc` and ts-jest here.
+     Credentials come only from the environment; `describeConfig()` reports
+     what is missing without printing a value; a partial configuration returns
+     null rather than a half-session, and a broker rejection throws.
+   - `realtime/angelOneStreamProvider.ts`: SmartStream v2 behind the existing
+     `RealtimeMarketProvider` interface. Binary little-endian frames decoded by
+     a PURE exported parser against the documented offsets (mode/exchange at
+     0–1, token 2–27, sequence 27–35, exchange timestamp 35–43, LTP 43–51;
+     QUOTE adds LTQ/volume/OHLC to 123; SNAP_QUOTE best-5 from 147 to 379).
+     **Prices arrive as integers in PAISE and are divided by 100** — the single
+     most dangerous field, isolated in one constant and asserted in tests.
+     Heartbeat is the literal text `ping` every 10s; subscriptions replay on
+     reconnect; ticks are emitted RAW so the existing `TickValidator` stays the
+     firewall. Truncated frames and empty tokens are discarded, never
+     zero-padded (a fabricated ₹0 would be catastrophic).
+   - **This is the feed that earns `STREAMING`**, whose ceiling is already
+     `BUY_CANDIDATE` — unlike `DELAYED_CANDLES`/`SCRAPED_SNAPSHOT`, which
+     remain capped at WAIT. 26 tests in `tests/angelone-stream.test.ts`.
+   - **Not yet wired to the engine, and not yet run against the live broker** —
+     that needs the owner's credentials in `.env` (template added to
+     `.env.example`). Angel One tokens are per-login and expire, so a session
+     refresh policy is still to be decided.
+   - SEBI: from 1 Apr 2026 API-based *trading* needs a static IP registered
+     with the broker. This path only READS market data and places no orders;
+     that obligation starts only if order placement is ever enabled.
+
 7. **Only then** an intraday *monitoring* tab: freshness, gap policy
    (`INVALIDATED/RECOMPUTE/DO_NOT_CHASE/PROCEED`), confirmation triggers, the
    SEBI block, the intraday cost line — and zero "predictions" until anything
