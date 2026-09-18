@@ -18,7 +18,7 @@ export class MarketSourceSnapshot {
   @Column({ type: "varchar", length: 40 }) source: string;
   @Column({ name: "source_url", type: "text", nullable: true }) sourceUrl?: string | null;
 
-  @Column({ name: "mode", type: "varchar", length: 20 }) mode: string; // SCRAPED_SNAPSHOT | INTRADAY_CANDLES | STREAMING
+  @Column({ name: "mode", type: "varchar", length: 20 }) mode: string; // SCRAPED_SNAPSHOT | DELAYED_CANDLES | INTRADAY_CANDLES | STREAMING
 
   @Column({ name: "fetched_at", type: "timestamptz" }) fetchedAt: Date;
   @Column({ name: "source_timestamp", type: "timestamptz", nullable: true }) sourceTimestamp?: Date | null;

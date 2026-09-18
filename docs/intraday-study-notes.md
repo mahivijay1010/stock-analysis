@@ -272,7 +272,37 @@ already existed (kept; only the 5% ceiling came down to 3%).
    0.5% kept.
 5. ✅ **`equityDrawdownPct` wired** from the paper-trade equity curve
    (`computeEquityDrawdownPct`, pure, tested) so the −6% kill switch is live.
-6. **`INTRADAY_CANDLES` provider** — Yahoo `interval=5m` first (keyless,
+6. ✅ **Delayed candles provider — done 2026-09-18, with one deliberate
+   deviation from this item's original wording.** `realtime/intradayCandlesProvider.ts`
+   (`DelayedCandlesProvider`, `fetchCandles`, pure `completeCandlesOnly` /
+   `aggregateSession` (IST, VWAP) / `seriesToRawQuote`) on a new
+   `yahoo.fetchIntradayChart` (5m/15m, `range` 1d/5d, pure exported parser).
+   **It does NOT declare `INTRADAY_CANDLES`.** That mode lifts the action
+   ceiling to BUY on the premise of real intra-interval observability, and
+   Yahoo's free NSE feed is delayed and polled — it has not earned that. A new
+   mode **`DELAYED_CANDLES`, ceiling `WAIT`**, was added instead;
+   `INTRADAY_CANDLES` stays reserved for a genuine real-time (broker) feed.
+   Forming candle dropped by min(our clock, vendor `regularMarketTime`);
+   freshness judged from the newest COMPLETE candle's end by the existing
+   firewall (a ~15-min delayed feed will honestly read STALE ⇒ DEGRADED); every
+   snapshot passes `buildScrapedSnapshot` unchanged. 1-minute bars deliberately
+   not offered (Varsity: seasoned scalpers only; useless through a delay).
+   Not yet wired to any surface — that is item 7. Real-time remains the
+   owner's broker/paid decision; it plugs in behind the same
+   `IntradayCandleFetcher` interface. 16 tests in
+   `tests/delayed-candles-provider.test.ts`.
+   **Live smoke against Yahoo (RELIANCE.NS 5m, 2026-09-18 12:52 IST):** 45
+   rows for the session, `dataGranularity: "5m"`, `chartPreviousClose`
+   present, `currentTradingPeriod.regular` = 09:15–15:30 IST. Two facts the
+   fixtures had not modelled: (a) Yahoo appends a synthetic "last quote" row
+   at `regularMarketTime` — off the 5-minute grid, volume 0, OHLC all equal to
+   the last trade — so `completeCandlesOnly` now also requires grid alignment
+   (a marker, not a candle); (b) the vendor's `regularMarketTime` trailed
+   wall-clock by only 6 seconds. That is a statement about the *timestamp*,
+   not about whether the *prices* are delayed, which cannot be verified
+   without a reference feed — so the DELAYED label and WAIT ceiling stay
+   until a real-time reference proves otherwise.
+   *(original item text follows for the record)* **`INTRADAY_CANDLES` provider** — Yahoo `interval=5m` first (keyless,
    ~15-min DELAYED, rate-limited; labelled as such; `capActionByMode` already
    caps it at WAIT), so 15-min context, VWAP and slippage *measurement* become
    possible. Real-time needs a broker feed — the owner's decision.

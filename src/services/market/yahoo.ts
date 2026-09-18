@@ -229,6 +229,87 @@ export async function fetchChart(
   return { bars, meta, events };
 }
 
+// ── Intraday candles (docs/intraday-study-notes.md §4 item 6) ────────────────
+
+export type YahooIntradayInterval = "5m" | "15m";
+export type YahooIntradayRange = "1d" | "5d";
+
+export const INTRADAY_INTERVAL_MS: Record<YahooIntradayInterval, number> = { "5m": 5 * 60_000, "15m": 15 * 60_000 };
+
+/** One intraday OHLCV candle. `startAt` is the candle's opening ms epoch. */
+export interface IntradayCandle {
+  startAt: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface YahooIntradayChartResult {
+  candles: IntradayCandle[];
+  meta: YahooChartMeta & { dataGranularity?: string };
+}
+
+/**
+ * PURE parser for a Yahoo v8 chart payload at an intraday interval — exported
+ * so tests can feed fixture JSON without the network. Candles with any null
+ * OHLC field are skipped (never invented); duplicates by startAt are collapsed
+ * (latest wins); output is sorted ascending. The FORMING candle is NOT removed
+ * here — that needs a clock, see realtime/intradayCandlesProvider.ts.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function parseIntradayChartPayload(data: any, ticker: string): YahooIntradayChartResult {
+  const chart = data?.chart;
+  if (chart?.error) {
+    const desc = chart.error.description || chart.error.code || "unknown error";
+    throw new Error(`Yahoo intraday chart error for ${ticker}: ${desc}`);
+  }
+  const result = chart?.result?.[0];
+  if (!result || !result.meta) throw new Error(`Yahoo intraday chart returned no result for ${ticker}`);
+
+  const timestamps: unknown[] = Array.isArray(result.timestamp) ? result.timestamp : [];
+  const quote = result.indicators?.quote?.[0] ?? {};
+  const opens: unknown[] = Array.isArray(quote.open) ? quote.open : [];
+  const highs: unknown[] = Array.isArray(quote.high) ? quote.high : [];
+  const lows: unknown[] = Array.isArray(quote.low) ? quote.low : [];
+  const closes: unknown[] = Array.isArray(quote.close) ? quote.close : [];
+  const volumes: unknown[] = Array.isArray(quote.volume) ? quote.volume : [];
+
+  const byStart = new Map<number, IntradayCandle>();
+  for (let i = 0; i < timestamps.length; i++) {
+    const ts = toFiniteNumber(timestamps[i]);
+    if (ts === null) continue;
+    const open = toFiniteNumber(opens[i]);
+    const high = toFiniteNumber(highs[i]);
+    const low = toFiniteNumber(lows[i]);
+    const close = toFiniteNumber(closes[i]);
+    if (open === null || high === null || low === null || close === null) continue;
+    const volume = toFiniteNumber(volumes[i]) ?? 0;
+    byStart.set(ts * 1000, { startAt: ts * 1000, open, high, low, close, volume });
+  }
+  const candles = Array.from(byStart.values()).sort((a, b) => a.startAt - b.startAt);
+  return { candles, meta: result.meta };
+}
+
+/**
+ * Fetch intraday candles from the chart endpoint. Yahoo's NSE intraday data is
+ * DELAYED and this function does nothing to hide that: callers must treat the
+ * result as DELAYED_CANDLES (see realtime/marketDataProvider.ts). 1-minute
+ * bars are deliberately not offered — Varsity reserves them for seasoned
+ * scalpers, and the free feed's delay makes them noise anyway.
+ */
+export async function fetchIntradayChart(
+  ticker: string,
+  interval: YahooIntradayInterval = "5m",
+  range: YahooIntradayRange = "5d"
+): Promise<YahooIntradayChartResult> {
+  const url = `${BASE_URL}/v8/finance/chart/${encodeURIComponent(ticker)}?range=${range}&interval=${interval}&includePrePost=false`;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = await getJson<any>(url);
+  return parseIntradayChartPayload(data, ticker);
+}
+
 /** Raw Yahoo search (no filtering here — caller filters to Indian exchanges). */
 export async function fetchSearch(query: string): Promise<YahooSearchQuote[]> {
   const url = `${BASE_URL}/v1/finance/search?q=${encodeURIComponent(

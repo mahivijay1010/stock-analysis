@@ -17,7 +17,19 @@ export interface Security {
   ticker: string;
 }
 
-export type MarketDataMode = "SCRAPED_SNAPSHOT" | "INTRADAY_CANDLES" | "STREAMING";
+/**
+ * - SCRAPED_SNAPSHOT: polled page reading — no intra-interval path. Caps at WAIT.
+ * - DELAYED_CANDLES: vendor OHLCV candles that are DELAYED and polled (Yahoo's
+ *   free NSE 5m/15m feed). Real intra-interval observability, but not of the
+ *   present — the newest complete candle is minutes-to-a-quarter-hour old by
+ *   the time it is published. Caps at WAIT: a delayed candle cannot justify a
+ *   live entry any more than a delayed quote can (same rule
+ *   shortterm/LiveMarketDataProvider applies: never LIVE unless provably so).
+ * - INTRADAY_CANDLES: REAL-TIME candles from a broker/exchange feed. Lifts the
+ *   ceiling. Reserved for such a feed; nothing free provides it.
+ * - STREAMING: tick feed. Lifts the ceiling.
+ */
+export type MarketDataMode = "SCRAPED_SNAPSHOT" | "DELAYED_CANDLES" | "INTRADAY_CANDLES" | "STREAMING";
 
 /** Freshness axis — independent of parse validity. */
 export type FreshnessStatus = "FRESH" | "STALE" | "UNKNOWN_FRESHNESS" | "FAILED";
@@ -93,6 +105,7 @@ const ACTION_RANK: Record<DecisionStatus, number> = { INSUFFICIENT_EVIDENCE: 0, 
 export function modeAuthorityCeiling(mode: MarketDataMode): DecisionStatus {
   switch (mode) {
     case "SCRAPED_SNAPSHOT": return "WAIT";
+    case "DELAYED_CANDLES": return "WAIT";
     case "INTRADAY_CANDLES": return "BUY_CANDIDATE";
     case "STREAMING": return "BUY_CANDIDATE";
   }

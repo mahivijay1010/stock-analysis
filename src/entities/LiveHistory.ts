@@ -41,7 +41,7 @@ export class LivePredictionRevision {
   @Column({ name: "risk_state", type: "varchar", length: 12 }) riskState: string;
 
   @Column({ name: "data_quality", type: "varchar", length: 12 }) dataQuality: string;
-  @Column({ name: "data_mode", type: "varchar", length: 20 }) dataMode: string; // SCRAPED_SNAPSHOT | ...
+  @Column({ name: "data_mode", type: "varchar", length: 20 }) dataMode: string; // SCRAPED_SNAPSHOT | DELAYED_CANDLES | INTRADAY_CANDLES | STREAMING
   /** Deterministic gate action AFTER the mode ceiling cap. */
   @Column({ type: "varchar", length: 25 }) gate: string;
 
