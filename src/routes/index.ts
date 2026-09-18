@@ -8,6 +8,7 @@ import {
   AuthController,
   LedgerController,
   ForecastController,
+  UpstoxAuthController,
 } from "../controllers";
 import { createAdminRoutes } from "./admin";
 import { requireAuth, requireAuthOrAdminKey, requireCsrfHeader } from "../middleware/auth";
@@ -44,6 +45,7 @@ export const createStockRoutes = (): Router => {
   const intelligenceController = new IntelligenceController();
   const quantController = new QuantController();
   const authController = new AuthController();
+  const upstoxAuthController = new UpstoxAuthController();
   const ledgerController = new LedgerController();
   const forecastController = new ForecastController();
   const shortTermController = new ShortTermController();
@@ -56,6 +58,15 @@ export const createStockRoutes = (): Router => {
   router.post("/auth/passcode", requireCsrfHeader, authController.passcode); // POST /api/auth/passcode { passcode } — admin fast-path
   router.post("/auth/logout", requireAuth, authController.logout); //       POST /api/auth/logout
   router.get("/auth/me", requireAuth, authController.me); //                GET  /api/auth/me
+
+  // ── Upstox real-time feed authorization (OAuth round trip) ───────────────
+  // GETs by necessity: OAuth redirects are GETs. CSRF defence is the `state`
+  // parameter, issued and verified once by the token store. No route ever
+  // returns the access token. Upstox tokens die at 03:30 IST daily and have no
+  // refresh token, so this is a once-a-day human step.
+  router.get("/auth/upstox/login", upstoxAuthController.login); //          GET  /api/auth/upstox/login (302 → Upstox)
+  router.get("/auth/upstox/callback", upstoxAuthController.callback); //    GET  /api/auth/upstox/callback?code=&state=
+  router.get("/auth/upstox/status", upstoxAuthController.status); //        GET  /api/auth/upstox/status (no token exposed)
 
   // ── Watchlist (spec §3: follow ≠ own; removing never touches holdings) ───
   router.get("/watchlist", requireAuth, ledgerController.listWatchlist); //         GET    /api/watchlist

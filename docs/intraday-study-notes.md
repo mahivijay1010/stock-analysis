@@ -306,39 +306,49 @@ already existed (kept; only the 5% ceiling came down to 3%).
    ~15-min DELAYED, rate-limited; labelled as such; `capActionByMode` already
    caps it at WAIT), so 15-min context, VWAP and slippage *measurement* become
    possible. Real-time needs a broker feed — the owner's decision.
-6b. ✅ **REAL-TIME feed — Angel One SmartAPI (owner's choice, 2026-09-18).**
-   The owner asked for real-time rather than delayed/degraded data and chose
-   Angel One (free with a demat account; the alternatives priced at the time
-   were Dhan/Upstox/Fyers free tiers and Zerodha Kite Connect at ₹500/mo).
-   - `realtime/angelOneAuth.ts`: `loginByPassword` with clientcode + PIN + a
-     TOTP derived from the BASE32 seed, returning jwtToken/refreshToken/
-     feedToken. TOTP is implemented directly on Node `crypto` (RFC 6238,
-     HMAC-SHA1, 30s, 6 digits) and verified against the RFC's published test
-     vectors — `otplib` v13 is ESM-only and breaks both `tsc` and ts-jest here.
-     Credentials come only from the environment; `describeConfig()` reports
-     what is missing without printing a value; a partial configuration returns
-     null rather than a half-session, and a broker rejection throws.
-   - `realtime/angelOneStreamProvider.ts`: SmartStream v2 behind the existing
-     `RealtimeMarketProvider` interface. Binary little-endian frames decoded by
-     a PURE exported parser against the documented offsets (mode/exchange at
-     0–1, token 2–27, sequence 27–35, exchange timestamp 35–43, LTP 43–51;
-     QUOTE adds LTQ/volume/OHLC to 123; SNAP_QUOTE best-5 from 147 to 379).
-     **Prices arrive as integers in PAISE and are divided by 100** — the single
-     most dangerous field, isolated in one constant and asserted in tests.
-     Heartbeat is the literal text `ping` every 10s; subscriptions replay on
-     reconnect; ticks are emitted RAW so the existing `TickValidator` stays the
-     firewall. Truncated frames and empty tokens are discarded, never
-     zero-padded (a fabricated ₹0 would be catastrophic).
-   - **This is the feed that earns `STREAMING`**, whose ceiling is already
-     `BUY_CANDIDATE` — unlike `DELAYED_CANDLES`/`SCRAPED_SNAPSHOT`, which
-     remain capped at WAIT. 26 tests in `tests/angelone-stream.test.ts`.
-   - **Not yet wired to the engine, and not yet run against the live broker** —
-     that needs the owner's credentials in `.env` (template added to
-     `.env.example`). Angel One tokens are per-login and expire, so a session
-     refresh policy is still to be decided.
-   - SEBI: from 1 Apr 2026 API-based *trading* needs a static IP registered
-     with the broker. This path only READS market data and places no orders;
-     that obligation starts only if order placement is ever enabled.
+6b. ✅ **REAL-TIME feed — Upstox API v3 (owner's choice, 2026-09-18).**
+   The owner asked for real-time rather than delayed/degraded data. An Angel
+   One SmartAPI adapter was built first and then **removed at the owner's
+   direction** when they chose Upstox, so there is exactly one real-time path
+   in the tree.
+   - `realtime/upstoxAuth.ts`: OAuth 2.0 authorization-code flow
+     (`/v2/login/authorization/dialog` → `/token`), plus `UpstoxTokenStore`.
+   - `realtime/upstoxStreamProvider.ts`: v3 feed behind the existing
+     `RealtimeMarketProvider` interface. `GET /v3/feed/market-data-feed/authorize`
+     returns a **single-use** `authorized_redirect_uri`; the socket opens on
+     that. Subscription frames are JSON sent as **binary**
+     (`{guid, method, data:{mode, instrumentKeys}}`); responses are
+     **Protobuf**, decoded with the vendored `proto/MarketDataFeed.proto`.
+     Ping/pong is handled by the WebSocket layer — no application heartbeat.
+   - **Prices are doubles in RUPEES** (not paise integers like some brokers),
+     so there is no scaling step — asserted in tests so a vendor change cannot
+     silently introduce one. Feeds without a usable price are dropped, never
+     zero-filled. Ticks are emitted RAW; `TickValidator` stays the firewall.
+   - `full` mode carries LTPC + 5-level depth + OHLC and allows 2,000
+     instruments — comfortable for the 151-stock universe. Limits are encoded
+     and `subscribe()` throws rather than silently truncating.
+   - **This is the feed that earns `STREAMING`** (ceiling `BUY_CANDIDATE`),
+     unlike `DELAYED_CANDLES`/`SCRAPED_SNAPSHOT` which stay at WAIT.
+     31 tests in `tests/upstox-stream.test.ts`, with fixtures ENCODED through
+     the real proto so a schema drift fails there rather than in production.
+
+   **The operational catch, and why there are new routes.** Upstox issues **no
+   refresh tokens** and every access token dies at **03:30 IST** regardless of
+   when it was minted. Renewal therefore *requires* a browser login once per
+   trading day — it cannot be automated from stored credentials. Per the
+   owner's choice, a local OAuth callback makes that one click:
+   `GET /api/auth/upstox/login` → Upstox consent → `GET /api/auth/upstox/callback`
+   stores the token in memory; `GET /api/auth/upstox/status` reports state and
+   minutes remaining **without ever exposing the token**. `state` is the CSRF
+   guard (issued once, single-use). When the token lapses the provider refuses
+   to connect and names the fix; it never serves a stale price as live.
+   `nextTokenExpiry()` is a pure function with boundary tests (evening → next
+   03:30, 02:30 → same 03:30, exactly 03:30 → next day, month/year rollover).
+
+   **Not yet wired to the engine and not yet run against the live broker** —
+   that needs the owner's `UPSTOX_API_KEY`/`UPSTOX_API_SECRET` in `.env`
+   (template added) and an app whose registered redirect URI matches
+   `UPSTOX_REDIRECT_URI` exactly.
 
 7. **Only then** an intraday *monitoring* tab: freshness, gap policy
    (`INVALIDATED/RECOMPUTE/DO_NOT_CHASE/PROCEED`), confirmation triggers, the

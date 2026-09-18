@@ -39,6 +39,7 @@
     "openai": "^7.10.0",
     "pdf-parse": "^1.1.1",
     "pg": "^8.11.3",
+    "protobufjs": "^8.8.0",
     "reflect-metadata": "^0.1.13",
     "typeorm": "^0.3.17",
     "ws": "^8.21.3"
