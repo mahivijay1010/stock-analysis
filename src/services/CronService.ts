@@ -175,8 +175,11 @@ export class CronService {
   private async weeklyCalibrationRefresh(): Promise<void> {
     const { researchJobsService } = await import("./research/ResearchJobsService");
     const r = await researchJobsService.weeklyCalibrationRefresh();
+    const failures: string[] = [];
+
     if ("error" in r.calibration) {
       console.error(`🎯 [CRON] calibration refresh failed: ${r.calibration.error}`);
+      failures.push(`calibration: ${r.calibration.error}`);
     } else {
       console.log(
         `🎯 [CRON] calibration refresh: run ${r.calibration.experimentRunId}, ` +
@@ -185,8 +188,19 @@ export class CronService {
     }
     if (typeof r.experimentRunId === "object") {
       console.error(`🎯 [CRON] live baseline experiment failed: ${r.experimentRunId.error}`);
+      failures.push(`live-baseline-experiment: ${r.experimentRunId.error}`);
     } else {
       console.log(`🎯 [CRON] live baseline experiment: run ${r.experimentRunId}`);
+    }
+
+    // Both sub-jobs isolate their own failures and RETURN them rather than
+    // throwing (so one genuinely cannot sink the other — see
+    // runWeeklyCalibrationRefresh). That means a clean return here does not
+    // mean success: without this check, guarded() would log 'success' with no
+    // error text even if BOTH halves failed, which is exactly the silent-loop
+    // failure mode the durable cron log exists to catch.
+    if (failures.length > 0) {
+      throw new Error(`weeklyCalibrationRefresh: ${failures.length} of 2 sub-jobs failed — ${failures.join(" | ")}`);
     }
   }
 
