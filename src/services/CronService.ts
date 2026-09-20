@@ -19,6 +19,14 @@
  *                       NEVER deletes PredictionLog or ModelPerformance rows —
  *                       those are the permanent accuracy record.
  *
+ * NOTE ON SCHEDULING: the two "weekly" jobs above (calibration refresh,
+ * Sunday; official-filings refresh, Saturday 20:15) are registered as DAILY
+ * cron expressions and gate themselves internally with istWeekday() — see
+ * that function's docstring. node-cron 4.2.1 cannot correctly schedule a
+ * day-of-week-restricted expression (confirmed 2026-09-20: both jobs had
+ * silently never fired since they were added), so the weekday check was
+ * moved into the job body instead of the cron field.
+ *
  * REMOVED in the v2 upgrade (upgrade-spec §2; audit §2.2): the evening
  * ensemble-weight update (FTRL) and the nightly Kelly-drift snapshot. Their
  * historical rows (ensemble_weights, kelly_drift) are preserved untouched.
@@ -43,6 +51,41 @@ import { decisionService } from "./decision/DecisionService";
 import { AppDataSource } from "../config/database";
 
 const TZ = "Asia/Kolkata";
+
+/**
+ * IST weekday (0=Sunday..6=Saturday), computed independent of the process's
+ * own timezone.
+ *
+ * Needed because two of our schedules were being expressed with a
+ * day-of-week cron field (`* * 6`, `* * 0`) and node-cron 4.2.1 has a real bug
+ * there: MatcherWalker.matchNext()'s weekday-fallback loop advances the
+ * candidate date by a full YEAR per iteration instead of by a day when the
+ * day-of-month it first lands on doesn't fall on the required weekday. For
+ * "15 20 * * 6" (Saturday 20:15) that resolved to 2028; for "0 6 * * 0"
+ * (Sunday 06:00) it resolved to 2034 — confirmed against the installed
+ * library on 2026-09-20, the two jobs having silently never fired since they
+ * were added. Both are now expressed as DAILY cron expressions (a field
+ * combination node-cron computes correctly) with the weekday check moved in
+ * here, which avoids the buggy code path entirely rather than depending on a
+ * library fix or version pin.
+ */
+function istWeekday(): number {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" }).format(new Date());
+  return { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[parts as "Sun"] ?? new Date().getDay();
+}
+
+/**
+ * Thrown by a nominally-daily job to say "today was not my day" — distinct
+ * from a real failure. Caught by guarded() and logged as status='skipped'
+ * rather than 'failed', so a week of correct no-ops on
+ * weekly-official-filings-refresh / weekly-calibration-refresh cannot be
+ * misread as either six failures or six successful real runs.
+ */
+class NotScheduledToday extends Error {
+  constructor() {
+    super("not scheduled to run today");
+  }
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -88,8 +131,11 @@ export class CronService {
         run: () => this.midnightCleanup(),
       },
       {
+        // Was "15 20 * * 6" (Saturday-only). node-cron 4.2.1 cannot schedule
+        // that correctly (see istWeekday() above), so this now fires DAILY at
+        // 20:15 IST and the job itself only acts on Saturday.
         name: "weekly-official-filings-refresh",
-        expression: "15 20 * * 6",
+        expression: "15 20 * * *",
         run: () => this.weeklyIntelligenceRefresh(),
       },
       // Part V (autonomous directive): prospective research jobs — idempotent.
@@ -110,8 +156,11 @@ export class CronService {
         // newly-resolved PredictionLog rows. Sunday (no trading day) so a
         // full settled week of resolved predictions is available and it
         // never contends with the weekday scan/verify jobs.
+        // Was "0 6 * * 0" (Sunday-only). Same node-cron day-of-week bug as
+        // above, so this now fires DAILY at 06:00 IST and the job itself only
+        // acts on Sunday.
         name: "weekly-calibration-refresh",
-        expression: "0 6 * * 0",
+        expression: "0 6 * * *",
         run: () => this.weeklyCalibrationRefresh(),
       },
       {
@@ -132,7 +181,7 @@ export class CronService {
       this.tasks.push(task);
       console.log(`  ✓ ${job.name}: "${job.expression}" (${TZ})`);
     }
-    console.log("✓ Cron jobs scheduled, including official-filings refresh at 20:15 IST Saturday");
+    console.log("✓ Cron jobs scheduled — official-filings (Sat) and calibration (Sun) run daily, self-gated by weekday");
   }
 
   stopAll(): void {
@@ -173,6 +222,10 @@ export class CronService {
 
   /** 06:00 IST Sunday — continuous-learning refresh: calibration/ensemble + live baseline experiment. */
   private async weeklyCalibrationRefresh(): Promise<void> {
+    // Fires daily at 06:00 IST (see istWeekday()); only act on Sunday — no
+    // trading day, so a full settled week of resolved predictions is
+    // available and it never contends with the weekday scan/verify jobs.
+    if (istWeekday() !== 0) throw new NotScheduledToday();
     const { researchJobsService } = await import("./research/ResearchJobsService");
     const r = await researchJobsService.weeklyCalibrationRefresh();
     const failures: string[] = [];
@@ -346,6 +399,8 @@ export class CronService {
 
   /** Refresh only the explicitly configured coverage universe; empty means a safe no-op. */
   private async weeklyIntelligenceRefresh(): Promise<void> {
+    // Fires daily at 20:15 IST (see istWeekday()); only act on Saturday.
+    if (istWeekday() !== 6) throw new NotScheduledToday();
     const tickers = (process.env.INTELLIGENCE_REFRESH_TICKERS ?? "").split(",").map((x) => x.trim()).filter(Boolean);
     if (tickers.length === 0) {
       console.log("📚 [CRON] INTELLIGENCE_REFRESH_TICKERS is empty — official filings refresh skipped");
@@ -394,9 +449,14 @@ export class CronService {
       await run();
       console.log(`✓ [CRON] ${name} finished in ${((Date.now() - started) / 1000).toFixed(1)}s`);
     } catch (err) {
-      status = "failed";
-      errorSummary = err instanceof Error ? `${err.message}\n${err.stack ?? ""}`.slice(0, 4000) : String(err).slice(0, 4000);
-      console.error(`✗ [CRON] ${name} failed:`, err);
+      if (err instanceof NotScheduledToday) {
+        status = "skipped";
+        console.log(`… [CRON] ${name}: not scheduled today`);
+      } else {
+        status = "failed";
+        errorSummary = err instanceof Error ? `${err.message}\n${err.stack ?? ""}`.slice(0, 4000) : String(err).slice(0, 4000);
+        console.error(`✗ [CRON] ${name} failed:`, err);
+      }
     } finally {
       this.running.delete(name);
       try {

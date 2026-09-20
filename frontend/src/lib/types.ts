@@ -1327,6 +1327,7 @@ export interface PipelineJob {
   lastDurationMs: number | null;
   lastError: string | null;
   runs: number;
+  skipped: number;
   failures: number;
 }
 

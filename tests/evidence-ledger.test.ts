@@ -159,3 +159,39 @@ describe("EvidenceService.bundle — the headline states the least flattering tr
     expect(b.summary.predictionsWrong).toBe(2);
   });
 });
+
+describe("EvidenceService.pipeline — a correct no-op is never a failure", () => {
+  test("a job's 'skipped' rows count separately and do not inflate failures", async () => {
+    q.mockReset();
+    q.mockImplementation(async (sql: string) => {
+      if (/FROM cron_execution_logs/.test(sql) && /GROUP BY/.test(sql)) {
+        // 6 correct skips + 1 real run this week — the shape produced by the
+        // two weekly jobs now gated by istWeekday() rather than a (buggy)
+        // day-of-week cron field.
+        return [
+          {
+            job_name: "weekly-calibration-refresh",
+            last_run_at: new Date(),
+            runs: "7",
+            skipped: "6",
+            failures: "0",
+          },
+        ];
+      }
+      if (/FROM cron_execution_logs/.test(sql)) {
+        return [{ status: "skipped", execution_duration_ms: 5, error_summary: null }];
+      }
+      return [];
+    });
+
+    const health = await new EvidenceService().pipeline();
+    expect(health.neverRun).toBe(false);
+    expect(health.jobs[0].runs).toBe(7);
+    expect(health.jobs[0].skipped).toBe(6);
+    expect(health.jobs[0].failures).toBe(0);
+    // The SQL itself must exclude 'skipped' from the failures FILTER — this is
+    // the invariant that actually prevents six false alarms a week.
+    const groupSql = String(q.mock.calls.find((c) => /GROUP BY/.test(String(c[0])))![0]);
+    expect(groupSql).toMatch(/status NOT IN \('success', 'skipped'\)/);
+  });
+});

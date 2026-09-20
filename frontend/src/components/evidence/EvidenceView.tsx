@@ -570,7 +570,11 @@ function Empty({ children }: { children: React.ReactNode }) {
  */
 function PipelineBanner({ pipeline }: { pipeline: PipelineHealth }) {
   const [open, setOpen] = useState(false);
-  const failing = pipeline.jobs.filter((j) => j.lastStatus && j.lastStatus !== 'success');
+  // 'skipped' is a correct no-op on a not-my-day check (see CronService's
+  // istWeekday() guard on the two weekly jobs) — it must never render as a
+  // failure, or the two weekly jobs would show as broken six days out of
+  // seven purely by design.
+  const failing = pipeline.jobs.filter((j) => j.lastStatus && j.lastStatus !== 'success' && j.lastStatus !== 'skipped');
 
   if (pipeline.neverRun) {
     return (
@@ -614,9 +618,18 @@ function PipelineBanner({ pipeline }: { pipeline: PipelineHealth }) {
               <span className="flex items-center gap-2">
                 <span className="text-slate-500">
                   {j.runs} run{j.runs === 1 ? '' : 's'}
+                  {j.skipped > 0 && <span className="text-slate-600"> · {j.skipped} skipped (not that day)</span>}
                   {j.failures > 0 && <span className="text-amber-400"> · {j.failures} failed</span>}
                 </span>
-                <span className={j.lastStatus === 'success' ? 'text-emerald-300' : 'text-rose-300'}>
+                <span
+                  className={
+                    j.lastStatus === 'success'
+                      ? 'text-emerald-300'
+                      : j.lastStatus === 'skipped'
+                        ? 'text-slate-500'
+                        : 'text-rose-300'
+                  }
+                >
                   {j.lastStatus ?? '—'}
                 </span>
                 <span className="text-slate-600">{j.lastRunAt ? j.lastRunAt.slice(0, 16).replace('T', ' ') : '—'}</span>

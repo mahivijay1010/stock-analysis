@@ -151,6 +151,8 @@ export interface PipelineJob {
   lastDurationMs: number | null;
   lastError: string | null;
   runs: number;
+  /** Correct no-ops on a not-my-day check (see CronService istWeekday()). */
+  skipped: number;
   failures: number;
 }
 
@@ -399,10 +401,16 @@ export class EvidenceService {
    */
   async pipeline(): Promise<PipelineHealth> {
     const rows: Record<string, unknown>[] = await AppDataSource.query(
+      // 'skipped' is a nominally-daily job correctly declining to act on a
+      // day that isn't its actual schedule (see CronService's istWeekday()
+      // guard on the two weekly jobs) — it must NOT count as a failure, or
+      // the banner would show 6 false alarms a week for jobs behaving exactly
+      // as designed.
       `SELECT job_name,
               MAX(execution_start) AS last_run_at,
               COUNT(*) AS runs,
-              COUNT(*) FILTER (WHERE status <> 'success') AS failures
+              COUNT(*) FILTER (WHERE status = 'skipped') AS skipped,
+              COUNT(*) FILTER (WHERE status NOT IN ('success', 'skipped')) AS failures
          FROM cron_execution_logs
         GROUP BY job_name
         ORDER BY MAX(execution_start) DESC`
@@ -425,6 +433,7 @@ export class EvidenceService {
         lastDurationMs: num(last?.execution_duration_ms),
         lastError: last?.error_summary ? String(last.error_summary) : null,
         runs: Number(r.runs ?? 0),
+        skipped: Number(r.skipped ?? 0),
         failures: Number(r.failures ?? 0),
       });
     }
