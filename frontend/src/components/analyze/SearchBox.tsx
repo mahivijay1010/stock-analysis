@@ -81,6 +81,12 @@ export function SearchBox({ onSelect, prominent = false, className, inputId = 's
           aria-expanded={showList}
           aria-controls="stock-search-listbox"
           aria-autocomplete="list"
+          // A form-related browser extension injects data-sharkid (and similar
+          // tracking attributes) into <input> elements before React hydrates.
+          // That's a genuine client-side DOM mutation outside our render, not
+          // a bug here — suppress hydration warnings on this one node so it
+          // doesn't mask a real mismatch on the input's actual props.
+          suppressHydrationWarning
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
