@@ -162,3 +162,55 @@ increments a counter, so `DUPLICATE`, `STALE` and `SEQUENCE_GAP` are
 indistinguishable from the outside. The diagnosis above required reading the
 source and replaying the validator offline; it should have been readable from
 `/api/live/status`. Rejections must be counted per reason and exposed.
+
+**Verdict against the pre-registered criteria, full session.** The morning
+assessment above was written from the first three minutes and was too
+generous. Read across the whole session the result is worse:
+
+| # | Criterion | Verdict |
+|---|---|---|
+| 1 | Subscriptions accepted | PASS — 151/151, no limit error |
+| 2 | Coverage climbs and holds | **FAIL** — see below |
+| 3 | Ticks keep arriving | **FAIL** — 218/219 samples saw zero new ticks |
+| 4 | Validator stays quiet | amended; PASS under the amendment |
+| 5 | Freshness dominates | **FAIL** — 151/151 rows `STALE` for ~5.5h |
+| 6 | Provider health | **FAIL** — `STALE` from ~09:50 to close |
+| 7 | No silent partial universe | PASS — `unresolved` stayed `[]` |
+
+**The socket died silently at 09:48:25 IST and never recovered.** Last real
+tick at that instant; the session ran to 15:30. For 7h37m the process stayed
+up, `running` stayed `true`, and `securitiesWithData` kept reporting 151/151 —
+because that field counts securities that have EVER received data, not
+securities currently receiving it. Coverage therefore read 100% throughout an
+outage covering most of the trading day.
+
+Root cause, from the source: `upstoxStreamProvider.ts` has **no reconnect
+logic and no application-level heartbeat**. `socket.on("close")` only sets
+`connected = false`; nothing reopens the socket. The file's own header states
+the assumption — "Ping/pong is handled by the WebSocket layer itself — no app
+heartbeat" — and this session falsified it. The socket never emitted `close`
+or `error` at all: had it done so, `health()` would have reported
+`DISCONNECTED`, but it reported `STALE`, which is only reachable while
+`connected === true`. So this was not a dropped connection. It was a hung one,
+with the WebSocket object still believing it was open.
+
+Two of the three resets visible in the JSONL (09:18:30, 09:47:46) were my own
+deliberate backend restarts and are not findings. The flatline after 09:50 is.
+
+**What this cost.** Nothing in the decision path — the system never fabricated
+a price, and every stale row was labelled stale. What it cost was the session
+itself: the feed was only genuinely live for roughly 25 minutes of a 6h15m
+session, so the load test this runbook exists to perform did not actually
+happen. It has to be repeated.
+
+**What must change before the next session** (not yet implemented; a design
+decision, not a patch):
+1. An application-level heartbeat with an explicit dead-feed timeout, since
+   the transport layer demonstrably does not surface a hung socket.
+2. Reconnect with backoff, re-subscribing the universe on reconnect.
+3. `securitiesWithData` must mean *currently* receiving data, or be renamed.
+   A coverage metric that reads 100% through a seven-hour outage is worse than
+   no metric, because it actively misleads.
+4. Staleness affecting the whole universe must escalate, not sit as a per-row
+   badge. One row stale is an illiquid stock; 151 rows stale is a dead feed,
+   and the two must not look alike.
