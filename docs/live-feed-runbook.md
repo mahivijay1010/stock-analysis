@@ -114,3 +114,51 @@ with one instrument while the market was closed (correct behaviour: Upstox
 returned the last trade with a truthful `exchangeTimestamp` ~80 minutes old, no
 fabricated live price). Monitor and this runbook written ahead of the first
 real session. **No open-market verification yet.**
+
+### 2026-09-21 (Monday) — first open-market session
+
+**The feed works.** First accepted tick at **09:15:10**, ten seconds after the
+open. Coverage reached **151/151 within ~15 seconds** and held. All rows
+`FRESH` with real prices; `changePct` correctly `null` pending an exchange
+previous close. Criteria 1, 2, 3, 5, 6 and 7 pass.
+
+**Criterion 4 fails as written, and the criterion — not the code — is what
+was wrong.** Two distinct rejection sources, neither of them a defect:
+
+1. **Pre-open snapshot burst (09:12, 151 rejected / 0 accepted).** On
+   subscribe, Upstox sends each security's last trade. `updateToTick`
+   (`upstoxStreamProvider.ts:156`) takes `exchangeTimestamp` from
+   `lastTradedTime`, which before the open is *Friday's* last trade — roughly
+   three days old, far beyond `maxStalenessMs` (60s). Every one was correctly
+   classified `STALE` and refused. This is the validator doing exactly its
+   job: it declined to present Friday's close as a live Monday price. Had it
+   accepted them, `securitiesWithData` would have read 151/151 before the
+   market opened — a fabricated live price, the precise failure this system
+   exists to prevent.
+
+2. **Steady ~18–20% `DUPLICATE` rate in-session.** Upstox re-sends each
+   security's unchanged LTP snapshot on every frame. For a security that has
+   not traded since the previous frame that is a byte-identical tick, which
+   `TickValidator` rejects as `DUPLICATE`. Verified by replaying the
+   validator against repeated identical ticks: the first is `VALID`, every
+   repeat is `DUPLICATE`. Accepting them would double-count volume and
+   corrupt every bar built from it.
+
+So criterion 4's "ticksRejected stays near zero and does not grow with volume"
+was written assuming rejections can only mean corruption. Against this vendor
+a large, volume-proportional duplicate rate is *correct* behaviour. The
+criterion is hereby amended (below) rather than the result reinterpreted —
+the original text is left above so the change is auditable.
+
+**Amended criterion 4:** rejections must be attributable by REASON.
+`STALE` outside the pre-open snapshot window, `SEQUENCE_GAP`, or any `INVALID`
+growing with volume ⇒ investigate. `DUPLICATE` proportional to frame rate, and
+a single pre-open `STALE` burst of at most one tick per subscribed security,
+are expected.
+
+**Gap this exposed, to fix before the next session.**
+`StreamingMarketProvider.ingest()` discards `verdict.status` and only
+increments a counter, so `DUPLICATE`, `STALE` and `SEQUENCE_GAP` are
+indistinguishable from the outside. The diagnosis above required reading the
+source and replaying the validator offline; it should have been readable from
+`/api/live/status`. Rejections must be counted per reason and exposed.

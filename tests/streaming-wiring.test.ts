@@ -244,3 +244,54 @@ describe("istSessionOpenMs", () => {
     expect(new Date(istSessionOpenMs(justAfterIstMidnight)).toISOString()).toBe("2026-09-18T03:45:00.000Z");
   });
 });
+
+/**
+ * Rejection reasons must be attributable (docs/live-feed-runbook.md,
+ * 2026-09-21 session).
+ *
+ * The first open-market session ran a steady ~19% rejection rate, which read
+ * as a protocol fault against the pre-registered criterion. It was actually
+ * Upstox re-sending unchanged LTP snapshots — correct DUPLICATE rejections.
+ * Diagnosing that needed source reading and an offline validator replay,
+ * because ingest() discarded the verdict. These tests pin the distinction so
+ * a real fault can never again hide behind a benign duplicate count.
+ */
+describe("StreamingMarketProvider — rejections are attributable by reason", () => {
+  test("a re-sent unchanged snapshot counts as DUPLICATE, not an unexplained rejection", async () => {
+    const { stream, provider } = makeBridge();
+    await provider.start(new Map([["RELIANCE.NS", KEY]]));
+
+    stream.push(tick());
+    stream.push(tick()); // byte-identical re-send
+    stream.push(tick());
+
+    const stats = provider.stats();
+    expect(stats.accepted).toBe(1);
+    expect(stats.rejected).toBe(2);
+    expect(stats.rejectedByReason).toEqual({ DUPLICATE: 2 });
+  });
+
+  test("a stale tick is counted separately from a duplicate — they mean different things", async () => {
+    const { stream, provider } = makeBridge();
+    await provider.start(new Map([["RELIANCE.NS", KEY]]));
+
+    stream.push(tick());
+    // Pre-open snapshot shape: exchange timestamp far older than receivedAt.
+    stream.push(tick({ exchangeTimestamp: T0 - 3 * 24 * 3600_000, price: 1200, quantity: 7 }));
+
+    const stats = provider.stats();
+    expect(stats.rejectedByReason.STALE).toBe(1);
+    expect(stats.rejectedByReason.DUPLICATE).toBeUndefined();
+  });
+
+  test("health() names the reasons, so a duplicate rate cannot read as a fault", async () => {
+    const { stream, provider } = makeBridge();
+    await provider.start(new Map([["RELIANCE.NS", KEY]]));
+    stream.push(tick());
+    stream.push(tick());
+
+    const reason = provider.health().reason ?? "";
+    expect(reason).toMatch(/1 ticks rejected/);
+    expect(reason).toMatch(/DUPLICATE 1/);
+  });
+});

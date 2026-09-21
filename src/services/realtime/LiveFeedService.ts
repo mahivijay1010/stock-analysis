@@ -53,6 +53,7 @@ export interface LiveFeedStatus {
   unresolved: string[];
   ticksAccepted: number;
   ticksRejected: number;
+  ticksRejectedByReason: Record<string, number>;
   securitiesWithData: number;
   tokenState: string;
   startedAt: string | null;
@@ -111,7 +112,7 @@ export class LiveFeedService {
   }
 
   status(): LiveFeedStatus {
-    const stats = this.streaming?.stats() ?? { accepted: 0, rejected: 0, securities: 0, started: false };
+    const stats = this.streaming?.stats() ?? { accepted: 0, rejected: 0, rejectedByReason: {}, securities: 0, started: false };
     return {
       running: this.streaming != null,
       mode: "STREAMING",
@@ -122,6 +123,9 @@ export class LiveFeedService {
       unresolved: this.unresolved,
       ticksAccepted: stats.accepted,
       ticksRejected: stats.rejected,
+      // Per-reason, because a bare count cannot separate a benign duplicate
+      // from a protocol fault (docs/live-feed-runbook.md, 2026-09-21).
+      ticksRejectedByReason: stats.rejectedByReason,
       securitiesWithData: stats.securities,
       tokenState: upstoxTokenStore.status().state,
       startedAt: this.startedAt ? new Date(this.startedAt).toISOString() : null,

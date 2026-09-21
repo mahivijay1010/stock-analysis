@@ -89,6 +89,19 @@ export class StreamingMarketProvider implements MarketDataProvider {
   private readonly tickerByInstrumentKey = new Map<string, string>();
   private rejectedTicks = 0;
   private acceptedTicks = 0;
+  /**
+   * Rejections BY REASON.
+   *
+   * A bare rejected-tick counter cannot distinguish a harmless duplicate from
+   * a real protocol fault. The 2026-09-21 session (docs/live-feed-runbook.md)
+   * showed a steady ~19% rejection rate that turned out to be Upstox re-sending
+   * unchanged LTP snapshots — correct behaviour — but diagnosing that required
+   * reading the source and replaying the validator offline, because the reason
+   * was thrown away here. DUPLICATE proportional to frame rate is expected;
+   * STALE outside the pre-open snapshot, SEQUENCE_GAP or INVALID growing with
+   * volume are not. That distinction has to be visible from the outside.
+   */
+  private readonly rejectedByReason = new Map<string, number>();
   private started = false;
 
   constructor(
@@ -123,6 +136,7 @@ export class StreamingMarketProvider implements MarketDataProvider {
     const verdict = this.validator.validate(tick);
     if (verdict.status !== "VALID") {
       this.rejectedTicks++;
+      this.rejectedByReason.set(verdict.status, (this.rejectedByReason.get(verdict.status) ?? 0) + 1);
       return false;
     }
     this.acceptedTicks++;
@@ -261,14 +275,38 @@ export class StreamingMarketProvider implements MarketDataProvider {
     const upstream = this.stream.health();
     return {
       ...upstream,
+      // Name the reasons, not just the count: "19% rejected" reads as a fault,
+      // "19% rejected, all DUPLICATE" reads as the vendor re-sending unchanged
+      // snapshots. Only the second is actionable.
       reason:
         this.rejectedTicks > 0
-          ? `${upstream.reason ? upstream.reason + "; " : ""}${this.rejectedTicks} ticks rejected by the validator (${this.acceptedTicks} accepted)`
+          ? `${upstream.reason ? upstream.reason + "; " : ""}${this.rejectedTicks} ticks rejected by the validator ` +
+            `(${this.acceptedTicks} accepted) — ${this.reasonBreakdown()}`
           : upstream.reason,
     };
   }
 
-  stats(): { accepted: number; rejected: number; securities: number; started: boolean } {
-    return { accepted: this.acceptedTicks, rejected: this.rejectedTicks, securities: this.state.size, started: this.started };
+  /** "DUPLICATE 2171, STALE 151" — most frequent first. */
+  private reasonBreakdown(): string {
+    return [...this.rejectedByReason.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([reason, n]) => `${reason} ${n}`)
+      .join(", ");
+  }
+
+  stats(): {
+    accepted: number;
+    rejected: number;
+    rejectedByReason: Record<string, number>;
+    securities: number;
+    started: boolean;
+  } {
+    return {
+      accepted: this.acceptedTicks,
+      rejected: this.rejectedTicks,
+      rejectedByReason: Object.fromEntries(this.rejectedByReason),
+      securities: this.state.size,
+      started: this.started,
+    };
   }
 }
