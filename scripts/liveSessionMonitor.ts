@@ -40,6 +40,11 @@ interface Sample {
   /** Ticks accepted since the previous sample — the real liveness signal. */
   ticksDelta: number | null;
   tokenState: string;
+  /** Currently receiving data, vs securitiesWithData ("ever received"). */
+  securitiesLive: number;
+  /** Ms since ANY frame arrived — the signal the 2026-09-21 outage lacked. */
+  silentForMs: number | null;
+  reconnects: number;
   freshRows: number | null;
   staleRows: number | null;
   silentRows: number | null;
@@ -63,6 +68,9 @@ async function sample(prevAccepted: number | null): Promise<Sample> {
     providerReason: null,
     subscribed: 0,
     securitiesWithData: 0,
+    securitiesLive: 0,
+    silentForMs: null,
+    reconnects: 0,
     coveragePct: null,
     ticksAccepted: 0,
     ticksRejected: 0,
@@ -80,6 +88,9 @@ async function sample(prevAccepted: number | null): Promise<Sample> {
     base.providerReason = status?.health?.reason ?? null;
     base.subscribed = Number(status?.subscribed ?? 0);
     base.securitiesWithData = Number(status?.securitiesWithData ?? 0);
+    base.securitiesLive = Number(status?.securitiesLive ?? 0);
+    base.silentForMs = status?.link?.silentForMs ?? null;
+    base.reconnects = Number(status?.link?.reconnects ?? 0);
     base.ticksAccepted = Number(status?.ticksAccepted ?? 0);
     base.ticksRejected = Number(status?.ticksRejected ?? 0);
     base.tokenState = String(status?.tokenState ?? "UNKNOWN");
@@ -131,7 +142,9 @@ async function main(): Promise<void> {
 
     console.log(
       `${s.istTime}  ${s.running ? "yes" : "no "}  ${String(s.providerState ?? "-").padEnd(12)} ` +
-        `${String(s.coveragePct ?? "-").padStart(5)}%  ${String(s.ticksAccepted).padStart(7)}` +
+        `${String(s.coveragePct ?? "-").padStart(5)}% live:${String(s.securitiesLive).padStart(3)}  ` +
+        `${s.silentForMs != null ? `silent:${Math.round(s.silentForMs / 1000)}s` : "silent:-"}  ` +
+        `${String(s.ticksAccepted).padStart(7)}` +
         `${s.ticksDelta != null ? `(+${s.ticksDelta})`.padStart(8) : "".padStart(8)}  ` +
         `${String(s.ticksRejected).padStart(4)}  ${s.freshRows ?? "-"}/${s.staleRows ?? "-"}/${s.silentRows ?? "-"}` +
         (s.error ? `  ERROR ${s.error}` : "")

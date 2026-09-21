@@ -55,6 +55,15 @@ export interface LiveFeedStatus {
   ticksRejected: number;
   ticksRejectedByReason: Record<string, number>;
   securitiesWithData: number;
+  securitiesLive: number;
+  /** Link liveness: how long since ANY frame, and reconnect history. */
+  link: {
+    silentForMs: number | null;
+    deadAfterMs: number;
+    reconnects: number;
+    lastReconnectAt: number | null;
+    reconnecting: boolean;
+  } | null;
   tokenState: string;
   startedAt: string | null;
   note: string;
@@ -112,7 +121,7 @@ export class LiveFeedService {
   }
 
   status(): LiveFeedStatus {
-    const stats = this.streaming?.stats() ?? { accepted: 0, rejected: 0, rejectedByReason: {}, securities: 0, started: false };
+    const stats = this.streaming?.stats() ?? { accepted: 0, rejected: 0, rejectedByReason: {}, securities: 0, securitiesLive: 0, started: false };
     return {
       running: this.streaming != null,
       mode: "STREAMING",
@@ -127,6 +136,10 @@ export class LiveFeedService {
       // from a protocol fault (docs/live-feed-runbook.md, 2026-09-21).
       ticksRejectedByReason: stats.rejectedByReason,
       securitiesWithData: stats.securities,
+      // Currently receiving data, as opposed to "has ever received data".
+      // The latter reported 151/151 throughout a seven-hour dead feed.
+      securitiesLive: stats.securitiesLive,
+      link: this.streaming?.linkStats() ?? null,
       tokenState: upstoxTokenStore.status().state,
       startedAt: this.startedAt ? new Date(this.startedAt).toISOString() : null,
       note: MONITORING_NOTE,

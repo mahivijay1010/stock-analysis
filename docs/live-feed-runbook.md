@@ -203,14 +203,47 @@ itself: the feed was only genuinely live for roughly 25 minutes of a 6h15m
 session, so the load test this runbook exists to perform did not actually
 happen. It has to be repeated.
 
-**What must change before the next session** (not yet implemented; a design
-decision, not a patch):
-1. An application-level heartbeat with an explicit dead-feed timeout, since
-   the transport layer demonstrably does not surface a hung socket.
-2. Reconnect with backoff, re-subscribing the universe on reconnect.
-3. `securitiesWithData` must mean *currently* receiving data, or be renamed.
-   A coverage metric that reads 100% through a seven-hour outage is worse than
-   no metric, because it actively misleads.
-4. Staleness affecting the whole universe must escalate, not sit as a per-row
-   badge. One row stale is an illiquid stock; 151 rows stale is a dead feed,
-   and the two must not look alike.
+**What must change before the next session — ALL FOUR IMPLEMENTED 2026-09-21
+evening.**
+
+1. ✅ **Watchdog with an explicit dead-feed timeout.** `UpstoxStreamProvider`
+   now records `lastMessageAt` on every successfully decoded frame (including
+   `market_info` and empty-update frames — those carry no trades but do prove
+   the socket is alive) and runs an interval check independent of every
+   transport event. Silence beyond `deadAfterMs` (default 120s, checked every
+   15s) declares the feed dead. Transport events are no longer trusted as the
+   liveness signal; silence is.
+2. ✅ **Reconnect with exponential backoff.** Death schedules a reconnect
+   (2s doubling to a 60s cap). Because the Upstox wss URL is SINGLE-USE, the
+   reconnect re-runs the authorize step rather than reopening the stale URL,
+   and re-subscribes the full instrument set on `open`. `close`/`error` route
+   into the same path when they do fire. A deliberate `disconnect()` sets a
+   shutdown flag so an in-flight reconnect cannot resurrect the feed.
+3. ✅ **`securitiesLive` added** alongside `securitiesWithData`. The old field
+   is kept (it answers a real question — how much of the universe has ever
+   reported) but it is no longer the headline: `securitiesLive` counts
+   securities whose last tick is within `maxTickAgeMs`. On 2026-09-21 the old
+   metric read 151/151 through a seven-hour outage; the new one would have
+   read 0.
+4. ✅ **Universe-wide staleness escalates.** `StreamingMarketProvider.health()`
+   now returns a distinct reason when EVERY tracked security is stale: "ALL n
+   tracked securities are stale — this is a dead feed, not an illiquid
+   market". A partial count is reported as "k/n securities stale". One stale
+   row and 151 stale rows no longer look alike.
+
+Also added: `link` in `/api/live/status` (`silentForMs`, `deadAfterMs`,
+`reconnects`, `lastReconnectAt`, `reconnecting`) — `silentForMs` is precisely
+the number this session needed and did not have. `scripts/liveSessionMonitor.ts`
+records `securitiesLive`, `silentForMs` and `reconnects` per sample, so the
+signature of a repeat outage would be unmistakable in the JSONL.
+
+Covered by four regression tests in `tests/upstox-stream.test.ts`, including
+one that reproduces the exact failure — a socket emitting no `close`, no
+`error`, and no data — and asserts a re-authorized reconnect follows. That
+test was verified to FAIL with the watchdog disabled, so it is not vacuous.
+
+**Still unverified: whether this holds under a real session.** The fix is
+tested against a fake socket. It has never faced the actual vendor. Criterion
+2, 3, 5 and 6 remain unproven in production until a full session runs clean,
+and today's session cannot be reinterpreted as evidence for a fix written
+after it ended.

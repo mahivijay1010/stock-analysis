@@ -401,3 +401,132 @@ describe("STREAMING is the mode a real-time feed earns", () => {
     expect(capActionByMode("BUY_CANDIDATE", "SCRAPED_SNAPSHOT")).toBe("WAIT");
   });
 });
+
+/**
+ * Liveness: the watchdog, reconnect, and the metrics that made the
+ * 2026-09-21 outage invisible (docs/live-feed-runbook.md).
+ *
+ * That session's socket went silent at 09:48 IST and stayed silent for 7h37m
+ * without ever emitting `close` or `error`. Every test here pins one part of
+ * the guarantee that this cannot happen silently again.
+ */
+describe("UpstoxStreamProvider — surviving a hung socket", () => {
+  // Fake timers only inside this block: the watchdog is an interval, and the
+  // surrounding suite relies on real timers.
+  beforeEach(() => jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] }));
+  afterEach(() => jest.useRealTimers());
+
+  test("a socket that goes silent WITHOUT close/error is detected and reconnected", async () => {
+    let authorizeCalls = 0;
+    const sockets: FakeSocket[] = [];
+    let clock = LTT;
+    const store = new UpstoxTokenStore(() => clock);
+    store.set({ accessToken: "ACC", issuedAt: 0, expiresAt: LTT + 3_600_000, userId: "U1" });
+
+    const provider = new UpstoxStreamProvider({
+      tokenStore: store,
+      authorizeFeed: async () => {
+        authorizeCalls++;
+        return `wss://authorized.example/feed?code=${authorizeCalls}`;
+      },
+      socketFactory: (url) => {
+        const s = new FakeSocket(url);
+        sockets.push(s);
+        return s;
+      },
+      now: () => clock,
+      deadAfterMs: 60_000,
+      watchdogIntervalMs: 1_000,
+      reconnectBaseMs: 1,
+    });
+
+    const p = provider.connect();
+    for (let i = 0; i < 50 && sockets.length === 0; i++) await new Promise((r) => setImmediate(r));
+    sockets[0].emit("open");
+    await p;
+    expect(authorizeCalls).toBe(1);
+
+    // The socket emits NOTHING — no message, no close, no error — and time
+    // passes well beyond the dead threshold. This is the exact 2026-09-21
+    // failure: the transport reports perfect health while the feed is dead.
+    clock += 120_000;
+    jest.advanceTimersByTime(1_000); // one watchdog tick detects the silence
+    await new Promise((r) => setImmediate(r));
+    jest.advanceTimersByTime(1_000); // then the backoff timer fires
+
+    // Reconnect must re-AUTHORIZE, because the wss URL is single-use.
+    for (let i = 0; i < 50 && sockets.length < 2; i++) await new Promise((r) => setImmediate(r));
+    expect(authorizeCalls).toBe(2);
+    expect(sockets.length).toBe(2);
+    expect(sockets[1].url).not.toBe(sockets[0].url);
+  });
+
+  test("a healthy socket is never torn down, even when no TRADES arrive", async () => {
+    // A quiet market still sends frames. Only total silence is death.
+    const { provider, openSocket, setClock } = makeProvider({
+      deadAfterMs: 60_000,
+      watchdogIntervalMs: 1_000,
+    });
+    const p = provider.connect();
+    const socket = await openSocket();
+    await p;
+
+    setClock(LTT + 30_000);
+    socket.emit("message", encodeFeed({ type: TYPE.market_info, currentTs: LTT + 30_000, feeds: {} })); // no trades
+    setClock(LTT + 50_000);
+    jest.advanceTimersByTime(1_000);
+
+    expect(provider.linkStats().reconnects).toBe(0);
+    expect(provider.linkStats().reconnecting).toBe(false);
+  });
+
+  test("linkStats reports how long the link has been silent — the number the outage lacked", async () => {
+    const { provider, openSocket, setClock } = makeProvider({ deadAfterMs: 60_000 });
+    const p = provider.connect();
+    await openSocket();
+    await p;
+
+    setClock(LTT + 45_000);
+    const stats = provider.linkStats();
+    expect(stats.silentForMs).toBe(45_000);
+    expect(stats.deadAfterMs).toBe(60_000);
+  });
+
+  test("disconnect() stops the watchdog — a deliberate stop never resurrects itself", async () => {
+    let authorizeCalls = 0;
+    const sockets: FakeSocket[] = [];
+    let clock = LTT;
+    const store = new UpstoxTokenStore(() => clock);
+    store.set({ accessToken: "ACC", issuedAt: 0, expiresAt: LTT + 3_600_000, userId: "U1" });
+
+    const provider = new UpstoxStreamProvider({
+      tokenStore: store,
+      authorizeFeed: async () => {
+        authorizeCalls++;
+        return `wss://authorized.example/feed?code=${authorizeCalls}`;
+      },
+      socketFactory: (url) => {
+        const s = new FakeSocket(url);
+        sockets.push(s);
+        return s;
+      },
+      now: () => clock,
+      deadAfterMs: 60_000,
+      watchdogIntervalMs: 1_000,
+      reconnectBaseMs: 1,
+    });
+
+    const p = provider.connect();
+    for (let i = 0; i < 50 && sockets.length === 0; i++) await new Promise((r) => setImmediate(r));
+    sockets[0].emit("open");
+    await p;
+
+    await provider.disconnect();
+    clock += 300_000;
+    jest.advanceTimersByTime(10_000);
+    await new Promise((r) => setImmediate(r));
+
+    expect(authorizeCalls).toBe(1); // no reconnect attempted
+    expect(provider.health().state).toBe("DISCONNECTED");
+  });
+});

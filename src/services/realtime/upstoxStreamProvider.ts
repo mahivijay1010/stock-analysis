@@ -11,7 +11,20 @@
  *      { guid, method: "sub" | "unsub" | "change_mode", data: { mode, instrumentKeys } }
  *   3. Responses are PROTOBUF (MarketDataFeed.proto, vendored under ./proto),
  *      decoded to FeedResponse { type, feeds: map<string, Feed>, currentTs }.
- *      Ping/pong is handled by the WebSocket layer itself — no app heartbeat.
+ *
+ * LIVENESS. This provider originally assumed the WebSocket layer's own
+ * ping/pong would surface a dead connection. The 2026-09-21 session falsified
+ * that: the socket went silent at 09:48 IST and stayed silent for 7h37m
+ * WITHOUT ever emitting `close` or `error`, so nothing downstream learned the
+ * feed had died (docs/live-feed-runbook.md). A hung socket is therefore
+ * treated as the expected failure mode, not an exotic one:
+ *   - A watchdog measures time since the last decoded message and declares the
+ *     feed dead after `deadAfterMs`, independent of any transport event.
+ *   - Death triggers reconnect with exponential backoff. Because Upstox's wss
+ *     URL is SINGLE-USE, reconnecting re-runs the authorize step rather than
+ *     reopening the old URL, and re-subscribes the full instrument set.
+ *   - `close`/`error` still trigger the same path when they do fire; the
+ *     watchdog is the backstop for when they do not.
  *
  * Instrument keys are `SEGMENT|ID` strings (e.g. "NSE_EQ|INE002A01018"), which
  * are used directly as the engine's securityId: stable, reversible, no mapping
@@ -210,6 +223,21 @@ export interface UpstoxStreamOptions {
   protoPath: string;
   /** Ticks older than this (ms) mark the provider STALE rather than CONNECTED. */
   staleAfterMs: number;
+  /**
+   * Silence longer than this (ms) means the socket is DEAD, whatever the
+   * transport believes, and triggers a reconnect. Must exceed the longest
+   * legitimate quiet period: Upstox pushes snapshots continuously during
+   * market hours, so a minute of total silence across 151 instruments is
+   * already pathological.
+   */
+  deadAfterMs: number;
+  /** How often the watchdog checks for silence. */
+  watchdogIntervalMs: number;
+  /** First reconnect delay; doubles each consecutive failure up to the max. */
+  reconnectBaseMs: number;
+  reconnectMaxMs: number;
+  /** Give up after this many consecutive failures (0 = never give up). */
+  maxReconnectAttempts: number;
 }
 
 export const DEFAULT_UPSTOX_STREAM_OPTIONS: Omit<UpstoxStreamOptions, "socketFactory" | "authorizeFeed" | "tokenStore"> = {
@@ -217,6 +245,11 @@ export const DEFAULT_UPSTOX_STREAM_OPTIONS: Omit<UpstoxStreamOptions, "socketFac
   now: Date.now,
   protoPath: PROTO_PATH,
   staleAfterMs: 60_000,
+  deadAfterMs: 120_000,
+  watchdogIntervalMs: 15_000,
+  reconnectBaseMs: 2_000,
+  reconnectMaxMs: 60_000,
+  maxReconnectAttempts: 0,
 };
 
 export class UpstoxStreamProvider implements RealtimeMarketProvider {
@@ -229,6 +262,16 @@ export class UpstoxStreamProvider implements RealtimeMarketProvider {
   private connected = false;
   private lastError: string | undefined;
   private lastFeedType: string | null = null;
+  /** Last time ANY message was decoded — the watchdog's liveness signal. */
+  private lastMessageAt: number | null = null;
+  private watchdog: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
+  /** Set by stop()/disconnect() so an in-flight reconnect does not resurrect. */
+  private shuttingDown = false;
+  private reconnecting = false;
+  private reconnectCount = 0;
+  private lastReconnectAt: number | null = null;
 
   constructor(opts: Partial<UpstoxStreamOptions> = {}) {
     this.opts = {
@@ -247,6 +290,17 @@ export class UpstoxStreamProvider implements RealtimeMarketProvider {
    */
   async connect(): Promise<void> {
     if (this.socket) return;
+    this.shuttingDown = false;
+    await this.openSocket();
+    this.startWatchdog();
+  }
+
+  /**
+   * Authorize and open one socket. Separated from connect() because a
+   * reconnect must repeat the ENTIRE sequence — the wss URL is single-use, so
+   * it cannot be cached and reopened.
+   */
+  private async openSocket(): Promise<void> {
     const token = this.opts.tokenStore.get();
     if (!token) {
       const status = this.opts.tokenStore.status();
@@ -263,6 +317,9 @@ export class UpstoxStreamProvider implements RealtimeMarketProvider {
       socket.on("open", () => {
         this.connected = true;
         this.lastError = undefined;
+        // Treat the open as liveness, so the watchdog measures from here and
+        // does not immediately declare a just-opened socket dead.
+        this.lastMessageAt = this.opts.now();
         if (this.subscribed.size > 0) this.sendFrame(FEED_METHOD.SUB, [...this.subscribed]);
         if (!settled) {
           settled = true;
@@ -276,15 +333,108 @@ export class UpstoxStreamProvider implements RealtimeMarketProvider {
         if (!settled) {
           settled = true;
           reject(err instanceof Error ? err : new Error(this.lastError));
+        } else {
+          // Error after the socket was already up: treat as a death.
+          this.scheduleReconnect(`socket error: ${this.lastError}`);
         }
       });
       socket.on("close", () => {
         this.connected = false;
+        if (settled) this.scheduleReconnect("socket closed by peer");
       });
     });
   }
 
+  /**
+   * The backstop for a socket that hangs without ever reporting it.
+   *
+   * Deliberately independent of every transport event, because on 2026-09-21
+   * the transport reported nothing at all for over seven hours while the feed
+   * was dead. Silence is the only signal that can be trusted here.
+   */
+  private startWatchdog(): void {
+    this.stopWatchdog();
+    this.watchdog = setInterval(() => {
+      if (this.shuttingDown || this.reconnecting || !this.socket) return;
+      const since = this.lastMessageAt == null ? null : this.opts.now() - this.lastMessageAt;
+      if (since != null && since > this.opts.deadAfterMs) {
+        this.scheduleReconnect(`no message for ${Math.round(since / 1000)}s (dead after ${Math.round(this.opts.deadAfterMs / 1000)}s)`);
+      }
+    }, this.opts.watchdogIntervalMs);
+    // Never hold the process open just to run a health check.
+    this.watchdog.unref?.();
+  }
+
+  private stopWatchdog(): void {
+    if (this.watchdog) clearInterval(this.watchdog);
+    this.watchdog = null;
+  }
+
+  /**
+   * Tear down the dead socket and reopen after a backoff.
+   *
+   * Reconnect is best-effort and never throws into the caller: a failed
+   * attempt schedules the next one and leaves health() reporting DISCONNECTED
+   * with the reason, so the outage stays visible rather than being retried
+   * invisibly forever.
+   */
+  private scheduleReconnect(reason: string): void {
+    if (this.shuttingDown || this.reconnecting) return;
+    this.reconnecting = true;
+    this.lastError = reason;
+    this.connected = false;
+
+    try {
+      this.socket?.close();
+    } catch {
+      /* the socket is already gone; closing is best-effort */
+    }
+    this.socket = null;
+
+    const attempt = this.reconnectAttempts;
+    if (this.opts.maxReconnectAttempts > 0 && attempt >= this.opts.maxReconnectAttempts) {
+      this.lastError = `${reason}; giving up after ${attempt} reconnect attempts`;
+      this.reconnecting = false;
+      this.stopWatchdog();
+      return;
+    }
+
+    const delay = Math.min(this.opts.reconnectBaseMs * 2 ** attempt, this.opts.reconnectMaxMs);
+    this.reconnectAttempts = attempt + 1;
+
+    this.reconnectTimer = setTimeout(() => {
+      void this.attemptReconnect(reason);
+    }, delay);
+    this.reconnectTimer.unref?.();
+  }
+
+  private async attemptReconnect(reason: string): Promise<void> {
+    if (this.shuttingDown) {
+      this.reconnecting = false;
+      return;
+    }
+    try {
+      await this.openSocket();
+      // Success: reset the backoff and record it for the operator.
+      this.reconnectAttempts = 0;
+      this.reconnectCount += 1;
+      this.lastReconnectAt = this.opts.now();
+      this.reconnecting = false;
+      this.startWatchdog();
+    } catch (err) {
+      this.reconnecting = false;
+      const msg = err instanceof Error ? err.message : String(err);
+      this.lastError = `${reason}; reconnect failed: ${msg}`;
+      this.scheduleReconnect(this.lastError);
+    }
+  }
+
   async disconnect(): Promise<void> {
+    this.shuttingDown = true;
+    this.stopWatchdog();
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.reconnecting = false;
     this.socket?.close();
     this.socket = null;
     this.connected = false;
@@ -321,11 +471,46 @@ export class UpstoxStreamProvider implements RealtimeMarketProvider {
     if (this.connected) {
       state = this.lastTickAt != null && now - this.lastTickAt > this.opts.staleAfterMs ? "STALE" : "CONNECTED";
     }
+    // A reconnect in flight is DISCONNECTED, not STALE: the distinction the
+    // 2026-09-21 outage blurred was exactly "old data" vs "no connection", and
+    // an operator needs to see which one they have.
+    if (this.reconnecting) state = "DISCONNECTED";
+
+    const parts: string[] = [];
+    if (this.lastError) parts.push(this.lastError);
+    if (tokenStatus.state !== "VALID") parts.push(tokenStatus.reason);
+    if (this.reconnectCount > 0) {
+      parts.push(`${this.reconnectCount} reconnect${this.reconnectCount === 1 ? "" : "s"} this session`);
+    }
+
     return {
       state,
       lastTickAt: this.lastTickAt,
       subscribed: this.subscribed.size,
-      reason: this.lastError ?? (tokenStatus.state === "VALID" ? undefined : tokenStatus.reason),
+      reason: parts.length > 0 ? parts.join("; ") : undefined,
+    };
+  }
+
+  /**
+   * Liveness and reconnect diagnostics, for the monitoring surface.
+   *
+   * `silentForMs` is the number the 2026-09-21 session needed and did not
+   * have: it measures the gap since ANY frame arrived, which is what actually
+   * distinguishes a dead socket from a quiet market.
+   */
+  linkStats(): {
+    silentForMs: number | null;
+    deadAfterMs: number;
+    reconnects: number;
+    lastReconnectAt: number | null;
+    reconnecting: boolean;
+  } {
+    return {
+      silentForMs: this.lastMessageAt == null ? null : this.opts.now() - this.lastMessageAt,
+      deadAfterMs: this.opts.deadAfterMs,
+      reconnects: this.reconnectCount,
+      lastReconnectAt: this.lastReconnectAt,
+      reconnecting: this.reconnecting,
     };
   }
 
@@ -354,6 +539,11 @@ export class UpstoxStreamProvider implements RealtimeMarketProvider {
       return;
     }
     this.lastFeedType = decoded.type;
+    // Liveness is recorded for ANY successfully decoded frame, including
+    // market_info and empty-update frames. Those carry no trades, but they do
+    // prove the socket is alive — counting only ticks would let a quiet-but-
+    // healthy feed be torn down and reconnected pointlessly.
+    this.lastMessageAt = this.opts.now();
     // market_info frames describe segment status, not trades.
     if (decoded.type === "market_info" || decoded.updates.length === 0) return;
 

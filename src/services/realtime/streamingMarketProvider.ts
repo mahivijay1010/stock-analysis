@@ -273,17 +273,64 @@ export class StreamingMarketProvider implements MarketDataProvider {
 
   health(): ProviderHealth {
     const upstream = this.stream.health();
-    return {
-      ...upstream,
-      // Name the reasons, not just the count: "19% rejected" reads as a fault,
-      // "19% rejected, all DUPLICATE" reads as the vendor re-sending unchanged
-      // snapshots. Only the second is actionable.
-      reason:
-        this.rejectedTicks > 0
-          ? `${upstream.reason ? upstream.reason + "; " : ""}${this.rejectedTicks} ticks rejected by the validator ` +
-            `(${this.acceptedTicks} accepted) — ${this.reasonBreakdown()}`
-          : upstream.reason,
-    };
+    const parts: string[] = [];
+    if (upstream.reason) parts.push(upstream.reason);
+
+    /*
+     * Universe-wide staleness is escalated here rather than left as 151
+     * individual row badges.
+     *
+     * One stale row is an illiquid stock and is expected. Every row stale at
+     * once is a dead feed, and on 2026-09-21 the two looked identical from
+     * every surface for over seven hours. They must not.
+     */
+    const tracked = this.state.size;
+    if (tracked > 0) {
+      const now = this.opts.now();
+      let stale = 0;
+      for (const sec of this.state.values()) {
+        if (now - sec.lastReceivedAt > this.opts.maxTickAgeMs) stale++;
+      }
+      if (stale === tracked) {
+        return {
+          ...upstream,
+          state: "STALE",
+          reason:
+            `ALL ${tracked} tracked securities are stale — this is a dead feed, not an illiquid market` +
+            (parts.length ? `; ${parts.join("; ")}` : ""),
+        };
+      }
+      if (stale > 0) parts.push(`${stale}/${tracked} securities stale`);
+    }
+
+    // Name the reasons, not just the count: "19% rejected" reads as a fault,
+    // "19% rejected, all DUPLICATE" reads as the vendor re-sending unchanged
+    // snapshots. Only the second is actionable.
+    if (this.rejectedTicks > 0) {
+      parts.push(
+        `${this.rejectedTicks} ticks rejected by the validator (${this.acceptedTicks} accepted) — ${this.reasonBreakdown()}`
+      );
+    }
+
+    return { ...upstream, reason: parts.length > 0 ? parts.join("; ") : undefined };
+  }
+
+  /**
+   * Link liveness from the underlying stream, when it exposes it.
+   *
+   * Typed structurally rather than against UpstoxStreamProvider so the
+   * RealtimeMarketProvider abstraction is not broken for fakes or other
+   * vendors that have no such concept.
+   */
+  linkStats(): {
+    silentForMs: number | null;
+    deadAfterMs: number;
+    reconnects: number;
+    lastReconnectAt: number | null;
+    reconnecting: boolean;
+  } | null {
+    const s = this.stream as unknown as { linkStats?: () => ReturnType<NonNullable<StreamingMarketProvider["linkStats"]>> };
+    return typeof s.linkStats === "function" ? s.linkStats() : null;
   }
 
   /** "DUPLICATE 2171, STALE 151" — most frequent first. */
@@ -299,13 +346,25 @@ export class StreamingMarketProvider implements MarketDataProvider {
     rejected: number;
     rejectedByReason: Record<string, number>;
     securities: number;
+    securitiesLive: number;
     started: boolean;
   } {
+    // `securities` counts everything that has EVER produced a tick. On
+    // 2026-09-21 that made coverage read 151/151 for the seven hours after the
+    // socket silently died — technically true and completely misleading
+    // (docs/live-feed-runbook.md). `securitiesLive` counts what is CURRENTLY
+    // producing data, which is the number an operator actually needs.
+    const now = this.opts.now();
+    let live = 0;
+    for (const s of this.state.values()) {
+      if (now - s.lastReceivedAt <= this.opts.maxTickAgeMs) live++;
+    }
     return {
       accepted: this.acceptedTicks,
       rejected: this.rejectedTicks,
       rejectedByReason: Object.fromEntries(this.rejectedByReason),
       securities: this.state.size,
+      securitiesLive: live,
       started: this.started,
     };
   }
