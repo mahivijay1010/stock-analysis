@@ -19,13 +19,25 @@
  *                       NEVER deletes PredictionLog or ModelPerformance rows —
  *                       those are the permanent accuracy record.
  *
- * NOTE ON SCHEDULING: the two "weekly" jobs above (calibration refresh,
- * Sunday; official-filings refresh, Saturday 20:15) are registered as DAILY
- * cron expressions and gate themselves internally with istWeekday() — see
- * that function's docstring. node-cron 4.2.1 cannot correctly schedule a
- * day-of-week-restricted expression (confirmed 2026-09-20: both jobs had
- * silently never fired since they were added), so the weekday check was
- * moved into the job body instead of the cron field.
+ * NOTE ON SCHEDULING: NO job here uses a day-of-week cron field. Every job is
+ * registered with a DAILY expression and gates itself in its own body via
+ * istWeekday()/isIstWeekday(), throwing NotScheduledToday on a day it should
+ * not act (logged as status='skipped', not 'failed').
+ *
+ * This is because node-cron 4.2.1's day-of-week handling cannot be trusted:
+ *  - 2026-09-20: "15 20 * * 6" and "0 6 * * 0" had NEVER fired since they were
+ *    added; getNextRun() resolved them to 2028 and 2034 respectively, traced
+ *    to MatcherWalker.matchNext() advancing by a YEAR per iteration instead of
+ *    a day when the candidate date's weekday does not match.
+ *  - 2026-09-21 and 2026-09-22: "45 8 * * 1-5" did not fire on either day, in
+ *    processes that had been running for hours and whose "0 0 * * *" job fired
+ *    normally at midnight. A freshly-armed `* * 1-5` timer fires correctly, so
+ *    the failure only appears once the timer has been armed for a long period
+ *    — consistent with getDelay()'s 24h-clamped re-arm recomputing the next
+ *    match through the same broken day-of-week path.
+ * The root cause of the second case is not fully proven. The daily+guard
+ * pattern is used because it avoids the suspect code path entirely rather than
+ * depending on a diagnosis being right.
  *
  * REMOVED in the v2 upgrade (upgrade-spec §2; audit §2.2): the evening
  * ensemble-weight update (FTRL) and the nightly Kelly-drift snapshot. Their
@@ -81,6 +93,19 @@ function istWeekday(): number {
  * weekly-official-filings-refresh / weekly-calibration-refresh cannot be
  * misread as either six failures or six successful real runs.
  */
+/**
+ * True on a weekday (Mon-Fri) in IST.
+ *
+ * Used the same way as istWeekday(): the three weekday jobs are registered
+ * with DAILY cron expressions and gate themselves here, rather than relying on
+ * a `1-5` day-of-week field. See the NOTE ON SCHEDULING at the top of this
+ * file for why that field is not trusted in this codebase.
+ */
+function isIstWeekday(): boolean {
+  const d = istWeekday();
+  return d >= 1 && d <= 5;
+}
+
 class NotScheduledToday extends Error {
   constructor() {
     super("not scheduled to run today");
@@ -117,12 +142,14 @@ export class CronService {
     const jobs: JobSpec[] = [
       {
         name: "morning-refresh-and-scan",
-        expression: "45 8 * * 1-5",
+        // Daily; the job itself skips weekends (see isIstWeekday).
+        expression: "45 8 * * *",
         run: () => this.morningRefreshAndScan(),
       },
       {
         name: "evening-verify-predictions",
-        expression: "30 18 * * 1-5",
+        // Daily; the job itself skips weekends (see isIstWeekday).
+        expression: "30 18 * * *",
         run: () => this.eveningVerify(),
       },
       {
@@ -141,7 +168,8 @@ export class CronService {
       // Part V (autonomous directive): prospective research jobs — idempotent.
       {
         name: "evening-resolve-shadow-outcomes",
-        expression: "45 18 * * 1-5",
+        // Daily; the job itself skips weekends (see isIstWeekday).
+        expression: "45 18 * * *",
         run: () => this.resolveShadowOutcomes(),
       },
       {
@@ -208,6 +236,7 @@ export class CronService {
 
   /** 18:45 IST weekdays — resolve matured short-term shadow predictions (idempotent). */
   private async resolveShadowOutcomes(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
     const { researchJobsService } = await import("./research/ResearchJobsService");
     const r = await researchJobsService.resolveShadowOutcomes();
     console.log(`🧪 [CRON] shadow outcomes: resolved ${r.resolved}, still pending ${r.pending}`);
@@ -267,6 +296,7 @@ export class CronService {
 
   /** 08:45 IST — refresh universe bars, then scan + log predictions. */
   private async morningRefreshAndScan(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
     console.log("📊 [CRON] 08:45 IST — refreshing universe bars...");
     const { ok, failed } = await this.stockService.refreshUniverseBars();
     console.log(`📊 [CRON] Universe refresh: ${ok.length} ok, ${failed.length} failed${failed.length ? ` (${failed.join(", ")})` : ""}`);
@@ -343,6 +373,7 @@ export class CronService {
    * extra persistence step is needed here.
    */
   private async eveningVerify(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
     console.log("🔎 [CRON] 18:30 IST — verifying matured predictions...");
     const { verified, tickersRefreshed } = await this.stockService.verifyMaturedPredictions();
     console.log(`🔎 [CRON] Verified ${verified} predictions; refreshed ModelPerformance for ${tickersRefreshed} tickers`);

@@ -1,15 +1,20 @@
 /**
  * Manual catch-up for a missed morning-refresh-and-scan, logged honestly.
  *
- * Context: on 2026-09-21 the 08:45 IST job did not run. Verified from the
- * database rather than a log file (cron_execution_logs had no row, and both
- * `analysis` and `rank_snapshots` were empty for the date), because the
- * backend's stdout log had silently stopped receiving output hours earlier
- * while the process kept serving HTTP. The most likely cause is that repeated
- * ts-node-dev hot-reloads — triggered by editing backend source during the
- * session — detached the cron timers from the still-running process. A
- * freshly-restarted process was verified to fire a `* * 1-5` expression
- * correctly, so the schedule shape itself is sound.
+ * Context: the 08:45 IST job failed to run on BOTH 2026-09-21 and 2026-09-22.
+ * Verified from the database rather than a log file (cron_execution_logs had
+ * no row, and both `analysis` and `rank_snapshots` were empty for the date),
+ * because the backend's stdout log silently stops receiving output overnight
+ * while the process keeps serving HTTP — observed on two separate log files,
+ * so those logs are not evidence of anything.
+ *
+ * The first day's explanation (ts-node-dev hot-reloads detaching timers) was
+ * DISPROVEN on the second: that process ran 14h22m with no reloads at all and
+ * its `0 0 * * *` midnight job fired normally, while `45 8 * * 1-5` produced
+ * nothing. A freshly-armed `* * 1-5` timer does fire correctly, so the failure
+ * appears only once a timer has been armed for hours. Root cause unproven; all
+ * weekday jobs now use daily expressions with an in-code guard, which avoids
+ * the suspect path rather than relying on the diagnosis being right.
  *
  * This runs the same work the cron job would have, through the same durable
  * logging, labelled "(manual catch-up)" with the reason recorded — so the
@@ -71,8 +76,10 @@ async function main(): Promise<void> {
         Date.now() - started,
         status,
         errorSummary ??
-          "Ran manually because the scheduled 08:45 IST firing did not occur — most likely ts-node-dev " +
-            "hot-reloads detaching cron timers after backend source was edited during the session.",
+          "Ran manually because the scheduled 08:45 IST firing did not occur. Cause not fully proven: a " +
+            "freshly-armed `* * 1-5` timer fires correctly, but one armed for hours does not, while the " +
+            "same process's `0 0 * * *` job fires normally — see the NOTE ON SCHEDULING in CronService. " +
+            "All weekday jobs have since been moved to daily expressions with an in-code weekday guard.",
       ]
     );
     console.log(`\nLogged to cron_execution_logs as "${JOB_NAME}", status=${status}.`);
