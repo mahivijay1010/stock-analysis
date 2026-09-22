@@ -1414,6 +1414,29 @@ export interface JournalBundle {
 // Forecasts are returned WITH their measured scorecard in the same payload, so
 // no surface can show the calls without showing how the calls have performed.
 
+export interface EntryExitPlan {
+  securityId: string;
+  ticker: string;
+  horizonMin: number;
+  direction: 'UP' | 'DOWN';
+  basePrice: number;
+  entryLow: number;
+  entryHigh: number;
+  stopLossPct: number;
+  stopLossPrice: number;
+  targetPct: number;
+  targetPrice: number;
+  riskRewardRatio: number | null;
+  probabilityUp: number;
+  resolveAt: number;
+  accuracy: {
+    graded: number;
+    hitRatePct: number | null;
+    unproven: boolean;
+    note: string;
+  };
+}
+
 export interface IntradayForecastRow {
   securityId: string;
   ticker: string;
@@ -1430,6 +1453,7 @@ export interface IntradayForecastRow {
   resolveAt: number;
   modelVersion: string;
   lastOutcome: 'CORRECT' | 'WRONG' | null;
+  plan: EntryExitPlan;
 }
 
 export interface HorizonScore {

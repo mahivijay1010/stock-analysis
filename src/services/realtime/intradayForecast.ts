@@ -193,6 +193,110 @@ export function forecastOne(opts: {
   };
 }
 
+/**
+ * Entry/exit levels, derived FROM the forecast already computed — never a
+ * separate model, so a level can never disagree with the forecast beside it.
+ *
+ * These are shown UNCONDITIONALLY, at the user's explicit direction, even
+ * though the horizon backing them may have no demonstrated edge yet
+ * (docs/system-trust-review.md §14: the 1-day model's first live grading was
+ * 47.4%, below a coin flip). That is exactly why every level below carries
+ * the measured accuracy of the horizon that produced it as a required,
+ * co-equal field — not a caveat elsewhere on the page. The plan is for
+ * accuracy to improve as the calibration loop runs (docs/tsp-study-notes.md);
+ * until it does, these levels are a plan for what the CURRENT model would do,
+ * not a claim that following them makes money.
+ *
+ * Levels, all derived from the SAME 80% band already in the forecast:
+ *   entryLow / entryHigh  — a narrow zone around basePrice (±0.15 bar-sigma),
+ *                           not a single tick, because a live price moves
+ *                           between the forecast instant and any action on it.
+ *   stopLossPct/Price     — the 80% band's ADVERSE edge. If the model's own
+ *                           calibrated range is wrong 20% of the time, a stop
+ *                           inside that range is not a safety margin at all;
+ *                           it must sit AT OR BEYOND the model's own admitted
+ *                           uncertainty, never inside it.
+ *   targetPct/Price       — the 80% band's FAVOURABLE edge, symmetric to the
+ *                           stop. Not the full expected move — the expected
+ *                           move is a MEAN, and exiting at the mean captures
+ *                           only half of what the model's own band allows.
+ *   riskRewardRatio        — reward:risk on these two levels. Below 1 is
+ *                           flagged, because it means the position risks more
+ *                           than it targets even if the direction call is
+ *                           right.
+ */
+export interface EntryExitPlan {
+  securityId: string;
+  ticker: string;
+  horizonMin: ForecastHorizonMin;
+  direction: "UP" | "DOWN";
+  basePrice: number;
+  entryLow: number;
+  entryHigh: number;
+  stopLossPct: number;
+  stopLossPrice: number;
+  targetPct: number;
+  targetPrice: number;
+  riskRewardRatio: number | null;
+  /** Copied from the forecast so the plan is self-contained for the UI. */
+  probabilityUp: number;
+  resolveAt: number;
+  /**
+   * This horizon's measured accuracy, as of when the plan was built — the
+   * field this function exists to make impossible to omit.
+   */
+  accuracy: {
+    graded: number;
+    hitRatePct: number | null;
+    unproven: boolean;
+    note: string;
+  };
+}
+
+/** Narrow entry-zone half-width, in units of bar-sigma. Not a single tick. */
+const ENTRY_ZONE_SIGMA = 0.15;
+
+export function buildEntryExitPlan(f: IntradayForecast, accuracy: HorizonScore): EntryExitPlan {
+  const zoneWidthPct = f.barVolPct * ENTRY_ZONE_SIGMA;
+  const entryLow = f.basePrice * (1 - zoneWidthPct / 100);
+  const entryHigh = f.basePrice * (1 + zoneWidthPct / 100);
+
+  // Favourable/adverse edges depend on direction: for a DOWN call, the
+  // favourable edge is the LOWER (more negative) side of the band.
+  const favourablePct = f.direction === "UP" ? f.high80Pct : f.low80Pct;
+  const adversePct = f.direction === "UP" ? f.low80Pct : f.high80Pct;
+
+  const targetPrice = f.basePrice * (1 + favourablePct / 100);
+  const stopLossPrice = f.basePrice * (1 + adversePct / 100);
+
+  const rewardAbs = Math.abs(targetPrice - f.basePrice);
+  const riskAbs = Math.abs(f.basePrice - stopLossPrice);
+  const riskRewardRatio = riskAbs > 0 ? rewardAbs / riskAbs : null;
+
+  return {
+    securityId: f.securityId,
+    ticker: f.ticker,
+    horizonMin: f.horizonMin,
+    direction: f.direction,
+    basePrice: f.basePrice,
+    entryLow,
+    entryHigh,
+    stopLossPct: adversePct,
+    stopLossPrice,
+    targetPct: favourablePct,
+    targetPrice,
+    riskRewardRatio,
+    probabilityUp: f.probabilityUp,
+    resolveAt: f.resolveAt,
+    accuracy: {
+      graded: accuracy.graded,
+      hitRatePct: accuracy.hitRatePct,
+      unproven: accuracy.unproven,
+      note: accuracy.note,
+    },
+  };
+}
+
 export type GradeOutcome = "CORRECT" | "WRONG";
 
 export interface GradedForecast extends IntradayForecast {

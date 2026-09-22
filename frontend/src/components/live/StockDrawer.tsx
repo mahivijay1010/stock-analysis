@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, TrendingDown, TrendingUp, X, XCircle } from 'lucide-react';
+import { AlertTriangle, ArrowDownCircle, ArrowUpCircle, CheckCircle2, ShieldAlert, Target, TrendingDown, TrendingUp, X, XCircle } from 'lucide-react';
 import { getLiveDetail } from '@/lib/api';
-import type { LiveCandle, LiveDetail } from '@/lib/types';
+import type { IntradayForecastRow, LiveCandle, LiveDetail } from '@/lib/types';
 
 const POLL_MS = 3000;
 
@@ -118,47 +118,22 @@ export function StockDrawer({ ticker, onClose }: { ticker: string; onClose: () =
               </section>
 
               <section>
-                <h3 className="mb-2 text-sm font-medium text-slate-200">Open forecasts</h3>
+                <h3 className="mb-2 text-sm font-medium text-slate-200">Buy / sell plan</h3>
+                <p className="mb-2 text-xs text-slate-500">
+                  Derived from the forecast below it — never a separate call. Built and shown at your request even where
+                  a horizon is unproven; the accuracy line on each card is the mechanism that is supposed to make that
+                  safe, so read it before the price.
+                </p>
                 {detail.forecasts.open.length === 0 ? (
                   <Empty>
                     No open forecast. A call needs 10 completed candles, and a new one is only made once the previous
                     one for that horizon has resolved.
                   </Empty>
                 ) : (
-                  <div className="space-y-2">
-                    {detail.forecasts.open.map((f) => {
-                      const up = f.direction === 'UP';
-                      const secs = Math.max(0, Math.round((f.resolveAt - Date.now()) / 1000));
-                      return (
-                        <div key={f.horizonMin} className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-medium text-slate-300">{f.horizonMin} min</span>
-                              <span
-                                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
-                                  up ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
-                                }`}
-                              >
-                                {up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                                {f.direction} {(f.probabilityUp * 100).toFixed(1)}%
-                              </span>
-                            </div>
-                            <span className="text-[11px] text-slate-500">resolves in {secs}s</span>
-                          </div>
-                          <p className="mt-1.5 text-xs text-slate-400">
-                            Expected{' '}
-                            <span className={up ? 'text-emerald-300' : 'text-rose-300'}>
-                              {f.expectedReturnPct > 0 ? '+' : ''}
-                              {f.expectedReturnPct.toFixed(3)}%
-                            </span>{' '}
-                            from ₹{f.basePrice.toFixed(2)} · 80% range {f.low80Pct.toFixed(3)}% to {f.high80Pct.toFixed(3)}%
-                          </p>
-                          <p className="mt-0.5 text-[10px] text-slate-600">
-                            from {f.barsUsed} candles · bar volatility {f.barVolPct.toFixed(3)}%
-                          </p>
-                        </div>
-                      );
-                    })}
+                  <div className="space-y-2.5">
+                    {detail.forecasts.open.map((f) => (
+                      <EntryExitCard key={f.horizonMin} f={f} />
+                    ))}
                   </div>
                 )}
               </section>
@@ -320,6 +295,104 @@ function CandleChart({ bars }: { bars: LiveCandle[] }) {
         Last {shown.length} completed 1-minute candles{bars.length > shown.length && ` (of ${bars.length} this session)`}.
         Built from our observed ticks.
       </p>
+    </div>
+  );
+}
+
+/**
+ * One buy/sell plan card: the entry zone, stop, target, and — leading, not
+ * trailing — that horizon's measured accuracy today.
+ *
+ * The accuracy block is rendered FIRST and largest on purpose. A price level
+ * is meaningless without knowing whether the model that produced it has been
+ * right more than half the time today, and it must not be the thing a reader
+ * has to scroll past to get to.
+ */
+function EntryExitCard({ f }: { f: IntradayForecastRow }) {
+  const { plan } = f;
+  const up = f.direction === 'UP';
+  const secs = Math.max(0, Math.round((f.resolveAt - Date.now()) / 1000));
+  const proven = !plan.accuracy.unproven;
+  const badRR = plan.riskRewardRatio != null && plan.riskRewardRatio < 1;
+
+  return (
+    <div
+      className={`rounded-xl border p-3.5 ${
+        proven ? 'border-emerald-500/25 bg-emerald-500/[0.03]' : 'border-amber-500/30 bg-amber-500/[0.04]'
+      }`}
+    >
+      {/* Accuracy — first, largest, unmissable. */}
+      <div className="mb-3 flex items-start gap-2 border-b border-white/10 pb-2.5">
+        {proven ? (
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+        ) : (
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+        )}
+        <div>
+          <p className={`text-sm font-semibold ${proven ? 'text-emerald-200' : 'text-amber-200'}`}>
+            {f.horizonMin}-min model: {plan.accuracy.hitRatePct != null ? `${plan.accuracy.hitRatePct.toFixed(1)}% hit rate` : 'not enough data yet'}
+            {!proven && ' — UNPROVEN'}
+          </p>
+          <p className="mt-0.5 text-xs text-slate-400">{plan.accuracy.note}</p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span
+          className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold ${
+            up ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
+          }`}
+        >
+          {up ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+          {up ? 'BUY' : 'SELL'} · {f.direction} {(f.probabilityUp * 100).toFixed(1)}%
+        </span>
+        <span className="text-[11px] text-slate-500">resolves in {secs}s</span>
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <PlanLevel icon={<ArrowUpCircle className="h-3.5 w-3.5" />} label="Entry zone" value={`₹${plan.entryLow.toFixed(2)} – ₹${plan.entryHigh.toFixed(2)}`} tone="muted" />
+        <PlanLevel icon={<Target className="h-3.5 w-3.5" />} label="Target (exit)" value={`₹${plan.targetPrice.toFixed(2)}`} sub={`${plan.targetPct > 0 ? '+' : ''}${plan.targetPct.toFixed(3)}%`} tone="good" />
+        <PlanLevel icon={<ShieldAlert className="h-3.5 w-3.5" />} label="Stop-loss" value={`₹${plan.stopLossPrice.toFixed(2)}`} sub={`${plan.stopLossPct > 0 ? '+' : ''}${plan.stopLossPct.toFixed(3)}%`} tone="bad" />
+      </div>
+
+      <p className="mt-2.5 text-[11px] text-slate-500">
+        Reward:risk{' '}
+        <span className={badRR ? 'font-medium text-rose-300' : 'text-slate-400'}>
+          {plan.riskRewardRatio != null ? `${plan.riskRewardRatio.toFixed(2)}:1` : '—'}
+          {badRR && ' — risks more than it targets'}
+        </span>{' '}
+        · from ₹{f.basePrice.toFixed(2)} · {f.barsUsed} candles · bar volatility {f.barVolPct.toFixed(3)}%
+      </p>
+      <p className="mt-1 text-[10px] text-slate-600">
+        Stop and target sit at the edges of the model&apos;s own 80% range, not inside it — if the range is right only
+        4 times in 5, a stop within it is not a safety margin.
+      </p>
+    </div>
+  );
+}
+
+function PlanLevel({
+  icon,
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub?: string;
+  tone: 'good' | 'bad' | 'muted';
+}) {
+  const colour = tone === 'good' ? 'text-emerald-300' : tone === 'bad' ? 'text-rose-300' : 'text-slate-200';
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/20 p-2">
+      <p className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-slate-500">
+        {icon}
+        {label}
+      </p>
+      <p className={`mt-1 font-display text-sm font-semibold tabular-nums ${colour}`}>{value}</p>
+      {sub && <p className="text-[10px] tabular-nums text-slate-500">{sub}</p>}
     </div>
   );
 }

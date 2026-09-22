@@ -126,18 +126,17 @@ export function ForecastGrid({ onOpenStock }: { onOpenStock?: (ticker: string) =
           <thead className="bg-white/[0.03] text-[11px] uppercase tracking-wide text-slate-500">
             <tr>
               <th className="px-3 py-2 text-left">Stock</th>
-              <th className="px-3 py-2 text-left">Call</th>
-              <th className="px-3 py-2 text-right">Confidence</th>
-              <th className="px-3 py-2 text-right">Expected move</th>
-              <th className="px-3 py-2 text-right">80% range</th>
-              <th className="px-3 py-2 text-right">From</th>
+              <th className="px-3 py-2 text-left">Call · this model&apos;s accuracy</th>
+              <th className="px-3 py-2 text-right">Entry zone</th>
+              <th className="px-3 py-2 text-right">Target (exit)</th>
+              <th className="px-3 py-2 text-right">Stop-loss</th>
               <th className="px-3 py-2 text-left">Last result</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-sm text-slate-500">
+                <td colSpan={6} className="px-3 py-6 text-center text-sm text-slate-500">
                   {snap?.feedRunning
                     ? 'Building bars — a forecast needs at least 10 completed 1-minute bars, so the first calls appear ~10 minutes after the feed starts.'
                     : 'No forecasts.'}
@@ -246,27 +245,39 @@ function ForecastRow({ f, unproven, onOpen }: { f: IntradayForecastRow; unproven
     >
       <td className="px-3 py-2 font-medium text-slate-200">{f.ticker.replace(/\.NS$/, '')}</td>
       <td className="px-3 py-2">
-        <span
-          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
-            up ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
-          } ${unproven ? 'opacity-70' : ''}`}
-        >
-          {up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-          {f.direction}
+        <div className="flex items-center gap-1.5">
+          <span
+            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+              up ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
+            }`}
+          >
+            {up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+            {up ? 'BUY' : 'SELL'} {(f.probabilityUp * 100).toFixed(0)}%
+          </span>
+          {secondsLeft > 0 && <span className="text-[10px] text-slate-600">{secondsLeft}s</span>}
+        </div>
+        <p className={`mt-0.5 text-[10px] ${unproven ? 'text-amber-400' : 'text-emerald-400'}`}>
+          {f.plan.accuracy.hitRatePct != null ? `${f.plan.accuracy.hitRatePct.toFixed(1)}% (n=${f.plan.accuracy.graded})` : `n=${f.plan.accuracy.graded}`}
+          {unproven && ' UNPROVEN'}
+        </p>
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums text-xs text-slate-300">
+        {f.plan.entryLow.toFixed(2)}–{f.plan.entryHigh.toFixed(2)}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums text-xs text-emerald-300">
+        ₹{f.plan.targetPrice.toFixed(2)}
+        <span className="ml-1 text-[10px] text-slate-500">
+          {f.plan.targetPct > 0 ? '+' : ''}
+          {f.plan.targetPct.toFixed(2)}%
         </span>
-        {secondsLeft > 0 && <span className="ml-1.5 text-[10px] text-slate-600">{secondsLeft}s</span>}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums text-xs text-slate-400">
-        {(f.probabilityUp * 100).toFixed(1)}%
+      <td className="px-3 py-2 text-right tabular-nums text-xs text-rose-300">
+        ₹{f.plan.stopLossPrice.toFixed(2)}
+        <span className="ml-1 text-[10px] text-slate-500">
+          {f.plan.stopLossPct > 0 ? '+' : ''}
+          {f.plan.stopLossPct.toFixed(2)}%
+        </span>
       </td>
-      <td className={`px-3 py-2 text-right tabular-nums text-xs ${up ? 'text-emerald-300' : 'text-rose-300'}`}>
-        {f.expectedReturnPct > 0 ? '+' : ''}
-        {f.expectedReturnPct.toFixed(3)}%
-      </td>
-      <td className="px-3 py-2 text-right tabular-nums text-[11px] text-slate-500">
-        {f.low80Pct.toFixed(3)} to {f.high80Pct.toFixed(3)}%
-      </td>
-      <td className="px-3 py-2 text-right tabular-nums text-xs text-slate-400">₹{f.basePrice.toFixed(2)}</td>
       <td className="px-3 py-2">
         {f.lastOutcome == null ? (
           <span className="text-[11px] text-slate-600">—</span>

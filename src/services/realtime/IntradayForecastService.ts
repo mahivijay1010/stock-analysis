@@ -26,6 +26,8 @@ import {
   HorizonScore,
   IntradayForecast,
   INTRADAY_FORECAST_VERSION,
+  EntryExitPlan,
+  buildEntryExitPlan,
   forecastOne,
   gradeForecast,
   scoreHorizon,
@@ -44,6 +46,8 @@ const GRADE_DEADLINE_MS = 90_000;
 export interface IntradayForecastRow extends IntradayForecast {
   /** Latest graded result for this ticker+horizon, if any. */
   lastOutcome: "CORRECT" | "WRONG" | null;
+  /** Entry/exit levels for this forecast, with its horizon's measured accuracy attached. */
+  plan: EntryExitPlan;
 }
 
 export interface IntradaySnapshot {
@@ -157,12 +161,19 @@ export class IntradayForecastService {
    * one name you happen to care about.
    */
   forSecurity(securityId: string): {
-    open: IntradayForecast[];
+    open: IntradayForecastRow[];
     graded: GradedForecast[];
     correct: number;
     wrong: number;
   } {
-    const open = [...this.open.values()].filter((f) => f.securityId === securityId);
+    const scoreByHorizon = new Map(this.scores().map((s) => [s.horizonMin, s]));
+    const open = [...this.open.values()]
+      .filter((f) => f.securityId === securityId)
+      .map((f) => ({
+        ...f,
+        lastOutcome: this.lastOutcomeByKey.get(this.key(f.securityId, f.horizonMin)) ?? null,
+        plan: buildEntryExitPlan(f, scoreByHorizon.get(f.horizonMin)!),
+      }));
     const graded: GradedForecast[] = [];
     for (const list of this.graded.values()) {
       for (const g of list) if (g.securityId === securityId) graded.push(g);
@@ -178,8 +189,13 @@ export class IntradayForecastService {
 
   snapshot(): IntradaySnapshot {
     const scores = this.scores();
+    const scoreByHorizon = new Map(scores.map((s) => [s.horizonMin, s]));
     const forecasts: IntradayForecastRow[] = [...this.open.values()]
-      .map((f) => ({ ...f, lastOutcome: this.lastOutcomeByKey.get(this.key(f.securityId, f.horizonMin)) ?? null }))
+      .map((f) => ({
+        ...f,
+        lastOutcome: this.lastOutcomeByKey.get(this.key(f.securityId, f.horizonMin)) ?? null,
+        plan: buildEntryExitPlan(f, scoreByHorizon.get(f.horizonMin)!),
+      }))
       .sort((a, b) => a.ticker.localeCompare(b.ticker) || a.horizonMin - b.horizonMin);
 
     return {
