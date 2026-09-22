@@ -12,6 +12,7 @@ import {
 } from '@/lib/api';
 import type { LiveFeedRow, LiveFeedStatus, UpstoxAuthStatus } from '@/lib/types';
 import { ForecastGrid } from '@/components/live/ForecastGrid';
+import { StockDrawer } from '@/components/live/StockDrawer';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5101';
 const POLL_MS = 5000;
@@ -42,6 +43,7 @@ export function LiveView() {
   const [busy, setBusy] = useState(false);
   const [needsLogin, setNeedsLogin] = useState(false);
   const [query, setQuery] = useState('');
+  const [drawerTicker, setDrawerTicker] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -268,7 +270,7 @@ export function LiveView() {
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {filtered.map((r) => (
-                    <LiveRow key={r.instrumentKey} row={r} />
+                    <LiveRow key={r.instrumentKey} row={r} onOpen={() => setDrawerTicker(r.ticker)} />
                   ))}
                 </tbody>
               </table>
@@ -287,7 +289,9 @@ export function LiveView() {
 
       {/* Forecasts sit BELOW the observed tape, deliberately: what the market
           actually did outranks what a model guesses it will do next. */}
-      <ForecastGrid />
+      <ForecastGrid onOpenStock={setDrawerTicker} />
+
+      {drawerTicker && <StockDrawer ticker={drawerTicker} onClose={() => setDrawerTicker(null)} />}
     </div>
   );
 }
@@ -314,7 +318,7 @@ function StatCard({
   );
 }
 
-function LiveRow({ row }: { row: LiveFeedRow }) {
+function LiveRow({ row, onOpen }: { row: LiveFeedRow; onOpen: () => void }) {
   const stale = row.freshness !== 'FRESH';
   const up = (row.changePct ?? 0) > 0;
   const down = (row.changePct ?? 0) < 0;
@@ -323,7 +327,11 @@ function LiveRow({ row }: { row: LiveFeedRow }) {
   const joinedMid = row.notes.some((n) => n.includes('NOT the exchange session values'));
 
   return (
-    <tr className={stale ? 'opacity-60' : undefined}>
+    <tr
+      onClick={onOpen}
+      className={`cursor-pointer transition hover:bg-white/[0.04] ${stale ? 'opacity-60' : ''}`}
+      title="Open live detail"
+    >
       <td className="px-3 py-2.5">
         <div className="font-medium text-slate-200">{row.ticker.replace('.NS', '')}</div>
         <div className="truncate text-xs text-slate-500">{row.name}</div>

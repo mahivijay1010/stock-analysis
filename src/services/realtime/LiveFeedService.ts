@@ -190,6 +190,70 @@ export class LiveFeedService {
     };
   }
 
+  /**
+   * Everything known about ONE ticker: live quote, the session's 1-minute
+   * candles, open forecasts and their graded history.
+   *
+   * Assembled from the same sources the grid uses, so the drawer can never
+   * disagree with the row that opened it. Returns null for a ticker that is
+   * not in the running universe rather than inventing an empty shell.
+   */
+  async detail(ticker: string): Promise<{
+    ticker: string;
+    instrumentKey: string;
+    name: string;
+    sector: string;
+    row: LiveRow | null;
+    bars: Array<{ startAt: number; open: number; high: number; low: number; close: number; volume: number; tradeCount: number }>;
+    bid: number | null;
+    ask: number | null;
+    previousClose: number | null;
+    joinedMidSession: boolean;
+    tickCount: number;
+    lastTickAt: number | null;
+    forecasts: ReturnType<typeof intradayForecastService.forSecurity>;
+    note: string;
+  } | null> {
+    const streaming = this.streaming;
+    if (!streaming) return null;
+
+    const want = ticker.toUpperCase();
+    const entry = [...this.mapping.entries()].find(([t]) => t.toUpperCase() === want);
+    if (!entry) return null;
+    const [resolvedTicker, instrumentKey] = entry;
+
+    const meta = NSE_UNIVERSE.find((u) => u.ticker === resolvedTicker);
+    const state = streaming.stateFor(instrumentKey);
+    const rows = await this.rows();
+    const row = rows.find((r) => r.instrumentKey === instrumentKey) ?? null;
+
+    return {
+      ticker: resolvedTicker,
+      instrumentKey,
+      name: meta?.name ?? resolvedTicker,
+      sector: meta?.sector ?? "UNKNOWN",
+      row,
+      // Chronological, so a chart can render them without re-sorting.
+      bars: streaming.barsFor(instrumentKey).map((b) => ({
+        startAt: b.startAt,
+        open: b.open,
+        high: b.high,
+        low: b.low,
+        close: b.close,
+        volume: b.volume,
+        tradeCount: b.tradeCount,
+      })),
+      bid: state?.bid ?? null,
+      ask: state?.ask ?? null,
+      previousClose: state?.previousClose ?? null,
+      joinedMidSession: state?.joinedMidSession ?? false,
+      tickCount: state?.tickCount ?? 0,
+      lastTickAt: state?.lastReceivedAt ?? null,
+      forecasts: intradayForecastService.forSecurity(instrumentKey),
+      note: MONITORING_NOTE,
+    };
+  }
+
   /** Read-only snapshot rows for the intraday surface. Never fabricates. */
   async rows(): Promise<LiveRow[]> {
     if (!this.streaming) return [];

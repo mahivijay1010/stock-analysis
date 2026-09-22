@@ -33,6 +33,7 @@ import type {
   LiveFeedRow,
   LiveFeedStatus,
   IntradaySnapshot,
+  LiveDetail,
   EvidenceBundle,
   JournalBundle,
   UpstoxAuthStatus,
@@ -724,6 +725,11 @@ export function stopLiveFeed(): Promise<LiveFeedStatus> {
 /** Live 1m/5m forecasts, returned together with their measured scorecard. */
 export function getIntradayForecasts(): Promise<IntradaySnapshot> {
   return get<IntradaySnapshot>('/api/live/forecasts');
+}
+
+/** Everything known about one ticker: quote, candles, forecasts, results. */
+export function getLiveDetail(ticker: string): Promise<LiveDetail> {
+  return get<LiveDetail>(`/api/live/detail/${encodeURIComponent(ticker)}`);
 }
 
 /**

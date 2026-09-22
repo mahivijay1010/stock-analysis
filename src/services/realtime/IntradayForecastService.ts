@@ -148,6 +148,34 @@ export class IntradayForecastService {
     return all.sort((a, b) => b.gradedAt - a.gradedAt).slice(0, Math.max(1, Math.min(500, limit)));
   }
 
+  /**
+   * Everything this service knows about ONE security: its open calls and its
+   * graded history, newest first.
+   *
+   * Per-ticker history is what makes a forecast checkable by eye — a hit rate
+   * across 151 stocks can hide a model that is systematically wrong on the
+   * one name you happen to care about.
+   */
+  forSecurity(securityId: string): {
+    open: IntradayForecast[];
+    graded: GradedForecast[];
+    correct: number;
+    wrong: number;
+  } {
+    const open = [...this.open.values()].filter((f) => f.securityId === securityId);
+    const graded: GradedForecast[] = [];
+    for (const list of this.graded.values()) {
+      for (const g of list) if (g.securityId === securityId) graded.push(g);
+    }
+    graded.sort((a, b) => b.gradedAt - a.gradedAt);
+    return {
+      open: open.sort((a, b) => a.horizonMin - b.horizonMin),
+      graded,
+      correct: graded.filter((g) => g.outcome === "CORRECT").length,
+      wrong: graded.filter((g) => g.outcome === "WRONG").length,
+    };
+  }
+
   snapshot(): IntradaySnapshot {
     const scores = this.scores();
     const forecasts: IntradayForecastRow[] = [...this.open.values()]

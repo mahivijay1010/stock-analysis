@@ -1464,3 +1464,37 @@ export interface IntradaySnapshot {
   recentGraded: GradedForecastRow[];
   feedRunning: boolean;
 }
+
+// ── Per-stock live detail (GET /api/live/detail/:ticker) ─────────────────────
+
+export interface LiveCandle {
+  startAt: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  tradeCount: number;
+}
+
+export interface LiveDetail {
+  ticker: string;
+  instrumentKey: string;
+  name: string;
+  sector: string;
+  row: LiveFeedRow | null;
+  bars: LiveCandle[];
+  bid: number | null;
+  ask: number | null;
+  previousClose: number | null;
+  joinedMidSession: boolean;
+  tickCount: number;
+  lastTickAt: number | null;
+  forecasts: {
+    open: IntradayForecastRow[];
+    graded: GradedForecastRow[];
+    correct: number;
+    wrong: number;
+  };
+  note: string;
+}

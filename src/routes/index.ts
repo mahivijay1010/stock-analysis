@@ -82,6 +82,7 @@ export const createStockRoutes = (): Router => {
   router.get("/live/status", liveFeedController.status); //                 GET  /api/live/status
   router.get("/live/rows", liveFeedController.rows); //                     GET  /api/live/rows
   router.get("/live/forecasts", liveFeedController.forecasts); //          GET  /api/live/forecasts
+  router.get("/live/detail/:ticker", liveFeedController.detail); //        GET  /api/live/detail/RELIANCE.NS
   router.post("/live/start", requireAuth, liveFeedController.start); //     POST /api/live/start { tickers? }
   router.post("/live/stop", requireAuth, liveFeedController.stop); //       POST /api/live/stop
 

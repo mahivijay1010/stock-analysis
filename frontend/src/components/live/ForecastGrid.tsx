@@ -21,7 +21,7 @@ const POLL_MS = 5000;
  * Nothing here is a trade suggestion. These forecasts carry no authority and
  * feed no decision; they exist to be measured in public.
  */
-export function ForecastGrid() {
+export function ForecastGrid({ onOpenStock }: { onOpenStock?: (ticker: string) => void }) {
   const [snap, setSnap] = useState<IntradaySnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [horizon, setHorizon] = useState<number>(1);
@@ -144,7 +144,14 @@ export function ForecastGrid() {
                 </td>
               </tr>
             ) : (
-              rows.map((f) => <ForecastRow key={`${f.securityId}-${f.horizonMin}`} f={f} unproven={score?.unproven ?? true} />)
+              rows.map((f) => (
+                <ForecastRow
+                  key={`${f.securityId}-${f.horizonMin}`}
+                  f={f}
+                  unproven={score?.unproven ?? true}
+                  onOpen={onOpenStock ? () => onOpenStock(f.ticker) : undefined}
+                />
+              ))
             )}
           </tbody>
         </table>
@@ -228,11 +235,15 @@ function Metric({ label, value, hint }: { label: string; value: string; hint: st
   );
 }
 
-function ForecastRow({ f, unproven }: { f: IntradayForecastRow; unproven: boolean }) {
+function ForecastRow({ f, unproven, onOpen }: { f: IntradayForecastRow; unproven: boolean; onOpen?: () => void }) {
   const up = f.direction === 'UP';
   const secondsLeft = Math.max(0, Math.round((f.resolveAt - Date.now()) / 1000));
   return (
-    <tr>
+    <tr
+      onClick={onOpen}
+      className={onOpen ? 'cursor-pointer transition hover:bg-white/[0.04]' : undefined}
+      title={onOpen ? 'Open live detail' : undefined}
+    >
       <td className="px-3 py-2 font-medium text-slate-200">{f.ticker.replace(/\.NS$/, '')}</td>
       <td className="px-3 py-2">
         <span

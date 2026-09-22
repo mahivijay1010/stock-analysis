@@ -57,6 +57,23 @@ export class LiveFeedController {
     }
   };
 
+  /** Everything known about one ticker — the drawer's single source. */
+  detail = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const d = await liveFeedService.detail(String(req.params.ticker ?? ""));
+      if (!d) {
+        res.status(404).json({
+          success: false,
+          error: { message: "No live data for that ticker — the feed may be stopped, or it is not in the universe." },
+        });
+        return;
+      }
+      ok(res, d);
+    } catch (err) {
+      next(err);
+    }
+  };
+
   start = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const body = (req.body ?? {}) as { tickers?: unknown };
