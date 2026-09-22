@@ -81,6 +81,7 @@ export const createStockRoutes = (): Router => {
   // evidence bar that gates an entry.
   router.get("/live/status", liveFeedController.status); //                 GET  /api/live/status
   router.get("/live/rows", liveFeedController.rows); //                     GET  /api/live/rows
+  router.get("/live/forecasts", liveFeedController.forecasts); //          GET  /api/live/forecasts
   router.post("/live/start", requireAuth, liveFeedController.start); //     POST /api/live/start { tickers? }
   router.post("/live/stop", requireAuth, liveFeedController.stop); //       POST /api/live/stop
 

@@ -1409,3 +1409,58 @@ export interface JournalBundle {
   expectations: ExpectationRow[];
   lessons: LessonRow[];
 }
+
+// ── Intraday 1m/5m forecasts (GET /api/live/forecasts) ───────────────────────
+// Forecasts are returned WITH their measured scorecard in the same payload, so
+// no surface can show the calls without showing how the calls have performed.
+
+export interface IntradayForecastRow {
+  securityId: string;
+  ticker: string;
+  horizonMin: number;
+  basePrice: number;
+  expectedReturnPct: number;
+  probabilityUp: number;
+  direction: 'UP' | 'DOWN';
+  low80Pct: number;
+  high80Pct: number;
+  barVolPct: number;
+  barsUsed: number;
+  madeAt: number;
+  resolveAt: number;
+  modelVersion: string;
+  lastOutcome: 'CORRECT' | 'WRONG' | null;
+}
+
+export interface HorizonScore {
+  horizonMin: number;
+  graded: number;
+  correct: number;
+  hitRatePct: number | null;
+  meanAbsErrorPct: number | null;
+  brier: number | null;
+  meanAbsPredictedPct: number | null;
+  meanAbsActualPct: number | null;
+  unproven: boolean;
+  note: string;
+}
+
+export interface GradedForecastRow extends IntradayForecastRow {
+  actualPrice: number;
+  actualReturnPct: number;
+  actualDirection: 'UP' | 'DOWN';
+  outcome: 'CORRECT' | 'WRONG';
+  errorPct: number;
+  gradedAt: number;
+}
+
+export interface IntradaySnapshot {
+  modelVersion: string;
+  asOf: number;
+  forecasts: IntradayForecastRow[];
+  scores: HorizonScore[];
+  expiredUngraded: number;
+  headline: string;
+  recentGraded: GradedForecastRow[];
+  feedRunning: boolean;
+}

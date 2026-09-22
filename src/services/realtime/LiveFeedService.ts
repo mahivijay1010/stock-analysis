@@ -22,6 +22,7 @@ import { StreamingMarketProvider } from "./streamingMarketProvider";
 import { upstoxTokenStore } from "./upstoxAuth";
 import { ProviderHealth } from "./types";
 import { snapshotToDataQuality } from "./marketDataProvider";
+import { intradayForecastService } from "./IntradayForecastService";
 
 export interface LiveRow {
   ticker: string;
@@ -78,6 +79,8 @@ export class LiveFeedService {
   private mapping = new Map<string, string>();
   private unresolved: string[] = [];
   private startedAt: number | null = null;
+  /** Drives the forecast/grade cycle while the feed runs. */
+  private forecastTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly instruments: UpstoxInstrumentService = upstoxInstrumentService,
@@ -110,14 +113,55 @@ export class LiveFeedService {
     await streaming.start(this.mapping);
     this.streaming = streaming;
     this.startedAt = this.now();
+    this.startForecastCycle();
     return this.status();
   }
 
   async stop(): Promise<LiveFeedStatus> {
+    this.stopForecastCycle();
     if (this.streaming) await this.streaming.stop();
     this.streaming = null;
     this.startedAt = null;
     return this.status();
+  }
+
+  /**
+   * Forecast + grade every 15s.
+   *
+   * Runs faster than the 1-minute horizon so a forecast is graded promptly
+   * after it resolves rather than up to a minute late — grading against a
+   * price a minute past the horizon would be scoring the wrong moment.
+   * Forecasting itself is naturally rate-limited: a new call is only made once
+   * the previous one for that ticker+horizon has resolved.
+   */
+  private startForecastCycle(): void {
+    this.stopForecastCycle();
+    this.forecastTimer = setInterval(() => this.runForecastCycle(), 15_000);
+    this.forecastTimer.unref?.();
+    this.runForecastCycle();
+  }
+
+  private stopForecastCycle(): void {
+    if (this.forecastTimer) clearInterval(this.forecastTimer);
+    this.forecastTimer = null;
+  }
+
+  /** One forecast/grade pass. Never throws into the interval. */
+  private runForecastCycle(): void {
+    const streaming = this.streaming;
+    if (!streaming) return;
+    try {
+      // Grade first, so a forecast whose horizon just elapsed is scored
+      // against this instant rather than after new forecasts shift state.
+      intradayForecastService.grade((securityId) => streaming.stateFor(securityId)?.lastPrice ?? null);
+
+      for (const [ticker, instrumentKey] of this.mapping) {
+        const bars = streaming.barsFor(instrumentKey);
+        if (bars.length > 0) intradayForecastService.forecast(instrumentKey, ticker, bars);
+      }
+    } catch (err) {
+      console.error("[intraday-forecast] cycle failed:", err);
+    }
   }
 
   status(): LiveFeedStatus {

@@ -11,6 +11,7 @@ import {
   stopLiveFeed,
 } from '@/lib/api';
 import type { LiveFeedRow, LiveFeedStatus, UpstoxAuthStatus } from '@/lib/types';
+import { ForecastGrid } from '@/components/live/ForecastGrid';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5101';
 const POLL_MS = 5000;
@@ -283,6 +284,10 @@ export function LiveView() {
           </p>
         </section>
       )}
+
+      {/* Forecasts sit BELOW the observed tape, deliberately: what the market
+          actually did outranks what a model guesses it will do next. */}
+      <ForecastGrid />
     </div>
   );
 }

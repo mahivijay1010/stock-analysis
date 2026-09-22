@@ -14,6 +14,7 @@
 
 import { NextFunction, Request, Response } from "express";
 import { liveFeedService } from "../services/realtime/LiveFeedService";
+import { intradayForecastService } from "../services/realtime/IntradayForecastService";
 
 function ok(res: Response, data: unknown, status = 200): void {
   res.status(status).json({ success: true, data });
@@ -32,6 +33,25 @@ export class LiveFeedController {
     try {
       const rows = await liveFeedService.rows();
       ok(res, { rows, status: liveFeedService.status() });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * Live 1m/5m forecasts with the measured scorecard beside them.
+   *
+   * The scorecard is returned in the SAME payload as the forecasts, not on a
+   * separate endpoint, so no client can render the calls without the evidence
+   * about how those calls have actually been doing.
+   */
+  forecasts = (_req: Request, res: Response, next: NextFunction): void => {
+    try {
+      ok(res, {
+        ...intradayForecastService.snapshot(),
+        recentGraded: intradayForecastService.recentGraded(40),
+        feedRunning: liveFeedService.isRunning(),
+      });
     } catch (err) {
       next(err);
     }
