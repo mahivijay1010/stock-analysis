@@ -1429,6 +1429,13 @@ export interface EntryExitPlan {
   riskRewardRatio: number | null;
   probabilityUp: number;
   resolveAt: number;
+  /** Cost gate — false when the expected move cannot clear round-trip cost, or direction is withheld. */
+  actionable?: boolean;
+  notActionableReason?: string | null;
+  roundTripCostPct?: number;
+  expectedMoveBps?: number;
+  costBps?: number;
+  withheld?: boolean;
   accuracy: {
     graded: number;
     hitRatePct: number | null;
@@ -1454,6 +1461,9 @@ export interface IntradayForecastRow {
   modelVersion: string;
   lastOutcome: 'CORRECT' | 'WRONG' | null;
   plan: EntryExitPlan;
+  withheld?: boolean;
+  roundTripCostPct?: number;
+  paramsVersion?: string;
 }
 
 export interface HorizonScore {
@@ -1465,6 +1475,8 @@ export interface HorizonScore {
   brier: number | null;
   meanAbsPredictedPct: number | null;
   meanAbsActualPct: number | null;
+  bandCoverage80Pct?: number | null;
+  clearsCostRatePct?: number | null;
   unproven: boolean;
   note: string;
 }
@@ -1480,6 +1492,10 @@ export interface GradedForecastRow extends IntradayForecastRow {
 
 export interface IntradaySnapshot {
   modelVersion: string;
+  paramsVersion?: string;
+  paramsSource?: string;
+  persisted?: number;
+  persistFailures?: number;
   asOf: number;
   forecasts: IntradayForecastRow[];
   scores: HorizonScore[];

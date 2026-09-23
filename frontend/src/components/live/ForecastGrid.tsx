@@ -98,6 +98,21 @@ export function ForecastGrid({ onOpenStock }: { onOpenStock?: (ticker: string) =
         </div>
       )}
 
+      {snap?.paramsVersion && (
+        <p className="text-[11px] text-slate-500">
+          Live parameters <span className="font-medium text-slate-400">{snap.paramsVersion}</span>
+          {snap.paramsSource && snap.paramsSource !== 'database' && (
+            <span className="text-amber-400"> · {snap.paramsSource}</span>
+          )}
+          {snap.persisted != null && (
+            <span> · {snap.persisted.toLocaleString('en-IN')} outcomes persisted this session</span>
+          )}
+          {(snap.persistFailures ?? 0) > 0 && (
+            <span className="text-rose-400"> · {snap.persistFailures} FAILED to persist</span>
+          )}
+        </p>
+      )}
+
       {/* Horizon switch + that horizon's live scorecard, side by side. */}
       <div className="flex flex-wrap items-center gap-2">
         {(snap?.scores ?? []).map((s) => (
@@ -212,6 +227,16 @@ function Scorecard({ score, expiredUngraded }: { score: HorizonScore; expiredUng
           }
           hint="how far off the size of the move is"
         />
+        <Metric
+          label="80% band held"
+          value={score.bandCoverage80Pct != null ? `${score.bandCoverage80Pct.toFixed(1)}%` : '—'}
+          hint="target 80 — the MAGNITUDE metric; the literature says this is what's learnable"
+        />
+        <Metric
+          label="Cleared cost"
+          value={score.clearsCostRatePct != null ? `${score.clearsCostRatePct.toFixed(1)}%` : '—'}
+          hint="share of actual moves larger than round-trip fees + slippage"
+        />
         {expiredUngraded > 0 && (
           <Metric label="Expired ungraded" value={String(expiredUngraded)} hint="no price at resolve time" />
         )}
@@ -246,14 +271,28 @@ function ForecastRow({ f, unproven, onOpen }: { f: IntradayForecastRow; unproven
       <td className="px-3 py-2 font-medium text-slate-200">{f.ticker.replace(/\.NS$/, '')}</td>
       <td className="px-3 py-2">
         <div className="flex items-center gap-1.5">
-          <span
-            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
-              up ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
-            }`}
-          >
-            {up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-            {up ? 'BUY' : 'SELL'} {(f.probabilityUp * 100).toFixed(0)}%
-          </span>
+          {f.plan.actionable === false ? (
+            <span
+              className="inline-flex items-center gap-1 rounded bg-rose-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-rose-300"
+              title={f.plan.notActionableReason ?? undefined}
+            >
+              {f.plan.withheld ? 'NO CALL' : 'NO TRADE'}
+              {!f.plan.withheld && f.plan.expectedMoveBps != null && f.plan.costBps != null && (
+                <span className="font-normal text-rose-300/70">
+                  {f.plan.expectedMoveBps.toFixed(1)}&lt;{f.plan.costBps.toFixed(0)}bps
+                </span>
+              )}
+            </span>
+          ) : (
+            <span
+              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                up ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
+              }`}
+            >
+              {up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+              {up ? 'BUY' : 'SELL'} {(f.probabilityUp * 100).toFixed(0)}%
+            </span>
+          )}
           {secondsLeft > 0 && <span className="text-[10px] text-slate-600">{secondsLeft}s</span>}
         </div>
         <p className={`mt-0.5 text-[10px] ${unproven ? 'text-amber-400' : 'text-emerald-400'}`}>

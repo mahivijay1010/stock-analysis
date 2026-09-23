@@ -28,6 +28,15 @@ curl -s localhost:5101/api/auth/upstox/status | python3 -m json.tool
 # 3. Feed not already running, universe resolves
 curl -s localhost:5101/api/live/status | python3 -m json.tool
 #    Require: universeSize 151, unresolved [] , running false
+
+# 4. THE MACHINE MUST NOT SLEEP. This is a laptop; clamshell/idle sleep froze
+#    the process for 26 min on 2026-09-23 and silently killed the 08:45 scan on
+#    09-21 AND 09-22 and the midnight job on 09-23 (pmset -g log). node-cron
+#    has no catch-up. Arm caffeinate through the evening jobs and VERIFY it:
+caffeinate -i -m -s -t $(( ( $(date -j -f %H:%M 19:00 +%s) - $(date +%s) ) )) &
+pgrep -fl caffeinate   # must print a pid; re-check if the lid was closed
+#    (Automatic missed-run catch-up in CronService covers the jobs, but
+#    nothing can recover the live ticks a sleeping machine did not receive.)
 ```
 
 If `tokenState` is `ABSENT`, the server was restarted — the token is held in

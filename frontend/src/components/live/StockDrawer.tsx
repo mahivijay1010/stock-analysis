@@ -314,13 +314,40 @@ function EntryExitCard({ f }: { f: IntradayForecastRow }) {
   const secs = Math.max(0, Math.round((f.resolveAt - Date.now()) / 1000));
   const proven = !plan.accuracy.unproven;
   const badRR = plan.riskRewardRatio != null && plan.riskRewardRatio < 1;
+  // Cost gate: undefined (older backend) is treated as unknown, not as a pass.
+  const gated = plan.actionable === false;
 
   return (
     <div
       className={`rounded-xl border p-3.5 ${
-        proven ? 'border-emerald-500/25 bg-emerald-500/[0.03]' : 'border-amber-500/30 bg-amber-500/[0.04]'
+        gated
+          ? 'border-rose-500/40 bg-rose-500/[0.05]'
+          : proven
+            ? 'border-emerald-500/25 bg-emerald-500/[0.03]'
+            : 'border-amber-500/30 bg-amber-500/[0.04]'
       }`}
     >
+      {/* THE COST GATE. Rendered before anything else on the card, because on
+          2026-09-23 every 1-minute and 5-minute call this UI showed was for a
+          trade that could not clear its own fees. A target and a stop on such
+          a trade is not a plan; it is a way to lose money slowly. */}
+      {gated && (
+        <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 p-2.5">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+          <div>
+            <p className="text-sm font-semibold text-rose-200">
+              {plan.withheld ? 'NO CALL — direction withheld' : 'NOT ACTIONABLE — move smaller than cost'}
+            </p>
+            <p className="mt-0.5 text-xs text-rose-200/80">{plan.notActionableReason}</p>
+            {!plan.withheld && plan.expectedMoveBps != null && plan.costBps != null && (
+              <p className="mt-1 text-[11px] tabular-nums text-rose-200/70">
+                expected {plan.expectedMoveBps.toFixed(2)} bps · round-trip cost {plan.costBps.toFixed(1)} bps · ratio{' '}
+                {(plan.costBps / Math.max(plan.expectedMoveBps, 0.001)).toFixed(0)}× against
+              </p>
+            )}
+          </div>
+        </div>
+      )}
       {/* Accuracy — first, largest, unmissable. */}
       <div className="mb-3 flex items-start gap-2 border-b border-white/10 pb-2.5">
         {proven ? (
@@ -338,18 +365,24 @@ function EntryExitCard({ f }: { f: IntradayForecastRow }) {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span
-          className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold ${
-            up ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
-          }`}
-        >
-          {up ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
-          {up ? 'BUY' : 'SELL'} · {f.direction} {(f.probabilityUp * 100).toFixed(1)}%
-        </span>
+        {plan.withheld ? (
+          <span className="inline-flex items-center gap-1 rounded bg-slate-500/15 px-2 py-1 text-xs font-semibold text-slate-300">
+            NO CALL · P(up) 50.0%
+          </span>
+        ) : (
+          <span
+            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold ${
+              up ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
+            } ${gated ? 'line-through opacity-60' : ''}`}
+          >
+            {up ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+            {up ? 'BUY' : 'SELL'} · {f.direction} {(f.probabilityUp * 100).toFixed(1)}%
+          </span>
+        )}
         <span className="text-[11px] text-slate-500">resolves in {secs}s</span>
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
+      <div className={`mt-3 grid grid-cols-3 gap-2 ${gated ? 'opacity-50' : ''}`}>
         <PlanLevel icon={<ArrowUpCircle className="h-3.5 w-3.5" />} label="Entry zone" value={`₹${plan.entryLow.toFixed(2)} – ₹${plan.entryHigh.toFixed(2)}`} tone="muted" />
         <PlanLevel icon={<Target className="h-3.5 w-3.5" />} label="Target (exit)" value={`₹${plan.targetPrice.toFixed(2)}`} sub={`${plan.targetPct > 0 ? '+' : ''}${plan.targetPct.toFixed(3)}%`} tone="good" />
         <PlanLevel icon={<ShieldAlert className="h-3.5 w-3.5" />} label="Stop-loss" value={`₹${plan.stopLossPrice.toFixed(2)}`} sub={`${plan.stopLossPct > 0 ? '+' : ''}${plan.stopLossPct.toFixed(3)}%`} tone="bad" />

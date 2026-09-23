@@ -19,7 +19,10 @@
  */
 
 import { CompletedBar } from "./types";
+import { IntradayOutcomeRepository, intradayOutcomeRepository } from "./intradayOutcomeRepository";
 import {
+  DEFAULT_INTRADAY_PARAMS,
+  IntradayModelParams,
   FORECAST_HORIZONS_MIN,
   ForecastHorizonMin,
   GradedForecast,
@@ -52,6 +55,13 @@ export interface IntradayForecastRow extends IntradayForecast {
 
 export interface IntradaySnapshot {
   modelVersion: string;
+  /** Which parameter set is live, and where it came from. */
+  paramsVersion: string;
+  params: IntradayModelParams;
+  paramsSource: "database" | "defaults (database unavailable)";
+  /** Rows written to intraday_forecast_outcomes this session, and failures. */
+  persisted: number;
+  persistFailures: number;
   asOf: number;
   /** Current open forecasts, newest per ticker+horizon. */
   forecasts: IntradayForecastRow[];
@@ -70,8 +80,40 @@ export class IntradayForecastService {
   private expiredUngraded = 0;
   private lastOutcomeByKey = new Map<string, "CORRECT" | "WRONG">();
 
-  constructor(private readonly now: () => number = Date.now) {
+  /** Active parameters. Defaults until loadParams() succeeds; never blocks forecasting. */
+  private params: IntradayModelParams = DEFAULT_INTRADAY_PARAMS;
+  private paramsVersion = "ip-v1";
+  private paramsSource: IntradaySnapshot["paramsSource"] = "defaults (database unavailable)";
+  private persisted = 0;
+  private persistFailures = 0;
+
+  constructor(
+    private readonly now: () => number = Date.now,
+    private readonly repo: IntradayOutcomeRepository | null = intradayOutcomeRepository
+  ) {
     for (const h of FORECAST_HORIZONS_MIN) this.graded.set(h, []);
+  }
+
+  /**
+   * Load the ACTIVE parameter row. Failure is logged and leaves the defaults in
+   * place — the forecaster must never be silenced by a bookkeeping outage, but
+   * the snapshot says plainly which parameters are live and why.
+   */
+  async loadParams(): Promise<void> {
+    if (!this.repo) return;
+    try {
+      const a = await this.repo.activeParams();
+      this.params = a.params;
+      this.paramsVersion = a.version;
+      this.paramsSource = "database";
+    } catch (err) {
+      this.paramsSource = "defaults (database unavailable)";
+      console.error("[intraday-forecast] could not load active params; using defaults:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  activeParams(): { version: string; params: IntradayModelParams } {
+    return { version: this.paramsVersion, params: this.params };
   }
 
   private key(securityId: string, horizonMin: number): string {
@@ -91,7 +133,7 @@ export class IntradayForecastService {
     for (const horizonMin of FORECAST_HORIZONS_MIN) {
       const k = this.key(securityId, horizonMin);
       if (this.open.has(k)) continue; // a call is already outstanding; let it resolve
-      const f = forecastOne({ securityId, ticker, bars, horizonMin, now });
+      const f = forecastOne({ securityId, ticker, bars, horizonMin, now, params: this.params, paramsVersion: this.paramsVersion });
       if (f) {
         this.open.set(k, f);
         made.push(f);
@@ -137,6 +179,23 @@ export class IntradayForecastService {
       }
       this.lastOutcomeByKey.set(k, g.outcome);
       out.push(g);
+    }
+
+    // Persist every grade. Fire-and-forget: a database hiccup must not stall
+    // the 15-second cycle, but it is COUNTED and surfaced, never swallowed.
+    if (out.length > 0 && this.repo) {
+      const repo = this.repo;
+      const version = this.paramsVersion;
+      const params = this.params;
+      void repo
+        .persistManyGraded(out, version, params)
+        .then((n) => {
+          this.persisted += n;
+        })
+        .catch((err) => {
+          this.persistFailures += out.length;
+          console.error(`[intraday-forecast] failed to persist ${out.length} graded forecasts:`, err instanceof Error ? err.message : err);
+        });
     }
     return out;
   }
@@ -200,6 +259,11 @@ export class IntradayForecastService {
 
     return {
       modelVersion: INTRADAY_FORECAST_VERSION,
+      paramsVersion: this.paramsVersion,
+      params: this.params,
+      paramsSource: this.paramsSource,
+      persisted: this.persisted,
+      persistFailures: this.persistFailures,
       asOf: this.now(),
       forecasts,
       scores,
@@ -219,9 +283,13 @@ export class IntradayForecastService {
     if (withData.length === 0) {
       return "No forecast has been graded yet. Nothing on this screen has been shown to predict anything.";
     }
+    const costLine = withData
+      .filter((s) => s.clearsCostRatePct != null)
+      .map((s) => `${s.horizonMin}m: ${s.clearsCostRatePct!.toFixed(1)}% of actual moves cleared round-trip cost`)
+      .join("; ");
     if (proven.length === 0) {
-      const parts = withData.map((s) => `${s.horizonMin}m: ${s.note}`);
-      return `No horizon has demonstrated an edge. ${parts.join("; ")}. These forecasts are measured, not tradeable.`;
+      const parts = withData.map((s) => `${s.horizonMin}m: ${s.hitRatePct != null ? s.hitRatePct.toFixed(1) + "% of " + s.graded : s.graded + " graded"}`);
+      return `No horizon has demonstrated an edge (${parts.join("; ")}). ${costLine}. These forecasts are measured, not tradeable.`;
     }
     const parts = scores.map((s) => `${s.horizonMin}m ${s.hitRatePct != null ? s.hitRatePct.toFixed(1) + "%" : "n/a"} of ${s.graded}`);
     return `${parts.join(", ")}. A single session above 50% is not evidence of skill — it is one session.`;
@@ -233,6 +301,8 @@ export class IntradayForecastService {
     for (const h of FORECAST_HORIZONS_MIN) this.graded.set(h, []);
     this.lastOutcomeByKey.clear();
     this.expiredUngraded = 0;
+    this.persisted = 0;
+    this.persistFailures = 0;
   }
 }
 

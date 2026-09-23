@@ -113,6 +113,9 @@ export class LiveFeedService {
     await streaming.start(this.mapping);
     this.streaming = streaming;
     this.startedAt = this.now();
+    // Active model parameters from intraday_model_params; falls back to the
+    // documented defaults and says so in the snapshot if the read fails.
+    await intradayForecastService.loadParams();
     this.startForecastCycle();
     return this.status();
   }

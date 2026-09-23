@@ -24,25 +24,27 @@
  * istWeekday()/isIstWeekday(), throwing NotScheduledToday on a day it should
  * not act (logged as status='skipped', not 'failed').
  *
- * This is because node-cron 4.2.1's day-of-week handling cannot be trusted:
- *  - 2026-09-20: "15 20 * * 6" and "0 6 * * 0" had NEVER fired since they were
- *    added; getNextRun() resolved them to 2028 and 2034 respectively, traced
- *    to MatcherWalker.matchNext() advancing by a YEAR per iteration instead of
- *    a day when the candidate date's weekday does not match.
- *  - 2026-09-21 and 2026-09-22: "45 8 * * 1-5" did not fire on either day, in
- *    processes that had been running for hours and whose "0 0 * * *" job fired
- *    normally at midnight. A freshly-armed `* * 1-5` timer fires correctly, so
- *    the failure only appears once the timer has been armed for a long period
- *    — consistent with getDelay()'s 24h-clamped re-arm recomputing the next
- *    match through the same broken day-of-week path.
- * The root cause of the second case is not fully proven. The daily+guard
- * pattern is used because it avoids the suspect code path entirely rather than
- * depending on a diagnosis being right.
+ * Two distinct failure classes were found in the week of 2026-09-20, and it
+ * matters that they are not confused:
  *
- * REMOVED in the v2 upgrade (upgrade-spec §2; audit §2.2): the evening
- * ensemble-weight update (FTRL) and the nightly Kelly-drift snapshot. Their
- * historical rows (ensemble_weights, kelly_drift) are preserved untouched.
- * The morning rank snapshot STAYS — rank_snapshots feed future evaluation.
+ *  A. node-cron 4.2.1 day-of-week fields are BROKEN. "15 20 * * 6" and
+ *     "0 6 * * 0" had never fired since they were added; getNextRun()
+ *     resolved them to 2028 and 2034, traced to MatcherWalker.matchNext()
+ *     advancing by a YEAR per iteration when the candidate weekday does not
+ *     match. Real bug; hence the daily+guard pattern.
+ *
+ *  B. THE LAPTOP SLEEPS. The 08:45 morning scan "missed" on 09-21 and 09-22,
+ *     and midnight cleanup on 09-23, because the machine was in clamshell /
+ *     deep-idle sleep through the instant (pmset -g log: 2-second dark-wake
+ *     at 08:45:06 on 09-21; asleep 08:43→08:52 on 09-22; clamshell 23:59:43
+ *     on 09-22). node-cron fires only if the process is awake at the instant,
+ *     keeps no record of intent, and has no catch-up. I diagnosed these misses
+ *     wrongly TWICE (hot-reloads, then a long-armed-timer theory) before
+ *     checking the power log; both wrong reasons are retracted in
+ *     cron_execution_logs with dated corrections. The fix for class B is not
+ *     a schedule tweak but the missed-run CATCH-UP below (cronCatchup.ts):
+ *     on start and every few minutes, any job whose instant has passed today
+ *     with no logged run is run once, labelled "(auto catch-up)".
  */
 
 import * as cron from "node-cron";
@@ -61,6 +63,7 @@ import { sessionCalendarService } from "./forecast/SessionCalendarService";
 import { forecastService } from "./forecast/ForecastService";
 import { decisionService } from "./decision/DecisionService";
 import { AppDataSource } from "../config/database";
+import { CATCHUP_LABEL, CatchupJobSpec, dailyExpressionToIst, istParts, missedRuns } from "./cronCatchup";
 
 const TZ = "Asia/Kolkata";
 
@@ -198,6 +201,16 @@ export class CronService {
         expression: "30 7 1 * *",
         run: () => this.monthlyMacroRefresh(),
       },
+      {
+        // Intraday learning loop (docs/intraday-microstructure-notes.md §8):
+        // re-score the day's persisted 1m/5m forecasts against the fixed
+        // challenger set on a chronological hold-out and promote a parameter
+        // set only under the pre-registered rule. After close, before the
+        // 18:30 daily grading so the two never contend. Weekdays only.
+        name: "nightly-intraday-calibration",
+        expression: "0 16 * * *",
+        run: () => this.nightlyIntradayCalibration(),
+      },
     ];
 
     for (const job of jobs) {
@@ -210,9 +223,91 @@ export class CronService {
       console.log(`  ✓ ${job.name}: "${job.expression}" (${TZ})`);
     }
     console.log("✓ Cron jobs scheduled — official-filings (Sat) and calibration (Sun) run daily, self-gated by weekday");
+    this.startCatchup(jobs);
+  }
+
+  // ── Missed-run catch-up (class B above) ───────────────────────────────────
+
+  private catchupTimer: ReturnType<typeof setInterval> | null = null;
+  private catchupRunning = false;
+
+  /** Which jobs act on which days — the same facts the job bodies enforce. */
+  private static readonly WEEKDAY_JOBS = new Set([
+    "morning-refresh-and-scan",
+    "evening-verify-predictions",
+    "evening-resolve-shadow-outcomes",
+    "nightly-intraday-calibration",
+  ]);
+  private static readonly WEEKLY_JOBS: Record<string, number> = {
+    "weekly-official-filings-refresh": 6,
+    "weekly-calibration-refresh": 0,
+  };
+
+  private catchupSpecs(jobs: JobSpec[]): CatchupJobSpec[] {
+    const specs: CatchupJobSpec[] = [];
+    for (const j of jobs) {
+      const t = dailyExpressionToIst(j.expression);
+      if (!t) continue; // monthly jobs are not caught up in v1 — deliberately, they are not daily
+      specs.push({
+        name: j.name,
+        hourIst: t.hourIst,
+        minuteIst: t.minuteIst,
+        weekdaysOnly: CronService.WEEKDAY_JOBS.has(j.name),
+        onlyWeekday: CronService.WEEKLY_JOBS[j.name],
+        run: j.run,
+      });
+    }
+    return specs;
+  }
+
+  private startCatchup(jobs: JobSpec[]): void {
+    const specs = this.catchupSpecs(jobs);
+    // First pass shortly after boot (the DB pool must be up), then every 5 min.
+    const first = setTimeout(() => void this.runCatchup(specs), 20_000);
+    first.unref?.();
+    this.catchupTimer = setInterval(() => void this.runCatchup(specs), 5 * 60_000);
+    this.catchupTimer.unref?.();
+    console.log(`  ✓ missed-run catch-up armed for ${specs.length} daily jobs (checks every 5 min)`);
+  }
+
+  private async runCatchup(specs: CatchupJobSpec[]): Promise<void> {
+    if (this.catchupRunning) return;
+    this.catchupRunning = true;
+    try {
+      const now = Date.now();
+      const { dateIst } = istParts(now);
+      // execution_start is stored as IST wall-clock (timestamp without tz).
+      const logged: Array<{ job_name: string }> = await AppDataSource.query(
+        `SELECT job_name FROM cron_execution_logs
+          WHERE execution_start >= $1::timestamp AND execution_start < $1::timestamp + interval '1 day'`,
+        [dateIst]
+      );
+      const missed = missedRuns(specs, now, logged);
+      for (const spec of missed) {
+        console.warn(`⏰ [CRON] ${spec.name} was due at ${String(spec.hourIst).padStart(2, "0")}:${String(spec.minuteIst).padStart(2, "0")} IST today and has no run logged — catching up`);
+        await this.guarded(`${spec.name} ${CATCHUP_LABEL}`, spec.run);
+      }
+    } catch (err) {
+      console.error("⏰ [CRON] catch-up check failed:", err);
+    } finally {
+      this.catchupRunning = false;
+    }
+  }
+
+  /** 16:00 IST weekdays — see intradayCalibrationRun.ts for the pre-registered rule. */
+  private async nightlyIntradayCalibration(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
+    const { runIntradayCalibration } = await import("./research/intradayCalibrationRun");
+    const r = await runIntradayCalibration();
+    console.log(`🧪 [CRON] intraday calibration ${r.sessionDate}: ${r.note}`);
+    for (const h of r.perHorizon) {
+      console.log(`🧪 [CRON]   ${h.horizonMin}m n=${h.nTotal} incumbent hold-out ${h.incumbentHoldoutHitPct?.toFixed(2) ?? "n/a"}% — ${h.decision.reason}`);
+    }
   }
 
   stopAll(): void {
+    if (this.catchupTimer) clearInterval(this.catchupTimer);
+    this.catchupTimer = null;
     if (this.tasks.length === 0) return;
     console.log("⏸️ Stopping cron jobs...");
     for (const task of this.tasks) {

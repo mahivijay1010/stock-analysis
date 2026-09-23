@@ -1,30 +1,31 @@
 /**
  * Manual catch-up for a missed morning-refresh-and-scan, logged honestly.
  *
- * Context: the 08:45 IST job failed to run on BOTH 2026-09-21 and 2026-09-22.
- * Verified from the database rather than a log file (cron_execution_logs had
- * no row, and both `analysis` and `rank_snapshots` were empty for the date),
- * because the backend's stdout log silently stops receiving output overnight
- * while the process keeps serving HTTP — observed on two separate log files,
- * so those logs are not evidence of anything.
+ * Context: the 08:45 IST job failed to run on 2026-09-21 and 2026-09-22.
+ * Verified from the database, not a log file: cron_execution_logs had no row
+ * and `analysis` / `rank_snapshots` were empty for the date. (The backend's
+ * stdout log silently stops receiving output overnight while the process keeps
+ * serving HTTP — observed on three separate log files — so it is not evidence
+ * of anything.)
  *
- * The first day's explanation (ts-node-dev hot-reloads detaching timers) was
- * DISPROVEN on the second: that process ran 14h22m with no reloads at all and
- * its `0 0 * * *` midnight job fired normally, while `45 8 * * 1-5` produced
- * nothing. A freshly-armed `* * 1-5` timer does fire correctly, so the failure
- * appears only once a timer has been armed for hours. Root cause unproven; all
- * weekday jobs now use daily expressions with an in-code guard, which avoids
- * the suspect path rather than relying on the diagnosis being right.
+ * ROOT CAUSE, found 2026-09-23 from `pmset -g log`: THE LAPTOP WAS ASLEEP.
+ * On both mornings the machine sat in deep sleep with 2-second "dark wakes"
+ * every ~17 minutes; the 08:45:00 instant fell inside one (09-21: DarkWake
+ * 08:45:06, back to sleep 08:45:08) or between them (09-22: asleep 08:43→08:52).
+ * node-cron has no catch-up, so a suspended instant is simply lost and nothing
+ * reports it.
  *
- * This runs the same work the cron job would have, through the same durable
- * logging, labelled "(manual catch-up)" with the reason recorded — so the
- * pipeline history shows what actually happened rather than a clean run that
- * never occurred.
+ * Two earlier diagnoses were WRONG and are retracted: (1) ts-node-dev
+ * hot-reloads detaching timers; (2) a long-armed node-cron timer bug. The
+ * daily-expression + weekday-guard conversion those produced is harmless and
+ * stays (the Sat/Sun day-of-week bug it also fixes WAS real), but the reason
+ * recorded in cron_execution_logs was wrong twice; both rows now carry a dated
+ * second correction naming sleep.
  *
- * Deliberately does NOT re-run the rotating intelligence refresh: that is a
- * throttled ~13s-per-ticker scrape whose only purpose is slow background
- * coverage, and skipping one day costs nothing while re-running it mid-session
- * would compete with the live feed for network.
+ * This script remains as the manual fallback. The systematic fix is the
+ * automatic missed-run catch-up in CronService (compares expected runs against
+ * cron_execution_logs and runs whatever the machine slept through, logged as
+ * "(auto catch-up)").
  *
  * Usage: npx ts-node --transpile-only scripts/runMissedMorningScan.ts
  */
@@ -76,10 +77,8 @@ async function main(): Promise<void> {
         Date.now() - started,
         status,
         errorSummary ??
-          "Ran manually because the scheduled 08:45 IST firing did not occur. Cause not fully proven: a " +
-            "freshly-armed `* * 1-5` timer fires correctly, but one armed for hours does not, while the " +
-            "same process's `0 0 * * *` job fires normally — see the NOTE ON SCHEDULING in CronService. " +
-            "All weekday jobs have since been moved to daily expressions with an in-code weekday guard.",
+          "Ran manually because the scheduled 08:45 IST firing did not occur: the laptop was asleep " +
+            "through the instant (pmset log). node-cron has no catch-up. See CronService auto catch-up.",
       ]
     );
     console.log(`\nLogged to cron_execution_logs as "${JOB_NAME}", status=${status}.`);

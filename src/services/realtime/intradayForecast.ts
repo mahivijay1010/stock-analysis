@@ -28,8 +28,28 @@
  */
 
 import { CompletedBar } from "./types";
+import { COST_SCHEDULE_INTRADAY_2024_10, estimateSlippagePct, roundTripCostPct } from "../shortterm/costs";
 
 export const INTRADAY_FORECAST_VERSION = "intraday-forecast-v1";
+
+/**
+ * The forecaster's tunable constants, as a value rather than a set of module
+ * constants, so the ACTIVE row of `intraday_model_params` can drive the model
+ * and a nightly challenger can be promoted without a code change. The named
+ * constants below remain as the documented DEFAULTS (= the seeded `ip-v1`).
+ *
+ * `driftSign`: +1 project the EWMA drift (momentum), −1 invert it
+ * (mean-reversion, Roll 1984), 0 withhold direction entirely (the null model:
+ * P(up) ≡ 0.5). See docs/intraday-microstructure-notes.md §1–2.
+ */
+export interface IntradayModelParams {
+  driftSign: -1 | 0 | 1;
+  driftShrinkage: number;
+  driftHalfLifeBars: number;
+  minProbability: number;
+  maxProbability: number;
+  minBarsForForecast: number;
+}
 
 /** Horizons, in minutes. Both are graded; neither is trusted until measured. */
 export const FORECAST_HORIZONS_MIN = [1, 5] as const;
@@ -65,6 +85,41 @@ export const DRIFT_SHRINKAGE = 0.25;
 export const MAX_PROBABILITY = 0.65;
 export const MIN_PROBABILITY = 0.35;
 
+export const DEFAULT_INTRADAY_PARAMS: IntradayModelParams = {
+  driftSign: 1,
+  driftShrinkage: DRIFT_SHRINKAGE,
+  driftHalfLifeBars: DRIFT_HALFLIFE_BARS,
+  minProbability: MIN_PROBABILITY,
+  maxProbability: MAX_PROBABILITY,
+  minBarsForForecast: MIN_BARS_FOR_FORECAST,
+};
+
+/**
+ * Reference order size for the cost gate. A modest retail clip is the
+ * CONSERVATIVE (higher-cost) assumption, because the flat-₹ brokerage cap
+ * makes cost fall with size — and a gate deciding whether a call is
+ * actionable should err toward "no".
+ */
+export const COST_REFERENCE_ORDER_INR = 50_000;
+
+/**
+ * Round-trip cost (%) of acting on a minute-scale call: fees from the live
+ * intraday schedule plus the slippage floor. On 2026-09-23 this was
+ * 14.5–20.6 bps against a mean predicted 1-minute move of 0.29 bps and a mean
+ * ACTUAL move of 5.79 bps — a perfect oracle loses money at this horizon
+ * (docs/intraday-microstructure-notes.md §3). Every forecast carries it.
+ */
+export function intradayRoundTripCostPct(barVolPct: number | null): number {
+  const fees = roundTripCostPct(COST_REFERENCE_ORDER_INR, COST_SCHEDULE_INTRADAY_2024_10);
+  const slippage = estimateSlippagePct({
+    atrPct: barVolPct != null && barVolPct > 0 ? barVolPct * 20 : null,
+    relVolume: 1,
+    orderValueInr: COST_REFERENCE_ORDER_INR,
+    advInr: null,
+  });
+  return Math.round((fees + slippage) * 1_000_000) / 1_000_000;
+}
+
 export interface IntradayForecast {
   securityId: string;
   ticker: string;
@@ -75,7 +130,17 @@ export interface IntradayForecast {
   expectedReturnPct: number;
   /** P(close higher than basePrice at horizon). Clamped; never extreme. */
   probabilityUp: number;
+  /**
+   * The momentum-sign direction is ALWAYS recorded (so a stored row can be
+   * re-scored under any challenger), but under the null model (driftSign 0)
+   * it is WITHHELD from display: `withheld` is true and probabilityUp is 0.5.
+   */
   direction: "UP" | "DOWN";
+  withheld: boolean;
+  /** Round-trip cost (%) of acting on this call at the reference size. */
+  roundTripCostPct: number;
+  /** Parameter set the forecast was computed under. */
+  paramsVersion: string;
   /** 80% band on the return, in percent, from realized volatility. */
   low80Pct: number;
   high80Pct: number;
@@ -148,16 +213,20 @@ export function forecastOne(opts: {
   bars: CompletedBar[];
   horizonMin: ForecastHorizonMin;
   now: number;
+  params?: IntradayModelParams;
+  paramsVersion?: string;
 }): IntradayForecast | null {
   const { securityId, ticker, bars, horizonMin, now } = opts;
-  if (bars.length < MIN_BARS_FOR_FORECAST) return null;
+  const p = opts.params ?? DEFAULT_INTRADAY_PARAMS;
+  const paramsVersion = opts.paramsVersion ?? "ip-v1";
+  if (bars.length < p.minBarsForForecast) return null;
 
   const last = bars[bars.length - 1];
   const basePrice = last.close;
   if (!Number.isFinite(basePrice) || basePrice <= 0) return null;
 
   const rets = barReturnsPct(bars);
-  if (rets.length < MIN_BARS_FOR_FORECAST - 1) return null;
+  if (rets.length < p.minBarsForForecast - 1) return null;
 
   const barVolPct = stdev(rets);
   // A security with literally no observed variation gives no basis for a
@@ -165,13 +234,17 @@ export function forecastOne(opts: {
   if (!(barVolPct > 0)) return null;
 
   // Drift per bar, shrunk. Scaled to the horizon; vol scales with sqrt(t).
-  const driftPerBar = ewma(rets, DRIFT_HALFLIFE_BARS) * DRIFT_SHRINKAGE;
+  // Under the null model the MOMENTUM sign is still recorded (so the row can
+  // be re-scored under any challenger) but the direction is withheld below.
+  const effectiveSign = p.driftSign === 0 ? 1 : p.driftSign;
+  const driftPerBar = ewma(rets, p.driftHalfLifeBars) * p.driftShrinkage * effectiveSign;
   const expectedReturnPct = driftPerBar * horizonMin;
   const horizonVolPct = barVolPct * Math.sqrt(horizonMin);
 
   // P(up) from the drift/vol ratio, then clamped: at minute scale the honest
   // range of belief is narrow, and a 90% call would be a lie about precision.
-  const probabilityUp = clamp(normalCdf(expectedReturnPct / horizonVolPct), MIN_PROBABILITY, MAX_PROBABILITY);
+  const withheld = p.driftSign === 0;
+  const probabilityUp = withheld ? 0.5 : clamp(normalCdf(expectedReturnPct / horizonVolPct), p.minProbability, p.maxProbability);
 
   // 80% band ⇒ ±1.2816 sigma.
   const z80 = 1.2815515655446004;
@@ -182,7 +255,10 @@ export function forecastOne(opts: {
     basePrice,
     expectedReturnPct,
     probabilityUp,
-    direction: probabilityUp >= 0.5 ? "UP" : "DOWN",
+    direction: expectedReturnPct >= 0 ? "UP" : "DOWN",
+    withheld,
+    roundTripCostPct: intradayRoundTripCostPct(barVolPct),
+    paramsVersion,
     low80Pct: expectedReturnPct - z80 * horizonVolPct,
     high80Pct: expectedReturnPct + z80 * horizonVolPct,
     barVolPct,
@@ -242,6 +318,20 @@ export interface EntryExitPlan {
   probabilityUp: number;
   resolveAt: number;
   /**
+   * THE COST GATE. `actionable` is false when |expected move| does not exceed
+   * the round-trip cost of acting on it, or when the active model withholds
+   * direction. On 2026-09-23 this was false for every 1-minute and every
+   * 5-minute forecast issued: the cards showed a target and a stop on trades
+   * that could not clear their own fees. Never render levels as a plan when
+   * this is false.
+   */
+  actionable: boolean;
+  notActionableReason: string | null;
+  roundTripCostPct: number;
+  expectedMoveBps: number;
+  costBps: number;
+  withheld: boolean;
+  /**
    * This horizon's measured accuracy, as of when the plan was built — the
    * field this function exists to make impossible to omit.
    */
@@ -273,7 +363,24 @@ export function buildEntryExitPlan(f: IntradayForecast, accuracy: HorizonScore):
   const riskAbs = Math.abs(f.basePrice - stopLossPrice);
   const riskRewardRatio = riskAbs > 0 ? rewardAbs / riskAbs : null;
 
+  const expectedMoveBps = Math.abs(f.expectedReturnPct) * 100;
+  const costBps = f.roundTripCostPct * 100;
+  let notActionableReason: string | null = null;
+  if (f.withheld) {
+    notActionableReason = "the active model withholds direction (null parameters): no call is made";
+  } else if (expectedMoveBps <= costBps) {
+    notActionableReason =
+      `expected move ${expectedMoveBps.toFixed(2)} bps does not clear round-trip cost ${costBps.toFixed(1)} bps ` +
+      `(fees + slippage) — a perfect direction call still loses money here`;
+  }
+
   return {
+    actionable: notActionableReason === null,
+    notActionableReason,
+    roundTripCostPct: f.roundTripCostPct,
+    expectedMoveBps,
+    costBps,
+    withheld: f.withheld,
     securityId: f.securityId,
     ticker: f.ticker,
     horizonMin: f.horizonMin,
@@ -307,6 +414,10 @@ export interface GradedForecast extends IntradayForecast {
   /** actual − expected, in percentage points. */
   errorPct: number;
   gradedAt: number;
+  /** |actual move| exceeded the round-trip cost: a perfect call could have netted something. */
+  clearsCost: boolean;
+  /** Realised return fell inside the forecast's 80% band. */
+  inBand80: boolean;
 }
 
 /**
@@ -328,6 +439,8 @@ export function gradeForecast(f: IntradayForecast, actualPrice: number, gradedAt
     outcome: actualDirection === f.direction ? "CORRECT" : "WRONG",
     errorPct: actualReturnPct - f.expectedReturnPct,
     gradedAt,
+    clearsCost: Math.abs(actualReturnPct) > f.roundTripCostPct,
+    inBand80: actualReturnPct >= f.low80Pct && actualReturnPct <= f.high80Pct,
   };
 }
 
@@ -344,6 +457,14 @@ export interface HorizonScore {
   /** Mean absolute predicted move vs mean absolute actual move — the §14.4 check. */
   meanAbsPredictedPct: number | null;
   meanAbsActualPct: number | null;
+  /**
+   * Share of realised returns inside the 80% band. The literature says
+   * MAGNITUDE is what is predictable at minute horizons, not sign — so this,
+   * not the hit rate, is the metric that can actually be learned. Target 80.
+   */
+  bandCoverage80Pct: number | null;
+  /** Share of graded forecasts whose |actual move| exceeded round-trip cost. */
+  clearsCostRatePct: number | null;
   /** True while the sample cannot support any claim of skill. */
   unproven: boolean;
   note: string;
@@ -371,6 +492,8 @@ export function scoreHorizon(horizonMin: ForecastHorizonMin, graded: GradedForec
       brier: null,
       meanAbsPredictedPct: null,
       meanAbsActualPct: null,
+      bandCoverage80Pct: null,
+      clearsCostRatePct: null,
       unproven: true,
       note: "no graded outcomes yet",
     };
@@ -383,6 +506,8 @@ export function scoreHorizon(horizonMin: ForecastHorizonMin, graded: GradedForec
   const brier = graded.reduce((a, g) => a + (g.probabilityUp - (g.actualDirection === "UP" ? 1 : 0)) ** 2, 0) / n;
   const meanAbsPredictedPct = graded.reduce((a, g) => a + Math.abs(g.expectedReturnPct), 0) / n;
   const meanAbsActualPct = graded.reduce((a, g) => a + Math.abs(g.actualReturnPct), 0) / n;
+  const bandCoverage80Pct = (graded.filter((g) => g.inBand80).length / n) * 100;
+  const clearsCostRatePct = (graded.filter((g) => g.clearsCost).length / n) * 100;
 
   const enough = n >= MIN_GRADED_FOR_RATE;
   const beatsCoinFlip = hitRatePct != null && hitRatePct > 50;
@@ -396,6 +521,7 @@ export function scoreHorizon(horizonMin: ForecastHorizonMin, graded: GradedForec
   } else {
     note = `${hitRatePct!.toFixed(1)}% of ${n} — above 50%, but a single session is not evidence of skill`;
   }
+  note += `; ${clearsCostRatePct.toFixed(1)}% of moves cleared round-trip cost; 80% band held ${bandCoverage80Pct.toFixed(1)}%`;
 
   return {
     horizonMin,
@@ -406,6 +532,8 @@ export function scoreHorizon(horizonMin: ForecastHorizonMin, graded: GradedForec
     brier,
     meanAbsPredictedPct,
     meanAbsActualPct,
+    bandCoverage80Pct,
+    clearsCostRatePct,
     unproven,
     note,
   };
