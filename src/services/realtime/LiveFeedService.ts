@@ -156,7 +156,10 @@ export class LiveFeedService {
     try {
       // Grade first, so a forecast whose horizon just elapsed is scored
       // against this instant rather than after new forecasts shift state.
-      intradayForecastService.grade((securityId) => streaming.stateFor(securityId)?.lastPrice ?? null);
+      intradayForecastService.grade(
+        (securityId) => streaming.stateFor(securityId)?.lastPrice ?? null,
+        (securityId) => streaming.barsFor(securityId)
+      );
 
       for (const [ticker, instrumentKey] of this.mapping) {
         const bars = streaming.barsFor(instrumentKey);

@@ -1464,6 +1464,16 @@ export interface IntradayForecastRow {
   withheld?: boolean;
   roundTripCostPct?: number;
   paramsVersion?: string;
+  /** Model's ex-ante bracket probabilities: P(+0.5% before −0.3%) in the call's direction, within the horizon. */
+  barrier?: {
+    targetPct: number;
+    stopPct: number;
+    direction: 'UP' | 'DOWN';
+    pTargetFirst: number;
+    pStopFirst: number;
+    pNeither: number;
+    paths: number;
+  } | null;
 }
 
 export interface HorizonScore {

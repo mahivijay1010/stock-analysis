@@ -149,7 +149,11 @@ export class IntradayForecastService {
    * A missing price expires the forecast ungraded — counted and surfaced, not
    * hidden, because silently dropping unresolvable calls would bias the score.
    */
-  grade(priceOf: (securityId: string) => number | null): GradedForecast[] {
+  grade(
+    priceOf: (securityId: string) => number | null,
+    /** Completed bars for a security (any range); the grader selects the forecast window. */
+    barsFor?: (securityId: string) => CompletedBar[]
+  ): GradedForecast[] {
     const now = this.now();
     const out: GradedForecast[] = [];
 
@@ -165,7 +169,7 @@ export class IntradayForecastService {
         continue;
       }
 
-      const g = gradeForecast(f, price, now);
+      const g = gradeForecast(f, price, now, barsFor ? barsFor(f.securityId) : undefined);
       this.open.delete(k);
       if (!g) {
         this.expiredUngraded++;

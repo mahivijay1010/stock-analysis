@@ -388,6 +388,26 @@ function EntryExitCard({ f }: { f: IntradayForecastRow }) {
         <PlanLevel icon={<ShieldAlert className="h-3.5 w-3.5" />} label="Stop-loss" value={`₹${plan.stopLossPrice.toFixed(2)}`} sub={`${plan.stopLossPct > 0 ? '+' : ''}${plan.stopLossPct.toFixed(3)}%`} tone="bad" />
       </div>
 
+      {/* The bracket question — P(+0.5% before −0.3%) — is the one that can be
+          economically meaningful at these horizons; the direction call above
+          mostly cannot. Shown with the horizon so a reader sees that at 1 and
+          5 minutes the bracket is essentially unreachable. */}
+      {f.barrier && (
+        <div className="mt-2.5 rounded-lg border border-white/10 bg-black/20 p-2 text-[11px]">
+          <p className="text-[10px] uppercase tracking-wide text-slate-500">
+            Bracket · reach {f.barrier.direction === 'UP' ? '+' : '−'}{f.barrier.targetPct}% before {f.barrier.direction === 'UP' ? '−' : '+'}{f.barrier.stopPct}% within {f.horizonMin} min
+          </p>
+          <p className="mt-1 flex flex-wrap gap-x-3 tabular-nums">
+            <span className="text-emerald-300">target first {(f.barrier.pTargetFirst * 100).toFixed(1)}%</span>
+            <span className="text-rose-300">stop first {(f.barrier.pStopFirst * 100).toFixed(1)}%</span>
+            <span className="text-slate-400">neither {(f.barrier.pNeither * 100).toFixed(1)}%</span>
+          </p>
+          <p className="mt-0.5 text-[10px] text-slate-600">
+            model&apos;s own estimate from its drift and volatility ({f.barrier.paths} simulated paths) — graded against the real bar path when the horizon elapses
+          </p>
+        </div>
+      )}
+
       <p className="mt-2.5 text-[11px] text-slate-500">
         Reward:risk{' '}
         <span className={badRR ? 'font-medium text-rose-300' : 'text-slate-400'}>

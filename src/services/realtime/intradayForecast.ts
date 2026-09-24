@@ -29,6 +29,7 @@
 
 import { CompletedBar } from "./types";
 import { COST_SCHEDULE_INTRADAY_2024_10, estimateSlippagePct, roundTripCostPct } from "../shortterm/costs";
+import { BarrierOutcome, BarrierProbabilities, barrierProbabilities, evaluateBarrierPath } from "./barrierOutcomes";
 
 export const INTRADAY_FORECAST_VERSION = "intraday-forecast-v1";
 
@@ -51,8 +52,13 @@ export interface IntradayModelParams {
   minBarsForForecast: number;
 }
 
-/** Horizons, in minutes. Both are graded; neither is trusted until measured. */
-export const FORECAST_HORIZONS_MIN = [1, 5] as const;
+/**
+ * Horizons, in minutes. All are graded; none is trusted until measured.
+ * 1 and 5 are kept as the microstructure probes where the bounce anti-signal
+ * is clearest; 15/30/60 are where a +0.5%/−0.3% bracket becomes reachable and
+ * a call can, in principle, clear cost (spec §6; intraday-microstructure-notes §3).
+ */
+export const FORECAST_HORIZONS_MIN = [1, 5, 15, 30, 60] as const;
 export type ForecastHorizonMin = (typeof FORECAST_HORIZONS_MIN)[number];
 
 /**
@@ -141,6 +147,13 @@ export interface IntradayForecast {
   roundTripCostPct: number;
   /** Parameter set the forecast was computed under. */
   paramsVersion: string;
+  /**
+   * The model's own bracket probabilities — P(+0.5% before −0.3%) in the
+   * call's direction, over this horizon, from its drift and vol. Null when
+   * direction is withheld. This is the quantity that can be economically
+   * meaningful; the direction call above mostly cannot (barrierOutcomes.ts).
+   */
+  barrier: BarrierProbabilities | null;
   /** 80% band on the return, in percent, from realized volatility. */
   low80Pct: number;
   high80Pct: number;
@@ -248,6 +261,7 @@ export function forecastOne(opts: {
 
   // 80% band ⇒ ±1.2816 sigma.
   const z80 = 1.2815515655446004;
+  const direction: "UP" | "DOWN" = expectedReturnPct >= 0 ? "UP" : "DOWN";
   return {
     securityId,
     ticker,
@@ -255,10 +269,13 @@ export function forecastOne(opts: {
     basePrice,
     expectedReturnPct,
     probabilityUp,
-    direction: expectedReturnPct >= 0 ? "UP" : "DOWN",
+    direction,
     withheld,
     roundTripCostPct: intradayRoundTripCostPct(barVolPct),
     paramsVersion,
+    barrier: withheld
+      ? null
+      : barrierProbabilities({ driftPerBarPct: driftPerBar, barVolPct, horizonBars: horizonMin, direction }),
     low80Pct: expectedReturnPct - z80 * horizonVolPct,
     high80Pct: expectedReturnPct + z80 * horizonVolPct,
     barVolPct,
@@ -418,6 +435,12 @@ export interface GradedForecast extends IntradayForecast {
   clearsCost: boolean;
   /** Realised return fell inside the forecast's 80% band. */
   inBand80: boolean;
+  /**
+   * What the realised bar path did against the +0.5%/−0.3% bracket: first
+   * hit, MFE/MAE, returns at 5–60 min. Null when no path was available at
+   * grading time — missing data, never scored as "no hit".
+   */
+  barrierOutcome: BarrierOutcome | null;
 }
 
 /**
@@ -427,7 +450,13 @@ export interface GradedForecast extends IntradayForecast {
  * convention (`actual > 0 counts as UP`), so the rule cannot be bent after the
  * fact to flatter a result.
  */
-export function gradeForecast(f: IntradayForecast, actualPrice: number, gradedAt: number): GradedForecast | null {
+export function gradeForecast(
+  f: IntradayForecast,
+  actualPrice: number,
+  gradedAt: number,
+  /** Bars covering the forecast window, for the barrier evaluation. Optional: absent ⇒ barrierOutcome null. */
+  pathBars?: CompletedBar[]
+): GradedForecast | null {
   if (!Number.isFinite(actualPrice) || actualPrice <= 0) return null;
   const actualReturnPct = (Math.log(actualPrice / f.basePrice)) * 100;
   const actualDirection: "UP" | "DOWN" = actualReturnPct > 0 ? "UP" : "DOWN";
@@ -441,6 +470,10 @@ export function gradeForecast(f: IntradayForecast, actualPrice: number, gradedAt
     gradedAt,
     clearsCost: Math.abs(actualReturnPct) > f.roundTripCostPct,
     inBand80: actualReturnPct >= f.low80Pct && actualReturnPct <= f.high80Pct,
+    barrierOutcome:
+      pathBars && pathBars.length > 0
+        ? evaluateBarrierPath({ bars: pathBars, madeAt: f.madeAt, basePrice: f.basePrice, horizonMin: f.horizonMin, direction: f.direction })
+        : null,
   };
 }
 

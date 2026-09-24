@@ -90,8 +90,11 @@ export class IntradayOutcomeRepository {
          (session_date, security_id, ticker, horizon_min, made_at, resolve_at, base_price,
           expected_return_pct, probability_up, direction, low80_pct, high80_pct, bar_vol_pct, bars_used,
           model_version, params_version, model_params, round_trip_cost_pct,
-          graded_at, actual_price, actual_return_pct, actual_direction, outcome, error_pct, clears_cost)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19,$20,$21,$22,$23,$24,$25)
+          graded_at, actual_price, actual_return_pct, actual_direction, outcome, error_pct, clears_cost,
+          barrier_target_pct, barrier_stop_pct, p_target_first, p_stop_first, p_neither,
+          first_hit, minutes_to_hit, mfe_pct, mae_pct, returns_at_pct, path_bars_seen, path_complete)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19,$20,$21,$22,$23,$24,$25,
+               $26,$27,$28,$29,$30,$31,$32,$33,$34,$35::jsonb,$36,$37)
        ON CONFLICT ON CONSTRAINT uq_ifo_identity DO NOTHING`,
       [
         istDate(g.madeAt), g.securityId, g.ticker, g.horizonMin, new Date(g.madeAt), new Date(g.resolveAt), g.basePrice,
@@ -99,6 +102,14 @@ export class IntradayOutcomeRepository {
         g.modelVersion, paramsVersion, JSON.stringify(params), cost,
         new Date(g.gradedAt), g.actualPrice, g.actualReturnPct, g.actualDirection, g.outcome, g.errorPct,
         g.clearsCost,
+        // Ex-ante bracket (null when direction was withheld).
+        g.barrier?.targetPct ?? null, g.barrier?.stopPct ?? null,
+        g.barrier?.pTargetFirst ?? null, g.barrier?.pStopFirst ?? null, g.barrier?.pNeither ?? null,
+        // Realised path (null when no bars covered the window).
+        g.barrierOutcome?.firstHit ?? null, g.barrierOutcome?.minutesToHit ?? null,
+        g.barrierOutcome?.mfePct ?? null, g.barrierOutcome?.maePct ?? null,
+        g.barrierOutcome ? JSON.stringify(g.barrierOutcome.returnsAtPct) : null,
+        g.barrierOutcome?.barsSeen ?? null, g.barrierOutcome?.complete ?? null,
       ]
     );
   }
@@ -113,7 +124,17 @@ export class IntradayOutcomeRepository {
     return n;
   }
 
-  /** A session's graded rows for one horizon, in the order they were made. */
+  /**
+   * A session's graded rows for one horizon, in the order they were made —
+   * restricted to forecasts MADE inside the regular session (09:15–15:30 IST).
+   *
+   * Rows made outside it are not deleted (the table is append-only) but they
+   * are not evidence: on 2026-09-24 the feed ran past the close and ~7,100
+   * forecasts were built from the post-closing session's flat prints, then
+   * leaked into the nightly calibration's hold-out and contaminated a
+   * promotion. The window filter is the data-side fix; the supervisor's
+   * stop-at-close is the source-side fix. Both, because either alone can fail.
+   */
   async outcomesForSession(sessionDate: string, horizonMin: number): Promise<StoredOutcomeRow[]> {
     return this.ds.query(
       `SELECT id, session_date::text AS session_date, security_id, ticker, horizon_min, made_at, base_price,
@@ -121,6 +142,7 @@ export class IntradayOutcomeRepository {
               params_version, model_params, round_trip_cost_pct, actual_return_pct, actual_direction, outcome, clears_cost
          FROM intraday_forecast_outcomes
         WHERE session_date = $1 AND horizon_min = $2
+          AND (made_at AT TIME ZONE 'Asia/Kolkata')::time >= '09:15' AND (made_at AT TIME ZONE 'Asia/Kolkata')::time <= '15:30'
         ORDER BY made_at ASC, ticker ASC`,
       [sessionDate, horizonMin]
     );

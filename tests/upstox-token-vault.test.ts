@@ -22,6 +22,7 @@ import {
   SESSION_END_IST_MINUTES,
   SESSION_START_IST_MINUTES,
   inSessionWindow,
+  pastSessionStop,
   shouldStart,
 } from "../src/services/realtime/liveFeedSupervisor";
 
@@ -210,5 +211,30 @@ describe("LiveFeedSupervisor.shouldStart — unattended, but never reckless", ()
     expect(inSessionWindow(istWed(9, 7))).toBe(false);
     expect(inSessionWindow(istWed(15, 29))).toBe(true);
     expect(inSessionWindow(istWed(15, 30))).toBe(false);
+  });
+});
+
+describe("LiveFeedSupervisor — stops at the close (2026-09-24 post-close thrash)", () => {
+  const istWed = (hh: number, mm: number) => Date.UTC(2026, 8, 23, hh, mm) - 5.5 * 3600_000;
+  const running = { feedRunning: true, tokenValid: true, tokenReason: "token valid", backoffUntilMs: null };
+
+  test("a running feed is STOPPED once the close plus grace has passed", () => {
+    expect(shouldStart({ ...running, nowMs: istWed(15, 36) }).action).toBe("stop");
+    expect(shouldStart({ ...running, nowMs: istWed(16, 30) }).action).toBe("stop");
+  });
+
+  test("but not during the grace window — the last bars and grades must land first", () => {
+    expect(shouldStart({ ...running, nowMs: istWed(15, 31) }).action).toBe("wait");
+    expect(shouldStart({ ...running, nowMs: istWed(15, 35) }).action).toBe("wait");
+  });
+
+  test("a running feed inside the session is left alone", () => {
+    expect(shouldStart({ ...running, nowMs: istWed(11, 0) }).action).toBe("wait");
+  });
+
+  test("a feed still running at the weekend is stopped", () => {
+    const istSat = Date.UTC(2026, 8, 26, 10, 0) - 5.5 * 3600_000;
+    expect(shouldStart({ ...running, nowMs: istSat }).action).toBe("stop");
+    expect(pastSessionStop(istSat)).toBe(true);
   });
 });

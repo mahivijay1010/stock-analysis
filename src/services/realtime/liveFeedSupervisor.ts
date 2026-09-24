@@ -29,7 +29,17 @@
  *
  * It does NOT supervise socket health during a session — UpstoxStreamProvider's
  * watchdog owns that (a hung socket reconnects itself in ~90s). This only
- * answers "should the feed be running at all, and is it?".
+ * answers "should the feed be running at all, and is it?" — in BOTH directions.
+ *
+ * STOPPING matters as much as starting. On 2026-09-24 the first version of
+ * this supervisor started the feed and never stopped it. After the 15:30
+ * close the socket went legitimately quiet, the stream watchdog read that
+ * silence as a hang and reconnected 36 times, and the post-closing session's
+ * flat prints (15:40–16:00, closing-price-only trades) were built into bars,
+ * forecast, graded and PERSISTED — ~7,100 junk rows that then leaked into the
+ * 16:00 nightly calibration's hold-out and contaminated a promotion. So the
+ * supervisor now also stops a running feed once the session is over, after a
+ * short grace so the last real bars and grades complete.
  */
 
 import { LiveFeedService } from "./LiveFeedService";
@@ -44,6 +54,12 @@ const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
  */
 export const SESSION_START_IST_MINUTES = 9 * 60 + 8; // 09:08
 export const SESSION_END_IST_MINUTES = 15 * 60 + 30; // 15:30
+/**
+ * Stop the feed this long after the close. Long enough for the last 1-minute
+ * bars to complete and their 1/5-minute grades to land; short enough that the
+ * 15:40 post-closing session's flat prints never reach the forecaster.
+ */
+export const SESSION_STOP_GRACE_MINUTES = 6; // stop at 15:36
 
 export const DEFAULT_TICK_MS = 60_000;
 export const BACKOFF_BASE_MS = 60_000;
@@ -64,7 +80,15 @@ export function inSessionWindow(nowMs: number): boolean {
 
 export type SupervisorVerdict =
   | { action: "start"; reason: string }
+  | { action: "stop"; reason: string }
   | { action: "wait"; reason: string };
+
+/** Past the close plus grace, or a weekend: a running feed must be shut. PURE. */
+export function pastSessionStop(nowMs: number): boolean {
+  const { minutes, weekday } = istClock(nowMs);
+  if (weekday === 0 || weekday === 6) return true;
+  return minutes >= SESSION_END_IST_MINUTES + SESSION_STOP_GRACE_MINUTES || minutes < SESSION_START_IST_MINUTES;
+}
 
 /**
  * The whole decision, as a pure function of observable facts. PURE so the
@@ -82,7 +106,12 @@ export function shouldStart(facts: {
   tokenReason: string;
   backoffUntilMs: number | null;
 }): SupervisorVerdict {
-  if (facts.feedRunning) return { action: "wait", reason: "feed already running" };
+  if (facts.feedRunning) {
+    if (pastSessionStop(facts.nowMs)) {
+      return { action: "stop", reason: "session is over (15:30 IST + grace) — stopping so post-close prints are never forecast or persisted" };
+    }
+    return { action: "wait", reason: "feed already running" };
+  }
   if (!inSessionWindow(facts.nowMs)) return { action: "wait", reason: "outside the IST trading window (09:08–15:30, Mon–Fri)" };
   if (!facts.tokenValid) return { action: "wait", reason: `no usable Upstox token: ${facts.tokenReason}` };
   if (facts.backoffUntilMs != null && facts.nowMs < facts.backoffUntilMs) {
@@ -98,6 +127,7 @@ export interface SupervisorStatus {
   lastVerdict: string | null;
   startsAttempted: number;
   startsSucceeded: number;
+  stopsAtClose: number;
   consecutiveFailures: number;
   lastError: string | null;
   backoffUntil: string | null;
@@ -108,6 +138,7 @@ export class LiveFeedSupervisor {
   private starting = false;
   private startsAttempted = 0;
   private startsSucceeded = 0;
+  private stopsAtClose = 0;
   private consecutiveFailures = 0;
   private lastError: string | null = null;
   private lastVerdict: string | null = null;
@@ -146,6 +177,7 @@ export class LiveFeedSupervisor {
       lastVerdict: this.lastVerdict,
       startsAttempted: this.startsAttempted,
       startsSucceeded: this.startsSucceeded,
+      stopsAtClose: this.stopsAtClose,
       consecutiveFailures: this.consecutiveFailures,
       lastError: this.lastError,
       backoffUntil: this.backoffUntil ? new Date(this.backoffUntil).toISOString() : null,
@@ -168,6 +200,21 @@ export class LiveFeedSupervisor {
     });
     this.lastVerdict = verdict.reason;
     if (verdict.action === "wait") return;
+
+    if (verdict.action === "stop") {
+      this.starting = true;
+      try {
+        await this.feed.stop();
+        this.stopsAtClose++;
+        console.log(`🛰️  [supervisor] live feed stopped for the day — ${verdict.reason}`);
+      } catch (err) {
+        this.lastError = err instanceof Error ? err.message : String(err);
+        console.error(`🛰️  [supervisor] stop at close failed: ${this.lastError}`);
+      } finally {
+        this.starting = false;
+      }
+      return;
+    }
 
     this.starting = true;
     this.startsAttempted++;

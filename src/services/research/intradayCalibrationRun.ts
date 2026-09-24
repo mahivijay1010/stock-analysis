@@ -190,6 +190,8 @@ export interface EvaluationResult {
   nTotal: number;
   split: { fitN: number; holdoutN: number; boundaryMadeAt: string | null };
   incumbent: { version: string; params: IntradayModelParams; fit: SplitScore; holdout: SplitScore };
+  /** The day's forecasts scored as actually emitted (may differ from `incumbent` if params changed after they were made). */
+  asStored: { fit: SplitScore; holdout: SplitScore };
   challengers: ChallengerResult[];
 }
 
@@ -206,8 +208,18 @@ export function evaluateChallengers(
   const fit = sorted.slice(0, cut);
   const holdout = sorted.slice(cut);
 
-  const incFit = scoreRows(fit, null);
-  const incHold = scoreRows(holdout, null);
+  // The incumbent is scored by RE-SCORING under the ACTIVE params, exactly as
+  // the challengers are — not from the stored `outcome` column. On an ordinary
+  // day the two are identical (rows were made under the active params, and
+  // re-scoring reproduces their direction). On a day where the active params
+  // changed after the rows were made (2026-09-24: promotion at 16:00, rows made
+  // under the old sign), the stored column describes the OLD model, and using
+  // it under the new version's name would mislabel the evidence.
+  const incFit = scoreRows(fit, incumbent);
+  const incHold = scoreRows(holdout, incumbent);
+  // What the forecaster actually emitted that day, kept for transparency.
+  const storedFit = scoreRows(fit, null);
+  const storedHold = scoreRows(holdout, null);
 
   const challengers = challengerSet(incumbent).map((c): ChallengerResult => {
     const cFit = scoreRows(fit, c.params);
@@ -239,6 +251,7 @@ export function evaluateChallengers(
     nTotal: sorted.length,
     split: { fitN: fit.length, holdoutN: holdout.length, boundaryMadeAt: holdout[0] ? new Date(holdout[0].made_at).toISOString() : null },
     incumbent: { version: incumbentVersion, params: incumbent, fit: incFit, holdout: incHold },
+    asStored: { fit: storedFit, holdout: storedHold },
     challengers,
   };
 }
@@ -246,6 +259,7 @@ export function evaluateChallengers(
 export interface PromotionDecision {
   promote: boolean;
   winner: ChallengerResult | null;
+  /** Mutable: a re-evaluation that confirms the active params prefixes this. */
   reason: string;
 }
 
@@ -305,6 +319,8 @@ export async function runIntradayCalibration(opts: {
   repo?: IntradayOutcomeRepository;
   horizons?: number[];
   dryRun?: boolean;
+  /** Why this run exists, when it is not the scheduled nightly (e.g. a re-evaluation after a data correction). */
+  note?: string;
 } = {}): Promise<CalibrationRunSummary> {
   const repo = opts.repo ?? intradayOutcomeRepository;
   const horizons = opts.horizons ?? [1, 5];
@@ -336,6 +352,7 @@ export async function runIntradayCalibration(opts: {
       nTotal: e.nTotal,
       split: e.split,
       incumbent: { version: e.incumbent.version, holdout: e.incumbent.holdout, fit: e.incumbent.fit },
+      asStored: e.asStored,
       challengers: e.challengers.map((c) => ({ key: c.key, holdout: c.holdout, fit: c.fit, qualifies: c.qualifies, why: c.why })),
     })),
     decision: { promote: decision.promote, winner: decision.winner?.key ?? null, reason: decision.reason },
@@ -359,15 +376,23 @@ export async function runIntradayCalibration(opts: {
         JSON.stringify(metrics),
         JSON.stringify({ note: "incumbent as stored is the baseline; null model (P=0.5, Brier 0.25) is the floor" }),
         JSON.stringify(["fit(chronological first 60%)", "holdout(chronological last 40%)"]),
-        `Nightly intraday challenger evaluation for ${sessionDate}. ${decision.reason}`,
+        `${opts.note ? opts.note + " — " : ""}Intraday challenger evaluation for ${sessionDate} (in-session rows 09:15–15:30 IST only). ${decision.reason}`,
         startedAt,
       ]
     );
     experimentRunId = run?.id ?? null;
   }
 
+  // A re-evaluation (e.g. after a data correction) can pick the parameters
+  // that are ALREADY active. That is a confirmation, not a promotion: record
+  // it as such rather than trying to re-insert an existing version.
+  const winnerIsActive =
+    decision.winner != null && JSON.stringify(decision.winner.params) === JSON.stringify(active.params);
+
   let promoted: CalibrationRunSummary["promoted"] = null;
-  if (decision.promote && decision.winner && !opts.dryRun) {
+  if (decision.promote && decision.winner && winnerIsActive) {
+    decision.reason = `CONFIRMED (already active as ${active.version}): ${decision.reason}`;
+  } else if (decision.promote && decision.winner && !opts.dryRun) {
     const version = `ip-${sessionDate.replace(/-/g, "")}-${decision.winner.key}`;
     await repo.promote({
       version,
@@ -385,14 +410,18 @@ export async function runIntradayCalibration(opts: {
        VALUES ($1, 'intraday-forecast-v1', 'CALIBRATION', $2, $3, $4, $5)`,
       [
         experimentRunId,
-        `Session ${sessionDate}: ` +
+        `${opts.note ? "[" + opts.note + "] " : ""}Session ${sessionDate}: ` +
           evaluations
             .map((e) => `${e.horizonMin}m n=${e.nTotal}, incumbent hold-out ${e.incumbent.holdout.hitRatePct?.toFixed(2) ?? "n/a"}% (band cov ${e.incumbent.holdout.bandCoverage80Pct?.toFixed(1) ?? "n/a"}%, clears-cost ${e.incumbent.holdout.clearsCostRatePct?.toFixed(2) ?? "n/a"}%); ` +
               e.challengers.map((c) => `${c.key}=${c.holdout.hitRatePct?.toFixed(2) ?? "n/a"}%`).join(", "))
             .join(" | "),
         decision.reason,
-        decision.promote ? "THRESHOLD" : "NONE",
-        promoted ? `Promoted ${promoted.version} as ACTIVE intraday params.` : "Incumbent retained. Re-evaluated next session.",
+        promoted ? "THRESHOLD" : "NONE",
+        promoted
+          ? `Promoted ${promoted.version} as ACTIVE intraday params.`
+          : winnerIsActive
+            ? `Active params ${active.version} confirmed on re-evaluation; nothing changed.`
+            : "Incumbent retained. Re-evaluated next session.",
       ]
     );
   }
