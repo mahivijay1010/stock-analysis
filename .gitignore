@@ -38,3 +38,9 @@ nohup.out
 .tsbuildinfo
 *.tsbuildinfo
 research/worker/.venv/
+
+# Encrypted Upstox token cache — a live bearer credential. Never commit.
+.secrets/
+
+# Scraped XBRL/filing cache — regenerable, large (300MB+). Never commit.
+data/intelligence-cache/

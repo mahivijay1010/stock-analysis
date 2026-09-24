@@ -105,7 +105,8 @@ export class UpstoxAuthController {
         minutesRemaining: s.msRemaining != null ? Math.floor(s.msRemaining / 60_000) : null,
         reason: s.reason,
         loginUrl: "/api/auth/upstox/login",
-        note: "Upstox access tokens expire at 03:30 IST daily; no refresh tokens exist, so re-authorization is a manual browser login.",
+        tokenSource: upstoxTokenStore.tokenSource(),
+        note: "Upstox access tokens expire at 03:30 IST daily; no refresh tokens exist, so re-authorization is a manual browser login. Once done, the token is cached (encrypted, 0600) and survives restarts until 03:30, and the feed auto-starts inside market hours.",
       });
     } catch (err) {
       next(err);

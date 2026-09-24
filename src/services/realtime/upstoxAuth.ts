@@ -14,13 +14,27 @@
  * an in-memory TokenStore that knows its own expiry.
  *
  * Secrets (UPSTOX_API_KEY/UPSTOX_API_SECRET) come only from the environment.
- * The access token is deliberately held in memory only: it is valid for hours,
- * not days, and writing it to disk would create a credential file with no
- * lifecycle. A restart costs one browser login — the same login the 03:30
- * expiry already forces.
+ *
+ * TOKEN PERSISTENCE (added 2026-09-24, superseding the original memory-only
+ * design). The token was previously held in memory ONLY, on the reasoning that
+ * a restart costs the same login the 03:30 expiry already forces. Three days of
+ * live operation disproved that: restarts were not rare, they were the norm —
+ * hot-reloads, deploys, crashes — and each one cost a login the expiry had NOT
+ * yet forced. On 2026-09-23 a deploy at 11:46 took the feed down for the rest
+ * of the session, and the first day of intraday-outcome persistence recorded
+ * zero rows as a result.
+ *
+ * So the token is now cached, encrypted, via UpstoxTokenVault: AES-256-GCM
+ * under a key derived from UPSTOX_API_SECRET (a secret that already exists and
+ * already grants login), file mode 0600, gitignored, atomically written, and
+ * DISCARDED on load if past its 03:30 expiry. The vault can only shorten the
+ * gap between restarts and a working feed; it can never produce or extend a
+ * token. The one daily browser login remains, because Upstox gives no way to
+ * avoid it.
  */
 
 import axios from "axios";
+import { upstoxTokenVault } from "./upstoxTokenVault";
 
 export const UPSTOX_AUTHORIZE_URL = "https://api.upstox.com/v2/login/authorization/dialog";
 export const UPSTOX_TOKEN_URL = "https://api.upstox.com/v2/login/authorization/token";
@@ -131,15 +145,57 @@ export async function exchangeCodeForToken(
 export class UpstoxTokenStore {
   private token: UpstoxToken | null = null;
   private pendingState: string | null = null;
+  /** How the current token was obtained — surfaced so a restored token is never mistaken for a fresh login. */
+  private source: "login" | "vault" | null = null;
+  private vaultNote: string | null = null;
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly now: () => number = Date.now,
+    /** Injected so tests can run without touching the filesystem. */
+    private readonly vault: { save(t: UpstoxToken): { ok: boolean; reason?: string }; load(): { token: UpstoxToken | null; reason?: string }; clear(): { ok: boolean; reason?: string } } | null = null
+  ) {}
 
   set(token: UpstoxToken): void {
     this.token = token;
+    this.source = "login";
+    if (this.vault) {
+      const r = this.vault.save(token);
+      this.vaultNote = r.ok ? "token cached for restarts" : `token NOT cached: ${r.reason ?? "unknown error"}`;
+      // A failed cache is a degraded convenience, never a failed login.
+      if (!r.ok) console.warn(`⚠️  Upstox token could not be cached (${r.reason}); a restart will require re-authorization`);
+    }
   }
 
   clear(): void {
     this.token = null;
+    this.source = null;
+    this.vault?.clear();
+  }
+
+  /**
+   * Restore a still-valid token from the vault at boot.
+   *
+   * Returns whether a token was recovered. Never throws, never returns an
+   * expired token (the vault refuses those and clears itself), and marks the
+   * source as "vault" so every surface can tell a restored token from a fresh
+   * login.
+   */
+  restoreFromVault(): { restored: boolean; reason: string } {
+    if (!this.vault) return { restored: false, reason: "no vault configured" };
+    const { token, reason } = this.vault.load();
+    if (!token) {
+      this.vaultNote = reason ?? "no saved token";
+      return { restored: false, reason: reason ?? "no saved token" };
+    }
+    this.token = token;
+    this.source = "vault";
+    this.vaultNote = "restored from encrypted cache";
+    return { restored: true, reason: "restored a still-valid token from the encrypted cache" };
+  }
+
+  /** "login" | "vault" | null — how the live token got here. */
+  tokenSource(): "login" | "vault" | null {
+    return this.get() ? this.source : null;
   }
 
   /** The live token, or null when absent/expired. Never returns a stale token. */
@@ -166,7 +222,12 @@ export class UpstoxTokenStore {
         reason: "Upstox token expired (they die at 03:30 IST daily; no refresh tokens) — re-authorize at /api/auth/upstox/login",
       };
     }
-    return { state: "VALID", expiresAt: this.token.expiresAt, msRemaining: remaining, reason: "token valid" };
+    return {
+      state: "VALID",
+      expiresAt: this.token.expiresAt,
+      msRemaining: remaining,
+      reason: this.source === "vault" ? "token valid (restored from encrypted cache)" : "token valid",
+    };
   }
 
   /** CSRF guard for the OAuth round trip. */
@@ -182,4 +243,4 @@ export class UpstoxTokenStore {
   }
 }
 
-export const upstoxTokenStore = new UpstoxTokenStore();
+export const upstoxTokenStore = new UpstoxTokenStore(Date.now, upstoxTokenVault);
