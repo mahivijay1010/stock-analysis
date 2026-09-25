@@ -51,6 +51,10 @@ import {
   ShortTermModelPerformance,
   ShortTermAlert,
   ShortTermPreference,
+  MarketSourceSnapshot,
+  LivePredictionRevision,
+  LiveDecisionEvent,
+  DecisionOutcomeLedger,
 } from "../entities";
 import * as dotenv from "dotenv";
 
@@ -126,6 +130,10 @@ export const AppDataSource = new DataSource({
     ShortTermModelPerformance,
     ShortTermAlert,
     ShortTermPreference,
+    MarketSourceSnapshot,
+    LivePredictionRevision,
+    LiveDecisionEvent,
+    DecisionOutcomeLedger,
   ],
   migrations: [__dirname + "/../migrations/*.{js,ts}"],
   subscribers: [],

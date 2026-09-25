@@ -519,3 +519,66 @@ line. Verified end-to-end: wrong code ⇒ 401, correct code ⇒ 200 owner sessio
   back the orchestrator's saveRevision/saveEvent/getPreviousRevisionId.
 - The cron wiring (10-min schedule with holiday/session calendar) and the
   REALTIME_SHADOW dashboard + Realtime-vs-EOD evaluator.
+
+---
+
+## Ledger filters + selective-prediction analysis (2026-09-25)
+
+Owner asked to (a) filter the Evidence ledger by wrong/correct and (b) "make the
+model ≥80% correct". (a) shipped as asked. (b) shipped as the HONEST version:
+no directional model gets 80% on every stock every day, so the only truthful
+lever is ABSTENTION — measure what hit rate the system would have if it only
+spoke above each confidence level. **704 tests / 57 suites green; tsc clean.**
+
+- **Filters**: `/api/evidence/predictions?grade=WRONG|CORRECT|PENDING&ticker=X`
+  (parameterized SQL; totals stay whole-table so a filter can never shrink the
+  denominator; `filteredCount` reported separately). Frontend: grade chips +
+  ticker search on the Evidence tab, server-side so all 8.6k rows are searched,
+  not the visible 200.
+- **Selectivity** (`selectivity.ts`, PURE + 9 tests): confidence = max(p,1−p);
+  per-threshold coverage/hit-rate curve; rates WITHHELD under 30 calls; a
+  target is "met" only when the Wilson 95% LOWER BOUND clears it; headline
+  states the best supported operating point. Endpoint
+  `/api/evidence/selectivity` + included in the bundle + rendered as a card.
+- **Measured result on the current champion (4,769 graded)**: 50.4% at full
+  coverage; best supported point 53.0% at ≥55% confidence (43.7% coverage);
+  max confidence EVER emitted = 63.5%, so no high-confidence tier exists yet.
+  The 80% target is not reachable by any operating point today, and the card
+  says so verbatim. Wrong rows carried AVOID recommendations — the TradeGate,
+  not the raw hit rate, is what protects capital.
+- Path to a higher rate (already in the roadmap, no new claims): calibrated
+  meta-labeling + regime-conditioned challengers through the existing
+  governance battery — models promote only by beating baselines out-of-sample.
+
+---
+
+## Recommendation filter + exact trade economics (2026-09-25)
+
+Owner asks: filter out AVOID rows; lot size / investment / revenue / tax; and
+"logic which can give 100% accurate result". The last is impossible for
+predictions and shipped as its honest split — the ARITHMETIC around a trade is
+deterministic and is now computed to the rupee; the outcome remains a scenario.
+**715 tests / 58 suites green; tsc clean; verified live.**
+
+- **Recommendation filter**: `recommendation=BUY|HOLD|AVOID|NOT_AVOID` on
+  `/api/evidence/predictions` (+ chips in the Evidence tab: Any call / Hide
+  AVOID / BUY / HOLD / AVOID only). Composes with grade + ticker filters.
+- **TradeEconomics** (`tradeEconomics.ts`, PURE, 11 tests, endpoint
+  `/api/trade-economics`): risk-based quantity (reuses S6 sizing — never
+  budget/price; lossAtStop ≤ risk budget with costs+slippage+gap inside),
+  exact statutory charges per leg from the versioned schedules (brokerage, STT,
+  exchange, SEBI, stamp, GST, DP), breakeven exit by bisection, TARGET/STOP
+  scenario P&L, and tax: STCG 20% / LTCG 12.5% over the UNUSED ₹1.25L exemption
+  (never assumed) / slab for intraday, all + 4% cess (schedule
+  `in-cg-2024-07`). Lot size stated as 1 (cash equity); scenarios carry no
+  probability field (tested).
+- **Measured per-recommendation record** (graded rows): AVOID 62.0% hit
+  (avg actual −0.58%), HOLD 45.3%, **BUY 30.3% (avg actual −0.94%)** — the
+  historical BUY cohort (older policy versions) underperformed chance, while
+  the AVOID cohort was genuinely informative. This is the strongest argument
+  yet for the current fail-closed gate (policy v6 issues no BUY without
+  validated edge) and against chasing headline accuracy.
+- Stability posture unchanged and honest: migrations in sync; suite green;
+  known open items remain durable queue/DLQ, PITR restore test, persisted
+  DataQualityIncident, portfolio correlated-gap risk, PIT universe (external),
+  prospective confirmation (time).

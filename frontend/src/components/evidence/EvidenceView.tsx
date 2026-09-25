@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, BookOpen, CheckCircle2, ChevronDown, FlaskConical, Lightbulb, RefreshCw, ShieldAlert, Target, XCircle } from 'lucide-react';
-import { getEvidence, getJournal } from '@/lib/api';
+import { Activity, AlertTriangle, BookOpen, CheckCircle2, ChevronDown, Crosshair, FlaskConical, Lightbulb, Loader2, RefreshCw, Scale, Search, ShieldAlert, Target, XCircle } from 'lucide-react';
+import { getEvidence, getEvidencePredictions, getJournal } from '@/lib/api';
 import type {
   EvidenceBundle,
   ExpectationRow,
@@ -12,7 +12,10 @@ import type {
   EvidenceCalibrator,
   EvidenceExperiment,
   EvidenceGovernance,
+  PredictionLedger,
   PredictionLedgerRow,
+  SelectivityReport,
+  LaneCReport,
 } from '@/lib/types';
 
 /**
@@ -166,32 +169,177 @@ export function EvidenceView() {
 
 // ── 1. The prediction ledger ─────────────────────────────────────────────────
 
+type GradeFilter = 'ALL' | 'WRONG' | 'CORRECT' | 'PENDING';
+type RecFilter = 'ALL' | 'BUY' | 'HOLD' | 'NOT_AVOID' | 'AVOID';
+
 function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
-  const { predictions: p } = bundle;
   const [showPending, setShowPending] = useState(true);
+  // Filters re-query the SERVER (the page holds 200 of 8k+ rows, so a
+  // client-side filter would silently search only the visible sample).
+  const [grade, setGrade] = useState<GradeFilter>('ALL');
+  const [rec, setRec] = useState<RecFilter>('ALL');
+  const [tickerInput, setTickerInput] = useState('');
+  const [ticker, setTicker] = useState('');
+  const [filtered, setFiltered] = useState<PredictionLedger | null>(null);
+  const [filtering, setFiltering] = useState(false);
+  const [filterError, setFilterError] = useState<string | null>(null);
+
+  const active = grade !== 'ALL' || rec !== 'ALL' || ticker.length > 0;
+  const p = active && filtered ? filtered : bundle.predictions;
+
+  useEffect(() => {
+    if (!active) {
+      setFiltered(null);
+      return;
+    }
+    let cancelled = false;
+    setFiltering(true);
+    getEvidencePredictions({
+      grade: grade === 'ALL' ? undefined : grade,
+      ticker: ticker || undefined,
+      recommendation: rec === 'ALL' ? undefined : rec,
+    })
+      .then((res) => {
+        if (!cancelled) {
+          setFiltered(res);
+          setFilterError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setFilterError(err instanceof Error ? err.message : 'Filter query failed');
+      })
+      .finally(() => {
+        if (!cancelled) setFiltering(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [active, grade, rec, ticker]);
 
   const graded = p.rows.filter((r) => r.grade !== 'PENDING');
   const pending = p.rows.filter((r) => r.grade === 'PENDING');
+  const b = bundle.predictions; // whole-table counts for the chip labels
 
   return (
     <div className="space-y-4">
       {/* A withheld statistic is explained, not silently omitted. */}
-      {p.sampleWarning ? (
+      {b.sampleWarning ? (
         <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-slate-300">
           <p className="font-medium text-slate-200">No hit rate is shown, on purpose</p>
-          <p className="mt-1 text-slate-400">{p.sampleWarning}</p>
+          <p className="mt-1 text-slate-400">{b.sampleWarning}</p>
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          <Stat label="Hit rate" value={`${p.hitRatePct}%`} tone={(p.hitRatePct ?? 0) < 55 ? 'warn' : 'good'} sub={`over ${p.graded} matured predictions`} />
+          <Stat label="Hit rate" value={`${b.hitRatePct}%`} tone={(b.hitRatePct ?? 0) < 55 ? 'warn' : 'good'} sub={`over ${b.graded} matured predictions`} />
           <Stat
             label="Mean absolute error"
-            value={p.meanAbsErrorPct != null ? `${p.meanAbsErrorPct}pp` : '—'}
+            value={b.meanAbsErrorPct != null ? `${b.meanAbsErrorPct}pp` : '—'}
             tone="muted"
             sub="how far the expected return sat from the actual"
           />
         </div>
       )}
+
+      {bundle.selectivity && <SelectivityCard report={bundle.selectivity} />}
+
+      {bundle.laneC && <LaneCCard report={bundle.laneC} />}
+
+      {/* Filters: narrow the ROWS, never the denominators above. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex gap-1 rounded-lg border border-white/10 bg-white/[0.02] p-1">
+          {(['ALL', 'WRONG', 'CORRECT', 'PENDING'] as const).map((g) => (
+            <button
+              key={g}
+              onClick={() => setGrade(g)}
+              className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${
+                grade === g
+                  ? g === 'WRONG'
+                    ? 'bg-rose-500/20 text-rose-200'
+                    : g === 'CORRECT'
+                      ? 'bg-emerald-500/20 text-emerald-200'
+                      : 'bg-white/10 text-slate-100'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {g === 'ALL'
+                ? `All (${b.total})`
+                : g === 'WRONG'
+                  ? `Wrong (${b.wrong})`
+                  : g === 'CORRECT'
+                    ? `Correct (${b.correct})`
+                    : `Pending (${b.pending})`}
+            </button>
+          ))}
+        </div>
+        {/* What the system TOLD you at the time — "Actionable" hides AVOID rows. */}
+        <div className="flex gap-1 rounded-lg border border-white/10 bg-white/[0.02] p-1">
+          {(
+            [
+              ['ALL', 'Any call'],
+              ['NOT_AVOID', 'Hide AVOID'],
+              ['BUY', 'BUY only'],
+              ['HOLD', 'HOLD only'],
+              ['AVOID', 'AVOID only'],
+            ] as Array<[RecFilter, string]>
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setRec(value)}
+              className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${
+                rec === value
+                  ? value === 'BUY'
+                    ? 'bg-emerald-500/20 text-emerald-200'
+                    : value === 'AVOID'
+                      ? 'bg-rose-500/20 text-rose-200'
+                      : 'bg-white/10 text-slate-100'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <form
+          className="flex items-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setTicker(tickerInput.trim());
+          }}
+        >
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+            <input
+              value={tickerInput}
+              onChange={(e) => setTickerInput(e.target.value)}
+              placeholder="Filter by ticker…"
+              className="w-40 rounded-lg border border-white/10 bg-white/[0.02] py-1.5 pl-7 pr-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-cyan-300/40 focus:outline-none"
+            />
+          </div>
+          <button type="submit" className="rounded-lg border border-white/10 px-2.5 py-1.5 text-[11px] text-slate-300 hover:bg-white/5">
+            Apply
+          </button>
+          {ticker && (
+            <button
+              type="button"
+              onClick={() => {
+                setTicker('');
+                setTickerInput('');
+              }}
+              className="text-[11px] text-slate-500 hover:text-slate-300"
+            >
+              clear
+            </button>
+          )}
+        </form>
+        {filtering && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" />}
+        {active && !filtering && filtered && (
+          <span className="text-[11px] text-slate-500">
+            {filtered.filteredCount ?? filtered.rows.length} match{(filtered.filteredCount ?? filtered.rows.length) === 1 ? '' : 'es'}
+            {(filtered.filteredCount ?? 0) > filtered.rows.length && ` · showing first ${filtered.rows.length}`}
+          </span>
+        )}
+      </div>
+      {filterError && <p className="text-xs text-rose-300">{filterError}</p>}
 
       {graded.length > 0 && (
         <section>
@@ -201,6 +349,7 @@ function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
           <PredictionTable rows={graded} />
         </section>
       )}
+      {active && p.rows.length === 0 && !filtering && <Empty>No predictions match this filter.</Empty>}
 
       {pending.length > 0 && (
         <section>
@@ -221,6 +370,165 @@ function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
         </section>
       )}
     </div>
+  );
+}
+
+/**
+ * Accuracy vs abstention — the honest form of "make it more accurate".
+ *
+ * A directional model cannot be 80% right on every stock every day; it CAN
+ * abstain below a confidence bar and be judged on the calls it makes. This
+ * renders the measured trade, including the case where the model never emits
+ * high confidence at all — which is a fact about the model, shown, not hidden.
+ */
+function SelectivityCard({ report: r }: { report: SelectivityReport }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-start justify-between gap-3 text-left">
+        <div className="flex gap-3">
+          <Crosshair className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />
+          <div>
+            <p className="font-medium text-slate-200">
+              If it only spoke when confident — measured, target {r.targetHitRatePct}%
+            </p>
+            <p className="mt-0.5 text-xs text-slate-400">{r.headline}</p>
+          </div>
+        </div>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="mt-3 border-t border-white/10 pt-3">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-[11px] uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-2 py-1.5 text-left">Speaks only at</th>
+                  <th className="px-2 py-1.5 text-right">Calls</th>
+                  <th className="px-2 py-1.5 text-right">Coverage</th>
+                  <th className="px-2 py-1.5 text-right">Hit rate</th>
+                  <th className="px-2 py-1.5 text-right">95% lower bound</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {r.curve.map((pt) => (
+                  <tr key={pt.minConfidence} className={r.targetMet?.minConfidence === pt.minConfidence ? 'bg-emerald-500/[0.06]' : undefined}>
+                    <td className="px-2 py-1.5 tabular-nums text-slate-300">≥{Math.round(pt.minConfidence * 100)}% conf.</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-400">{pt.calls}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-400">{pt.coveragePct}%</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">
+                      {pt.hitRatePct != null ? (
+                        <span className={pt.hitRatePct >= r.targetHitRatePct ? 'text-emerald-300' : 'text-slate-300'}>{pt.hitRatePct}%</span>
+                      ) : (
+                        <span className="text-slate-600">{pt.calls === 0 ? 'no calls' : 'withheld (small sample)'}</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
+                      {pt.hitRateLb95Pct != null ? `${pt.hitRateLb95Pct}%` : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-[11px] text-slate-600">{r.caveat}</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Lane C — the TradeGate's OWN graded ledger. Everything above this card
+ * grades the legacy quant engine; the gate that actually decides today's
+ * recommendation is graded here, on exactly what it published: stance + EV +
+ * band claims at horizon, next-open entry, net of the claim's own cost model.
+ */
+function LaneCCard({ report: r }: { report: LaneCReport }) {
+  const [open, setOpen] = useState(false);
+  const t = r.totals;
+  const statusLabel: Record<string, string> = {
+    BUY_CANDIDATE: 'BUY candidate',
+    WAIT: 'Wait',
+    AVOID_NEW_ENTRY: 'Avoid new entry',
+    INSUFFICIENT_EVIDENCE: 'Insufficient evidence',
+  };
+  return (
+    <section className="rounded-xl border border-violet-500/25 bg-violet-500/[0.04] p-4">
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-start justify-between gap-3 text-left">
+        <div className="flex gap-3">
+          <Scale className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
+          <div>
+            <p className="font-medium text-slate-200">
+              The live gate&apos;s own track record — {t.gradedObservations} graded of {t.snapshotsPublished} published decisions
+            </p>
+            <p className="mt-0.5 text-xs text-slate-400">{r.headline}</p>
+          </div>
+        </div>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="mt-3 border-t border-white/10 pt-3">
+          <div className="mb-3 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-3">
+            <span>Pending maturity: <span className="tabular-nums text-slate-300">{t.pendingMaturity}</span></span>
+            <span>Matured, awaiting grade: <span className="tabular-nums text-slate-300">{t.ungradedMatured}</span></span>
+            <span>Unusable (no entry / bad data): <span className="tabular-nums text-slate-300">{t.entryUnavailable + t.dataInvalid}</span></span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-[11px] uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-2 py-1.5 text-left">Published stance</th>
+                  <th className="px-2 py-1.5 text-right">n</th>
+                  <th className="px-2 py-1.5 text-right">Mean net return</th>
+                  <th className="px-2 py-1.5 text-right">Hit rate</th>
+                  <th className="px-2 py-1.5 text-right">95% lower bound</th>
+                  <th className="px-2 py-1.5 text-right">In 80% band</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {r.cohorts.map((c) => (
+                  <tr key={c.decisionStatus}>
+                    <td className="px-2 py-1.5 text-slate-300">
+                      {statusLabel[c.decisionStatus] ?? c.decisionStatus}
+                      {c.truncated > 0 && <span className="ml-1 text-[10px] text-amber-400/80">({c.truncated} truncated)</span>}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-400">{c.observations}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">
+                      {c.meanNetReturnPct != null ? (
+                        <span className={c.meanNetReturnPct >= 0 ? 'text-emerald-300' : 'text-rose-300'}>{c.meanNetReturnPct}%</span>
+                      ) : (
+                        <span className="text-slate-600">withheld</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">
+                      {c.hitRate ? (
+                        <span className="text-slate-200">{c.hitRate.pct}% <span className="text-slate-500">({c.hitRate.hits}/{c.hitRate.n})</span></span>
+                      ) : (
+                        <span className="text-slate-600" title={c.hitRateWithheldReason ?? undefined}>
+                          {c.hitRateWithheldReason?.startsWith('abstention') ? 'n/a — abstention' : 'withheld (small sample)'}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{c.hitRate ? `${c.hitRate.wilsonLb95Pct}%` : '—'}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
+                      {c.band80 ? `${c.band80.pct}% (${c.band80.inside}/${c.band80.n})` : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ul className="mt-2 space-y-0.5 text-[11px] text-slate-600">
+            {r.method.map((m, i) => (
+              <li key={i}>• {m}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
   );
 }
 

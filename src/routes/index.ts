@@ -15,6 +15,7 @@ import {
 } from "../controllers";
 import { createAdminRoutes } from "./admin";
 import { requireAuth, requireAuthOrAdminKey, requireCsrfHeader } from "../middleware/auth";
+import { computeTradeEconomics } from "../services/decision/tradeEconomics";
 
 /**
  * API routes (mounted at /api). Route order matters:
@@ -92,10 +93,40 @@ export const createStockRoutes = (): Router => {
   // that argues against the system's own output must be as reachable as the
   // recommendations are.
   router.get("/evidence", evidenceController.bundle); //                    GET  /api/evidence?limit=200
-  router.get("/evidence/predictions", evidenceController.predictions); //   GET  /api/evidence/predictions?limit=
+  router.get("/evidence/predictions", evidenceController.predictions); //   GET  /api/evidence/predictions?limit=&grade=WRONG|CORRECT|PENDING&ticker=
+  router.get("/evidence/selectivity", evidenceController.selectivity); //   GET  /api/evidence/selectivity — accuracy vs abstention
   router.get("/evidence/calibrators", evidenceController.calibrators); //   GET  /api/evidence/calibrators
   router.get("/evidence/governance", evidenceController.governance); //     GET  /api/evidence/governance
   router.get("/evidence/experiments", evidenceController.experiments); //   GET  /api/evidence/experiments
+  router.get("/evidence/lane-c", evidenceController.laneC); //              GET  /api/evidence/lane-c — TradeGate graded outcomes
+
+  // ── Trade economics: the DETERMINISTIC arithmetic around a trade ──────────
+  // Exact quantity, charges, breakeven, scenario P&L and tax. Outcomes are
+  // labelled scenarios — this endpoint never states a probability.
+  router.get("/trade-economics", (req, res) => {
+    try {
+      const num = (k: string): number | undefined => {
+        const v = Number(req.query[k]);
+        return Number.isFinite(v) ? v : undefined;
+      };
+      const productRaw = String(req.query.productType ?? "").toUpperCase();
+      const result = computeTradeEconomics({
+        entryPrice: num("entry") ?? 0,
+        stopPrice: num("stop") ?? 0,
+        targetPrice: num("target") ?? 0,
+        budgetInr: num("budget") ?? 0,
+        riskPerTradePct: num("riskPct"),
+        holdingPeriodDays: num("holdingDays"),
+        slabRatePct: num("slabPct"),
+        ltcgExemptionRemainingInr: num("ltcgExemption"),
+        atrPct: num("atrPct") ?? null,
+        productType: productRaw === "INTRADAY_EQUITY" ? "INTRADAY_EQUITY" : "DELIVERY_EQUITY",
+      });
+      res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      res.status(400).json({ success: false, error: { message: err instanceof Error ? err.message : "invalid inputs" } });
+    }
+  }); // GET /api/trade-economics?entry=&stop=&target=&budget=&riskPct=&holdingDays=&slabPct=&productType=
 
   // ── Learning journal: pre-registered expectations, graded after the fact ──
   // Reads are open like the rest of the evidence surface. Writes are
@@ -161,6 +192,7 @@ export const createStockRoutes = (): Router => {
   router.get("/short-term/ai-usage", shortTermController.aiUsage); //                   GET  /api/short-term/ai-usage
   router.get("/short-term/preferences", requireAuth, shortTermController.getPreferences); // GET /api/short-term/preferences
   router.put("/short-term/preferences", requireAuth, shortTermController.putPreferences); // PUT /api/short-term/preferences
+  router.get("/short-term/:ticker/full-plan", shortTermController.fullPlan); //         GET  /api/short-term/:t/full-plan?budget=&riskPct=&slabPct=
   router.get("/short-term/:ticker", shortTermController.detail); //                     GET  /api/short-term/:t
   router.post("/short-term/:ticker/review", requireAuth, shortTermController.review); //POST /api/short-term/:t/review
   router.post("/short-term/:ticker/revalidate", requireAuth, shortTermController.revalidate); // POST /api/short-term/:t/revalidate
