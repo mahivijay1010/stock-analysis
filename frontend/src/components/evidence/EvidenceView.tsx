@@ -169,19 +169,21 @@ export function EvidenceView() {
 // ── 1. The prediction ledger ─────────────────────────────────────────────────
 
 type GradeFilter = 'ALL' | 'WRONG' | 'CORRECT' | 'PENDING';
+type RecFilter = 'ALL' | 'BUY' | 'HOLD' | 'NOT_AVOID' | 'AVOID';
 
 function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
   const [showPending, setShowPending] = useState(true);
   // Filters re-query the SERVER (the page holds 200 of 8k+ rows, so a
   // client-side filter would silently search only the visible sample).
   const [grade, setGrade] = useState<GradeFilter>('ALL');
+  const [rec, setRec] = useState<RecFilter>('ALL');
   const [tickerInput, setTickerInput] = useState('');
   const [ticker, setTicker] = useState('');
   const [filtered, setFiltered] = useState<PredictionLedger | null>(null);
   const [filtering, setFiltering] = useState(false);
   const [filterError, setFilterError] = useState<string | null>(null);
 
-  const active = grade !== 'ALL' || ticker.length > 0;
+  const active = grade !== 'ALL' || rec !== 'ALL' || ticker.length > 0;
   const p = active && filtered ? filtered : bundle.predictions;
 
   useEffect(() => {
@@ -191,7 +193,11 @@ function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
     }
     let cancelled = false;
     setFiltering(true);
-    getEvidencePredictions({ grade: grade === 'ALL' ? undefined : grade, ticker: ticker || undefined })
+    getEvidencePredictions({
+      grade: grade === 'ALL' ? undefined : grade,
+      ticker: ticker || undefined,
+      recommendation: rec === 'ALL' ? undefined : rec,
+    })
       .then((res) => {
         if (!cancelled) {
           setFiltered(res);
@@ -207,7 +213,7 @@ function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
     return () => {
       cancelled = true;
     };
-  }, [active, grade, ticker]);
+  }, [active, grade, rec, ticker]);
 
   const graded = p.rows.filter((r) => r.grade !== 'PENDING');
   const pending = p.rows.filter((r) => r.grade === 'PENDING');
@@ -259,6 +265,34 @@ function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
                   : g === 'CORRECT'
                     ? `Correct (${b.correct})`
                     : `Pending (${b.pending})`}
+            </button>
+          ))}
+        </div>
+        {/* What the system TOLD you at the time — "Actionable" hides AVOID rows. */}
+        <div className="flex gap-1 rounded-lg border border-white/10 bg-white/[0.02] p-1">
+          {(
+            [
+              ['ALL', 'Any call'],
+              ['NOT_AVOID', 'Hide AVOID'],
+              ['BUY', 'BUY only'],
+              ['HOLD', 'HOLD only'],
+              ['AVOID', 'AVOID only'],
+            ] as Array<[RecFilter, string]>
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setRec(value)}
+              className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${
+                rec === value
+                  ? value === 'BUY'
+                    ? 'bg-emerald-500/20 text-emerald-200'
+                    : value === 'AVOID'
+                      ? 'bg-rose-500/20 text-rose-200'
+                      : 'bg-white/10 text-slate-100'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {label}
             </button>
           ))}
         </div>

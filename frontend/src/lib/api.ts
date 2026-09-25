@@ -744,10 +744,16 @@ export function getEvidence(limit = 200): Promise<EvidenceBundle> {
 /** Filtered ledger page: grade (WRONG/CORRECT/PENDING) and/or ticker prefix.
  *  Totals in the response always stay whole-table — a filter narrows the rows,
  *  never the denominator. */
-export function getEvidencePredictions(params: { limit?: number; grade?: 'WRONG' | 'CORRECT' | 'PENDING'; ticker?: string }): Promise<PredictionLedger> {
+export function getEvidencePredictions(params: {
+  limit?: number;
+  grade?: 'WRONG' | 'CORRECT' | 'PENDING';
+  ticker?: string;
+  recommendation?: 'BUY' | 'HOLD' | 'AVOID' | 'NOT_AVOID';
+}): Promise<PredictionLedger> {
   const q = new URLSearchParams({ limit: String(params.limit ?? 200) });
   if (params.grade) q.set('grade', params.grade);
   if (params.ticker) q.set('ticker', params.ticker);
+  if (params.recommendation) q.set('recommendation', params.recommendation);
   return get<PredictionLedger>(`/api/evidence/predictions?${q.toString()}`);
 }
 

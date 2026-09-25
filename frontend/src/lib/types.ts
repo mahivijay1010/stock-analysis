@@ -1252,6 +1252,8 @@ export interface PredictionLedgerRow {
 export interface PredictionFilter {
   grade?: 'WRONG' | 'CORRECT' | 'PENDING';
   ticker?: string;
+  /** NOT_AVOID = everything except rows the system said to avoid. */
+  recommendation?: 'BUY' | 'HOLD' | 'AVOID' | 'NOT_AVOID';
 }
 
 export interface PredictionLedger {

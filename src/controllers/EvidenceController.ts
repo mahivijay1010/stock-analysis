@@ -40,7 +40,10 @@ export class EvidenceController {
       const grade = gradeRaw === "WRONG" || gradeRaw === "CORRECT" || gradeRaw === "PENDING" ? gradeRaw : undefined;
       const tickerRaw = String(req.query.ticker ?? "").trim();
       const ticker = tickerRaw.length > 0 ? tickerRaw.slice(0, 30) : undefined;
-      ok(res, await evidenceService.predictions(limitOf(req, 200), { grade, ticker }));
+      const recRaw = String(req.query.recommendation ?? "").toUpperCase();
+      const recommendation =
+        recRaw === "BUY" || recRaw === "HOLD" || recRaw === "AVOID" || recRaw === "NOT_AVOID" ? recRaw : undefined;
+      ok(res, await evidenceService.predictions(limitOf(req, 200), { grade, ticker, recommendation }));
     } catch (err) {
       next(err);
     }

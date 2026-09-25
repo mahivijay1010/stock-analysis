@@ -15,6 +15,7 @@ import {
 } from "../controllers";
 import { createAdminRoutes } from "./admin";
 import { requireAuth, requireAuthOrAdminKey, requireCsrfHeader } from "../middleware/auth";
+import { computeTradeEconomics } from "../services/decision/tradeEconomics";
 
 /**
  * API routes (mounted at /api). Route order matters:
@@ -97,6 +98,34 @@ export const createStockRoutes = (): Router => {
   router.get("/evidence/calibrators", evidenceController.calibrators); //   GET  /api/evidence/calibrators
   router.get("/evidence/governance", evidenceController.governance); //     GET  /api/evidence/governance
   router.get("/evidence/experiments", evidenceController.experiments); //   GET  /api/evidence/experiments
+
+  // ── Trade economics: the DETERMINISTIC arithmetic around a trade ──────────
+  // Exact quantity, charges, breakeven, scenario P&L and tax. Outcomes are
+  // labelled scenarios — this endpoint never states a probability.
+  router.get("/trade-economics", (req, res) => {
+    try {
+      const num = (k: string): number | undefined => {
+        const v = Number(req.query[k]);
+        return Number.isFinite(v) ? v : undefined;
+      };
+      const productRaw = String(req.query.productType ?? "").toUpperCase();
+      const result = computeTradeEconomics({
+        entryPrice: num("entry") ?? 0,
+        stopPrice: num("stop") ?? 0,
+        targetPrice: num("target") ?? 0,
+        budgetInr: num("budget") ?? 0,
+        riskPerTradePct: num("riskPct"),
+        holdingPeriodDays: num("holdingDays"),
+        slabRatePct: num("slabPct"),
+        ltcgExemptionRemainingInr: num("ltcgExemption"),
+        atrPct: num("atrPct") ?? null,
+        productType: productRaw === "INTRADAY_EQUITY" ? "INTRADAY_EQUITY" : "DELIVERY_EQUITY",
+      });
+      res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      res.status(400).json({ success: false, error: { message: err instanceof Error ? err.message : "invalid inputs" } });
+    }
+  }); // GET /api/trade-economics?entry=&stop=&target=&budget=&riskPct=&holdingDays=&slabPct=&productType=
 
   // ── Learning journal: pre-registered expectations, graded after the fact ──
   // Reads are open like the rest of the evidence surface. Writes are

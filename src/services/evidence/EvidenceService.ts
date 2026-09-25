@@ -68,6 +68,9 @@ export interface PredictionLedgerRow {
 export interface PredictionFilter {
   grade?: "WRONG" | "CORRECT" | "PENDING";
   ticker?: string;
+  /** Filter by the recommendation the system gave at issuance. NOT_AVOID keeps
+   *  everything except AVOID rows (the "hide what it told me to skip" view). */
+  recommendation?: "BUY" | "HOLD" | "AVOID" | "NOT_AVOID";
 }
 
 export interface PredictionLedger {
@@ -232,6 +235,12 @@ export class EvidenceService {
       params.push(`${filter.ticker.trim().toUpperCase().replace(/\.NS$/, "")}%`);
       where.push(`UPPER(ticker) LIKE $${params.length}`);
     }
+    if (filter?.recommendation === "NOT_AVOID") {
+      where.push(`recommendation_given IS DISTINCT FROM 'AVOID'`);
+    } else if (filter?.recommendation) {
+      params.push(filter.recommendation);
+      where.push(`recommendation_given = $${params.length}`);
+    }
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
     params.push(capped);
@@ -329,7 +338,7 @@ export class EvidenceService {
         : `Only ${graded} of ${total} predictions have matured. A hit rate needs at least ` +
           `${MIN_GRADED_FOR_RATE} graded outcomes before it means anything, so none is shown. ` +
           `The individual results below are real; the aggregate is not yet evidence.`,
-      filter: filter && (filter.grade || filter.ticker) ? filter : null,
+      filter: filter && (filter.grade || filter.ticker || filter.recommendation) ? filter : null,
       filteredCount,
     };
   }
