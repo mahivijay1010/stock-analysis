@@ -29,6 +29,7 @@
 
 import { AppDataSource } from "../../config/database";
 import { buildSelectivityReport, SelectivityReport } from "./selectivity";
+import { decisionOutcomeService, LaneCReport } from "./DecisionOutcomeService";
 
 export const EVIDENCE_VERSION = "evidence-ledger-v1";
 
@@ -187,6 +188,9 @@ export interface EvidenceBundle {
   calibrators: CalibratorRow[];
   governance: GovernanceRow[];
   experiments: ExperimentRow[];
+  /** Lane C — the TradeGate's OWN graded track record (decision_outcome_ledger).
+   *  Everything above grades the legacy quant engine; this grades the gate. */
+  laneC: LaneCReport;
 }
 
 function num(v: unknown): number | null {
@@ -521,13 +525,14 @@ export class EvidenceService {
 
   /** Everything the tab needs, in one round trip. */
   async bundle(predictionLimit = 200): Promise<EvidenceBundle> {
-    const [predictions, selectivity, calibrators, governance, experiments, pipeline] = await Promise.all([
+    const [predictions, selectivity, calibrators, governance, experiments, pipeline, laneC] = await Promise.all([
       this.predictions(predictionLimit),
       this.selectivity(),
       this.calibrators(),
       this.governance(),
       this.experiments(),
       this.pipeline(),
+      decisionOutcomeService.laneCReport(),
     ]);
 
     const promoted = calibrators.filter((c) => c.promoted).length;
@@ -555,6 +560,7 @@ export class EvidenceService {
       calibrators,
       governance,
       experiments,
+      laneC,
     };
   }
 

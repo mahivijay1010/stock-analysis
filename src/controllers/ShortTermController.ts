@@ -10,7 +10,8 @@ import { shortTermScanService } from "../services/shortterm/ScanService";
 import { shortTermTradeAnalyst, aiCostGovernor } from "../services/shortterm/aiAnalyst";
 import { preEntryRevalidationService } from "../services/shortterm/PreEntryRevalidationService";
 import { SETUP_EVIDENCE_MODEL } from "../services/shortterm/setupEvidence";
-import { ShortTermCandidateView, DEFAULT_SCAN_PARAMS, ScanParams } from "../services/shortterm/types";
+import { ShortTermCandidateView, DEFAULT_SCAN_PARAMS, ScanParams, ShortTermHorizon } from "../services/shortterm/types";
+import { composeFullTradePlan, ShadowSetupStats, FULL_PLAN_DEFAULTS } from "../services/shortterm/fullPlan";
 import { HttpError } from "../types";
 
 function ok(res: Response, data: unknown, status = 200): void {
@@ -115,6 +116,70 @@ export class ShortTermController {
         take: 30,
       });
       ok(res, { candidate: cand.payload, state: cand.state, evaluatedAt: cand.createdAt.toISOString(), transitions });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * GET /api/short-term/:ticker/full-plan?budget=&riskPct=&slabPct=
+   * The COMPLETE actionable plan for one stock: direction (or NO_TRADE with
+   * the gate's reasons), entry/stop/trail/time/event exits with order types,
+   * exact ₹ scenarios at stop/T1/T2/T3 (charges + tax), governed probability,
+   * and the shadow ledger's expectancy for this setup — withheld under min-n.
+   * Composes the STORED candidate view; recomputes nothing upstream.
+   */
+  fullPlan = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const t = req.params.ticker.trim().toUpperCase();
+      const yt = /\.(NS|BO)$/.test(t) ? t : `${t}.NS`;
+      const cand = await AppDataSource.getRepository(ShortTermCandidate)
+        .createQueryBuilder("c")
+        .where("c.ticker = :yt", { yt })
+        .orderBy("c.created_at", "DESC")
+        .getOne();
+      if (!cand) throw new HttpError(404, `${yt} has no short-term evaluation yet — run a scan first.`);
+      const view = cand.payload as unknown as ShortTermCandidateView;
+
+      // Same horizon bucketing the scan uses, derived from the plan's own
+      // expected holding period — so the shadow cohort matches the setup.
+      const hold = view.plan?.expectedHoldingDays ?? 5;
+      const horizon: ShortTermHorizon = hold <= 3 ? "1-3d" : hold <= 5 ? "3-5d" : hold <= 10 ? "5-10d" : "10-21d";
+      const rows: Array<{ resolved: string; dates: string; exp: string | null; real_exp: string | null; ambiguous: string }> = await AppDataSource.query(
+        `SELECT COUNT(*) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS resolved,
+                COUNT(DISTINCT anchor_date) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS dates,
+                AVG(COALESCE((outcome->>'conservativeNetR')::numeric, (outcome->>'netRMultiple')::numeric)) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID')::text AS exp,
+                AVG(COALESCE((outcome->>'realizedNetR')::numeric, (outcome->>'netRMultiple')::numeric)) FILTER (WHERE outcome IS NOT NULL AND (outcome->>'filled')::boolean IS TRUE AND (outcome->>'outcome') <> 'DATA_INVALID' AND (outcome->>'outcome') <> 'AMBIGUOUS_INTRABAR')::text AS real_exp,
+                COUNT(*) FILTER (WHERE (outcome->>'outcome') = 'AMBIGUOUS_INTRABAR')::text AS ambiguous
+           FROM short_term_shadow_predictions
+          WHERE setup_type = $1 AND horizon = $2`,
+        [view.setupType, horizon]
+      ).catch(() => []);
+      const shadow: ShadowSetupStats | null = rows[0]
+        ? {
+            resolved: Number(rows[0].resolved),
+            distinctDates: Number(rows[0].dates),
+            expectancyR: rows[0].exp != null ? Number(rows[0].exp) : null,
+            realizedExpectancyR: rows[0].real_exp != null ? Number(rows[0].real_exp) : null,
+            ambiguousTrades: Number(rows[0].ambiguous),
+          }
+        : null;
+
+      const qn = (k: string): number | undefined => {
+        const v = Number(req.query[k]);
+        return Number.isFinite(v) && v > 0 ? v : undefined;
+      };
+      const plan = composeFullTradePlan(
+        view,
+        shadow,
+        {
+          budgetInr: qn("budget") ?? FULL_PLAN_DEFAULTS.budgetInr,
+          riskPerTradePct: qn("riskPct") ?? FULL_PLAN_DEFAULTS.riskPerTradePct,
+          slabRatePct: qn("slabPct") ?? FULL_PLAN_DEFAULTS.slabRatePct,
+        },
+        cand.createdAt.toISOString()
+      );
+      ok(res, { plan, shadowHorizon: horizon });
     } catch (err) {
       next(err);
     }

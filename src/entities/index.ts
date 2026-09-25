@@ -84,3 +84,6 @@ export {
   ShortTermAlert,
   ShortTermPreference,
 } from "./ShortTerm";
+
+// Lane C graded track record (decision-grader-v1)
+export { DecisionOutcomeLedger } from "./DecisionOutcomeLedger";

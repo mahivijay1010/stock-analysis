@@ -13,6 +13,7 @@
 
 import { NextFunction, Request, Response } from "express";
 import { evidenceService } from "../services/evidence/EvidenceService";
+import { decisionOutcomeService } from "../services/evidence/DecisionOutcomeService";
 
 function ok(res: Response, data: unknown): void {
   res.status(200).json({ success: true, data });
@@ -77,6 +78,15 @@ export class EvidenceController {
   experiments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       ok(res, { experiments: await evidenceService.experiments(limitOf(req, 50)) });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/evidence/lane-c — TradeGate's own graded track record. */
+  laneC = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      ok(res, await decisionOutcomeService.laneCReport());
     } catch (err) {
       next(err);
     }

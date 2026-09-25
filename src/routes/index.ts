@@ -98,6 +98,7 @@ export const createStockRoutes = (): Router => {
   router.get("/evidence/calibrators", evidenceController.calibrators); //   GET  /api/evidence/calibrators
   router.get("/evidence/governance", evidenceController.governance); //     GET  /api/evidence/governance
   router.get("/evidence/experiments", evidenceController.experiments); //   GET  /api/evidence/experiments
+  router.get("/evidence/lane-c", evidenceController.laneC); //              GET  /api/evidence/lane-c — TradeGate graded outcomes
 
   // ── Trade economics: the DETERMINISTIC arithmetic around a trade ──────────
   // Exact quantity, charges, breakeven, scenario P&L and tax. Outcomes are
@@ -191,6 +192,7 @@ export const createStockRoutes = (): Router => {
   router.get("/short-term/ai-usage", shortTermController.aiUsage); //                   GET  /api/short-term/ai-usage
   router.get("/short-term/preferences", requireAuth, shortTermController.getPreferences); // GET /api/short-term/preferences
   router.put("/short-term/preferences", requireAuth, shortTermController.putPreferences); // PUT /api/short-term/preferences
+  router.get("/short-term/:ticker/full-plan", shortTermController.fullPlan); //         GET  /api/short-term/:t/full-plan?budget=&riskPct=&slabPct=
   router.get("/short-term/:ticker", shortTermController.detail); //                     GET  /api/short-term/:t
   router.post("/short-term/:ticker/review", requireAuth, shortTermController.review); //POST /api/short-term/:t/review
   router.post("/short-term/:ticker/revalidate", requireAuth, shortTermController.revalidate); // POST /api/short-term/:t/revalidate

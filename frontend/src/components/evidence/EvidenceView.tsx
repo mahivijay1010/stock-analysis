@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, BookOpen, CheckCircle2, ChevronDown, Crosshair, FlaskConical, Lightbulb, Loader2, RefreshCw, Search, ShieldAlert, Target, XCircle } from 'lucide-react';
+import { Activity, AlertTriangle, BookOpen, CheckCircle2, ChevronDown, Crosshair, FlaskConical, Lightbulb, Loader2, RefreshCw, Scale, Search, ShieldAlert, Target, XCircle } from 'lucide-react';
 import { getEvidence, getEvidencePredictions, getJournal } from '@/lib/api';
 import type {
   EvidenceBundle,
@@ -15,6 +15,7 @@ import type {
   PredictionLedger,
   PredictionLedgerRow,
   SelectivityReport,
+  LaneCReport,
 } from '@/lib/types';
 
 /**
@@ -241,6 +242,8 @@ function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
 
       {bundle.selectivity && <SelectivityCard report={bundle.selectivity} />}
 
+      {bundle.laneC && <LaneCCard report={bundle.laneC} />}
+
       {/* Filters: narrow the ROWS, never the denominators above. */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1 rounded-lg border border-white/10 bg-white/[0.02] p-1">
@@ -430,6 +433,99 @@ function SelectivityCard({ report: r }: { report: SelectivityReport }) {
             </table>
           </div>
           <p className="mt-2 text-[11px] text-slate-600">{r.caveat}</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Lane C — the TradeGate's OWN graded ledger. Everything above this card
+ * grades the legacy quant engine; the gate that actually decides today's
+ * recommendation is graded here, on exactly what it published: stance + EV +
+ * band claims at horizon, next-open entry, net of the claim's own cost model.
+ */
+function LaneCCard({ report: r }: { report: LaneCReport }) {
+  const [open, setOpen] = useState(false);
+  const t = r.totals;
+  const statusLabel: Record<string, string> = {
+    BUY_CANDIDATE: 'BUY candidate',
+    WAIT: 'Wait',
+    AVOID_NEW_ENTRY: 'Avoid new entry',
+    INSUFFICIENT_EVIDENCE: 'Insufficient evidence',
+  };
+  return (
+    <section className="rounded-xl border border-violet-500/25 bg-violet-500/[0.04] p-4">
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-start justify-between gap-3 text-left">
+        <div className="flex gap-3">
+          <Scale className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
+          <div>
+            <p className="font-medium text-slate-200">
+              The live gate&apos;s own track record — {t.gradedObservations} graded of {t.snapshotsPublished} published decisions
+            </p>
+            <p className="mt-0.5 text-xs text-slate-400">{r.headline}</p>
+          </div>
+        </div>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="mt-3 border-t border-white/10 pt-3">
+          <div className="mb-3 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-3">
+            <span>Pending maturity: <span className="tabular-nums text-slate-300">{t.pendingMaturity}</span></span>
+            <span>Matured, awaiting grade: <span className="tabular-nums text-slate-300">{t.ungradedMatured}</span></span>
+            <span>Unusable (no entry / bad data): <span className="tabular-nums text-slate-300">{t.entryUnavailable + t.dataInvalid}</span></span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-[11px] uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-2 py-1.5 text-left">Published stance</th>
+                  <th className="px-2 py-1.5 text-right">n</th>
+                  <th className="px-2 py-1.5 text-right">Mean net return</th>
+                  <th className="px-2 py-1.5 text-right">Hit rate</th>
+                  <th className="px-2 py-1.5 text-right">95% lower bound</th>
+                  <th className="px-2 py-1.5 text-right">In 80% band</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {r.cohorts.map((c) => (
+                  <tr key={c.decisionStatus}>
+                    <td className="px-2 py-1.5 text-slate-300">
+                      {statusLabel[c.decisionStatus] ?? c.decisionStatus}
+                      {c.truncated > 0 && <span className="ml-1 text-[10px] text-amber-400/80">({c.truncated} truncated)</span>}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-400">{c.observations}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">
+                      {c.meanNetReturnPct != null ? (
+                        <span className={c.meanNetReturnPct >= 0 ? 'text-emerald-300' : 'text-rose-300'}>{c.meanNetReturnPct}%</span>
+                      ) : (
+                        <span className="text-slate-600">withheld</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">
+                      {c.hitRate ? (
+                        <span className="text-slate-200">{c.hitRate.pct}% <span className="text-slate-500">({c.hitRate.hits}/{c.hitRate.n})</span></span>
+                      ) : (
+                        <span className="text-slate-600" title={c.hitRateWithheldReason ?? undefined}>
+                          {c.hitRateWithheldReason?.startsWith('abstention') ? 'n/a — abstention' : 'withheld (small sample)'}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{c.hitRate ? `${c.hitRate.wilsonLb95Pct}%` : '—'}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
+                      {c.band80 ? `${c.band80.pct}% (${c.band80.inside}/${c.band80.n})` : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ul className="mt-2 space-y-0.5 text-[11px] text-slate-600">
+            {r.method.map((m, i) => (
+              <li key={i}>• {m}</li>
+            ))}
+          </ul>
         </div>
       )}
     </section>

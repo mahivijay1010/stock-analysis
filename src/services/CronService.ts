@@ -419,6 +419,22 @@ export class CronService {
     } catch (err) {
       console.error("📅 [CRON] Forecast maintenance failed:", err);
     }
+
+    // Lane C grading (decision-grader-v1): append outcomes for matured
+    // DecisionSnapshots so the gate that actually decides live recommendations
+    // builds its own track record. Isolated try — a grading failure must never
+    // sink the verify job, and vice versa.
+    try {
+      const { decisionOutcomeService } = await import("./evidence/DecisionOutcomeService");
+      const laneC = await decisionOutcomeService.gradeMatured();
+      console.log(
+        `⚖️ [CRON] Lane C outcomes: ${laneC.written} written (${laneC.graded} graded, ${laneC.truncated} truncated, ` +
+          `${laneC.entryUnavailable} entry-unavailable, ${laneC.dataInvalid} invalid), ${laneC.pending} pending; ` +
+          `${laneC.tickersExamined} tickers examined, ${laneC.tickersRemaining} deferred to the next run`
+      );
+    } catch (err) {
+      console.error("⚖️ [CRON] Lane C grading failed:", err);
+    }
   }
 
   /** 00:00 IST — Analysis rows older than 365 days only. */

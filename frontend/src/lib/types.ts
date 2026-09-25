@@ -1379,6 +1379,45 @@ export interface EvidenceBundle {
   calibrators: EvidenceCalibrator[];
   governance: EvidenceGovernance[];
   experiments: EvidenceExperiment[];
+  /** Lane C — the TradeGate's own graded ledger (optional: older backends). */
+  laneC?: LaneCReport | null;
+}
+
+// ── Lane C track record (decision_outcome_ledger) ────────────────────────────
+// Grades what the gate PUBLISHED (stance + EV + band claims at horizon), at
+// next-session-open entry, net of the claim's own cost model. Everything else
+// on the Evidence tab grades the legacy quant engine; this grades the gate.
+
+export interface LaneCohort {
+  decisionStatus: 'BUY_CANDIDATE' | 'WAIT' | 'AVOID_NEW_ENTRY' | 'INSUFFICIENT_EVIDENCE';
+  observations: number;
+  meanNetReturnPct: number | null;
+  medianNetReturnPct: number | null;
+  meanClaimGrossPct: number | null;
+  hitRate: { hits: number; n: number; pct: number; wilsonLb95Pct: number } | null;
+  hitRateWithheldReason: string | null;
+  band80: { inside: number; n: number; pct: number } | null;
+  meanEvErrorPct: number | null;
+  truncated: number;
+  note: string;
+}
+
+export interface LaneCReport {
+  version: string;
+  graderVersion: string;
+  generatedAt: string;
+  totals: {
+    snapshotsPublished: number;
+    ledgerRows: number;
+    gradedObservations: number;
+    ungradedMatured: number;
+    pendingMaturity: number;
+    entryUnavailable: number;
+    dataInvalid: number;
+  };
+  cohorts: LaneCohort[];
+  method: string[];
+  headline: string;
 }
 
 // ── Learning journal (GET /api/journal) ──────────────────────────────────────
