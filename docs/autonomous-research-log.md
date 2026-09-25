@@ -519,3 +519,33 @@ line. Verified end-to-end: wrong code ⇒ 401, correct code ⇒ 200 owner sessio
   back the orchestrator's saveRevision/saveEvent/getPreviousRevisionId.
 - The cron wiring (10-min schedule with holiday/session calendar) and the
   REALTIME_SHADOW dashboard + Realtime-vs-EOD evaluator.
+
+---
+
+## Ledger filters + selective-prediction analysis (2026-09-25)
+
+Owner asked to (a) filter the Evidence ledger by wrong/correct and (b) "make the
+model ≥80% correct". (a) shipped as asked. (b) shipped as the HONEST version:
+no directional model gets 80% on every stock every day, so the only truthful
+lever is ABSTENTION — measure what hit rate the system would have if it only
+spoke above each confidence level. **704 tests / 57 suites green; tsc clean.**
+
+- **Filters**: `/api/evidence/predictions?grade=WRONG|CORRECT|PENDING&ticker=X`
+  (parameterized SQL; totals stay whole-table so a filter can never shrink the
+  denominator; `filteredCount` reported separately). Frontend: grade chips +
+  ticker search on the Evidence tab, server-side so all 8.6k rows are searched,
+  not the visible 200.
+- **Selectivity** (`selectivity.ts`, PURE + 9 tests): confidence = max(p,1−p);
+  per-threshold coverage/hit-rate curve; rates WITHHELD under 30 calls; a
+  target is "met" only when the Wilson 95% LOWER BOUND clears it; headline
+  states the best supported operating point. Endpoint
+  `/api/evidence/selectivity` + included in the bundle + rendered as a card.
+- **Measured result on the current champion (4,769 graded)**: 50.4% at full
+  coverage; best supported point 53.0% at ≥55% confidence (43.7% coverage);
+  max confidence EVER emitted = 63.5%, so no high-confidence tier exists yet.
+  The 80% target is not reachable by any operating point today, and the card
+  says so verbatim. Wrong rows carried AVOID recommendations — the TradeGate,
+  not the raw hit rate, is what protects capital.
+- Path to a higher rate (already in the roadmap, no new claims): calibrated
+  meta-labeling + regime-conditioned challengers through the existing
+  governance battery — models promote only by beating baselines out-of-sample.

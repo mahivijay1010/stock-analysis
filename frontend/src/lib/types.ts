@@ -1249,6 +1249,11 @@ export interface PredictionLedgerRow {
   recommendationGiven: string | null;
 }
 
+export interface PredictionFilter {
+  grade?: 'WRONG' | 'CORRECT' | 'PENDING';
+  ticker?: string;
+}
+
 export interface PredictionLedger {
   rows: PredictionLedgerRow[];
   total: number;
@@ -1259,6 +1264,32 @@ export interface PredictionLedger {
   hitRatePct: number | null;
   meanAbsErrorPct: number | null;
   sampleWarning: string | null;
+  /** Echo of the applied filter; totals above always stay whole-table. */
+  filter: PredictionFilter | null;
+  filteredCount: number | null;
+}
+
+/** Accuracy-vs-abstention: what the hit rate becomes when the system only
+ *  "calls" above each confidence level. Rates are withheld on small samples. */
+export interface SelectivityPoint {
+  minConfidence: number;
+  calls: number;
+  coveragePct: number;
+  correct: number;
+  hitRatePct: number | null;
+  hitRateLb95Pct: number | null;
+}
+
+export interface SelectivityReport {
+  version: string;
+  gradedTotal: number;
+  targetHitRatePct: number;
+  maxObservedConfidence: number | null;
+  curve: SelectivityPoint[];
+  targetMet: SelectivityPoint | null;
+  bestSupported: SelectivityPoint | null;
+  headline: string;
+  caveat: string;
 }
 
 export interface EvidenceCalibrator {
@@ -1341,6 +1372,8 @@ export interface EvidenceBundle {
   summary: EvidenceSummary;
   pipeline: PipelineHealth;
   predictions: PredictionLedger;
+  /** Optional so an older backend without the field degrades gracefully. */
+  selectivity?: SelectivityReport | null;
   calibrators: EvidenceCalibrator[];
   governance: EvidenceGovernance[];
   experiments: EvidenceExperiment[];

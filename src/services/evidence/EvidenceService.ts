@@ -28,6 +28,7 @@
  */
 
 import { AppDataSource } from "../../config/database";
+import { buildSelectivityReport, SelectivityReport } from "./selectivity";
 
 export const EVIDENCE_VERSION = "evidence-ledger-v1";
 
@@ -61,6 +62,14 @@ export interface PredictionLedgerRow {
   recommendationGiven: string | null;
 }
 
+/** Optional ledger filters. Filtering changes which ROWS are returned — never
+ *  the totals, which always come from the full table so a filtered view can't
+ *  shrink the denominator a reader judges the system by. */
+export interface PredictionFilter {
+  grade?: "WRONG" | "CORRECT" | "PENDING";
+  ticker?: string;
+}
+
 export interface PredictionLedger {
   rows: PredictionLedgerRow[];
   total: number;
@@ -73,6 +82,9 @@ export interface PredictionLedger {
   /** Mean |actual − expected| over graded rows, in percentage points. */
   meanAbsErrorPct: number | null;
   sampleWarning: string | null;
+  /** Echo of the applied filter + how many rows matched it (full-table count). */
+  filter: PredictionFilter | null;
+  filteredCount: number | null;
 }
 
 export interface CalibratorRow {
@@ -167,6 +179,8 @@ export interface EvidenceBundle {
   summary: EvidenceSummary;
   pipeline: PipelineHealth;
   predictions: PredictionLedger;
+  /** Accuracy-vs-abstention trade measured on the graded ledger. */
+  selectivity: SelectivityReport;
   calibrators: CalibratorRow[];
   governance: GovernanceRow[];
   experiments: ExperimentRow[];
@@ -203,15 +217,31 @@ export class EvidenceService {
    * reader who looks only at the top of the list sees the failures, not a
    * flattering sample. Within each grade, newest first.
    */
-  async predictions(limit = 200): Promise<PredictionLedger> {
+  async predictions(limit = 200, filter?: PredictionFilter): Promise<PredictionLedger> {
     const capped = Math.max(1, Math.min(1000, Math.floor(limit)));
 
+    // Filters are parameterized, never interpolated. grade maps onto the
+    // tri-state prediction_correct column; ticker matches with or without the
+    // exchange suffix so "HUDCO" finds "HUDCO.NS".
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter?.grade === "WRONG") where.push("prediction_correct IS FALSE");
+    else if (filter?.grade === "CORRECT") where.push("prediction_correct IS TRUE");
+    else if (filter?.grade === "PENDING") where.push("prediction_correct IS NULL");
+    if (filter?.ticker && filter.ticker.trim()) {
+      params.push(`${filter.ticker.trim().toUpperCase().replace(/\.NS$/, "")}%`);
+      where.push(`UPPER(ticker) LIKE $${params.length}`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    params.push(capped);
     const rows: Record<string, unknown>[] = await AppDataSource.query(
       `SELECT id, ticker, prediction_date, target_date, horizon_days, model_version,
               predicted_direction, predicted_probability, confidence,
               expected_return, actual_return, actual_direction, prediction_correct,
               outcome_date, recommendation_given
          FROM prediction_logs
+        ${whereSql}
         ORDER BY
           CASE
             WHEN prediction_correct IS FALSE THEN 0   -- wrong calls surface first
@@ -219,9 +249,21 @@ export class EvidenceService {
             ELSE 2                                     -- ungraded last, never dropped
           END,
           prediction_date DESC, created_at DESC
-        LIMIT $1`,
-      [capped]
+        LIMIT $${params.length}`,
+      params
     );
+
+    // Full-table count of rows matching the filter (page-independent).
+    const filteredCount = where.length
+      ? Number(
+          (
+            await AppDataSource.query(
+              `SELECT COUNT(*) AS n FROM prediction_logs ${whereSql}`,
+              params.slice(0, params.length - 1)
+            )
+          )[0]?.n ?? 0
+        )
+      : null;
 
     // Counts come from the FULL table, not the returned page: a limit must
     // never shrink the denominator a reader judges the system by.
@@ -287,7 +329,27 @@ export class EvidenceService {
         : `Only ${graded} of ${total} predictions have matured. A hit rate needs at least ` +
           `${MIN_GRADED_FOR_RATE} graded outcomes before it means anything, so none is shown. ` +
           `The individual results below are real; the aggregate is not yet evidence.`,
+      filter: filter && (filter.grade || filter.ticker) ? filter : null,
+      filteredCount,
     };
+  }
+
+  /**
+   * Accuracy-vs-selectivity over the graded ledger: what hit rate the system
+   * would have IF it only spoke above each confidence threshold. This is the
+   * honest form of "make it more accurate" — abstention is the only lever that
+   * raises accuracy without lying, and this measures exactly what it buys.
+   */
+  async selectivity(): Promise<SelectivityReport> {
+    const rows: Array<{ probability: string; correct: boolean; horizon_days: number | null }> =
+      await AppDataSource.query(
+        `SELECT predicted_probability AS probability, prediction_correct AS correct, horizon_days
+           FROM prediction_logs
+          WHERE prediction_correct IS NOT NULL AND predicted_probability IS NOT NULL`
+      );
+    return buildSelectivityReport(
+      rows.map((r) => ({ probability: Number(r.probability), correct: r.correct === true, horizonDays: r.horizon_days }))
+    );
   }
 
   /**
@@ -450,8 +512,9 @@ export class EvidenceService {
 
   /** Everything the tab needs, in one round trip. */
   async bundle(predictionLimit = 200): Promise<EvidenceBundle> {
-    const [predictions, calibrators, governance, experiments, pipeline] = await Promise.all([
+    const [predictions, selectivity, calibrators, governance, experiments, pipeline] = await Promise.all([
       this.predictions(predictionLimit),
+      this.selectivity(),
       this.calibrators(),
       this.governance(),
       this.experiments(),
@@ -479,6 +542,7 @@ export class EvidenceService {
       },
       pipeline,
       predictions,
+      selectivity,
       calibrators,
       governance,
       experiments,

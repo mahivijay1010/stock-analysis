@@ -35,6 +35,7 @@ import type {
   IntradaySnapshot,
   LiveDetail,
   EvidenceBundle,
+  PredictionLedger,
   JournalBundle,
   UpstoxAuthStatus,
 } from './types';
@@ -738,6 +739,16 @@ export function getLiveDetail(ticker: string): Promise<LiveDetail> {
  */
 export function getEvidence(limit = 200): Promise<EvidenceBundle> {
   return get<EvidenceBundle>(`/api/evidence?limit=${limit}`);
+}
+
+/** Filtered ledger page: grade (WRONG/CORRECT/PENDING) and/or ticker prefix.
+ *  Totals in the response always stay whole-table — a filter narrows the rows,
+ *  never the denominator. */
+export function getEvidencePredictions(params: { limit?: number; grade?: 'WRONG' | 'CORRECT' | 'PENDING'; ticker?: string }): Promise<PredictionLedger> {
+  const q = new URLSearchParams({ limit: String(params.limit ?? 200) });
+  if (params.grade) q.set('grade', params.grade);
+  if (params.ticker) q.set('ticker', params.ticker);
+  return get<PredictionLedger>(`/api/evidence/predictions?${q.toString()}`);
 }
 
 /** The learning journal: pre-registered expectations and the lessons drawn. */

@@ -92,7 +92,8 @@ export const createStockRoutes = (): Router => {
   // that argues against the system's own output must be as reachable as the
   // recommendations are.
   router.get("/evidence", evidenceController.bundle); //                    GET  /api/evidence?limit=200
-  router.get("/evidence/predictions", evidenceController.predictions); //   GET  /api/evidence/predictions?limit=
+  router.get("/evidence/predictions", evidenceController.predictions); //   GET  /api/evidence/predictions?limit=&grade=WRONG|CORRECT|PENDING&ticker=
+  router.get("/evidence/selectivity", evidenceController.selectivity); //   GET  /api/evidence/selectivity — accuracy vs abstention
   router.get("/evidence/calibrators", evidenceController.calibrators); //   GET  /api/evidence/calibrators
   router.get("/evidence/governance", evidenceController.governance); //     GET  /api/evidence/governance
   router.get("/evidence/experiments", evidenceController.experiments); //   GET  /api/evidence/experiments

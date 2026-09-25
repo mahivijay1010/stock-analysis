@@ -34,7 +34,22 @@ export class EvidenceController {
 
   predictions = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      ok(res, await evidenceService.predictions(limitOf(req, 200)));
+      // Optional filters: ?grade=WRONG|CORRECT|PENDING and ?ticker=HUDCO.
+      // An unknown grade value is ignored (unfiltered), never an error.
+      const gradeRaw = String(req.query.grade ?? "").toUpperCase();
+      const grade = gradeRaw === "WRONG" || gradeRaw === "CORRECT" || gradeRaw === "PENDING" ? gradeRaw : undefined;
+      const tickerRaw = String(req.query.ticker ?? "").trim();
+      const ticker = tickerRaw.length > 0 ? tickerRaw.slice(0, 30) : undefined;
+      ok(res, await evidenceService.predictions(limitOf(req, 200), { grade, ticker }));
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/evidence/selectivity — accuracy vs abstention, measured. */
+  selectivity = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      ok(res, await evidenceService.selectivity());
     } catch (err) {
       next(err);
     }
