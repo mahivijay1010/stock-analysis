@@ -35,8 +35,10 @@ export class ReasoningService {
   /** Latest stored review for a ticker, or null. */
   async latestReview(ticker: string): Promise<AiReview | null> {
     const t = this.normalize(ticker);
+    // Committee reviews only: ai_reviews also holds role-analyst and short-term
+    // rows, which have a different response shape (CommitteeCard crashed on one).
     return AppDataSource.getRepository(AiReview).findOne({
-      where: { ticker: t },
+      where: { ticker: t, role: "risk_committee" },
       order: { createdAt: "DESC" },
     });
   }

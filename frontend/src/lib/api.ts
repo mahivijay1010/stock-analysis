@@ -766,3 +766,101 @@ export function getJournal(limit = 200): Promise<JournalBundle> {
 export function getUpstoxAuthStatus(): Promise<UpstoxAuthStatus> {
   return get<UpstoxAuthStatus>('/api/auth/upstox/status');
 }
+
+/* ------------------------------------------------------------------ */
+/* Wide-universe sub-₹100 screen (descriptive — tradeability, no direction) */
+/* ------------------------------------------------------------------ */
+
+export interface WideFact {
+  sentiment?: string | null;
+  materiality?: string | null;
+  kind: string;
+  fact: string;
+  sourceKind: string;
+  sourceUrl: string | null;
+  observedAt: string;
+  confidence: string;
+}
+
+export interface WideStock {
+  symbol: string;
+  companyName: string | null;
+  industry: string | null;
+  indices: string[];
+  listingDate: string | null;
+  asOf: string;
+  price: number;
+  medianTurnoverLacs20: number | null;
+  medianTrades20: number | null;
+  avgDelivPct60: number | null;
+  delivTrendPp: number | null;
+  ret20Pct: number | null;
+  ret60Pct: number | null;
+  ret250Pct: number | null;
+  vol60AnnPct: number | null;
+  maxDrawdown1yPct: number | null;
+  pctFrom1yHigh: number | null;
+  corporateActionSuspect: boolean;
+  passed: boolean;
+  exclusions: string[];
+  rank: { liquidity: number; stability: number; score: number } | null;
+  facts: WideFact[];
+  flags: string[];
+}
+
+export interface WideScreenReport {
+  screen: {
+    version: string;
+    asOf: string;
+    rules: { maxPrice: number; minPrice: number; minSessions: number; minMedianTurnoverLacs: number; minMedianTrades: number };
+    universeSize: number;
+    under100: number;
+    passed: number;
+    caveat: string;
+  };
+  generatedAt: string;
+  evidenceStatus: string;
+  stocks: WideStock[];
+  excludedSummary: Record<string, number>;
+  knowledgeCoverage: { withFacts: number; total: number };
+}
+
+/** GET /api/short-term/wide-screen — every NSE company under ₹100 through the tradeability screen. */
+export function getWideScreen(): Promise<WideScreenReport> {
+  return get<WideScreenReport>('/api/short-term/wide-screen');
+}
+
+export interface WideReferenceLevels {
+  close: number;
+  support20: number;
+  resistance20: number;
+  low52w: number;
+  high52w: number;
+  atr14: number;
+  atrPct: number;
+  volatilityStop: number;
+  asOf: string;
+}
+
+export interface WideScanRow {
+  symbol: string;
+  ticker: string;
+  evaluation: StCandidate | null;
+  reference: WideReferenceLevels | null;
+  decision: { newBuyer: 'BUY' | 'WAIT' | 'WATCH' | 'NO TRADE'; holder: 'HOLD' | 'EXIT' | 'TRAIL' | 'TAKE PARTIAL'; why: string };
+}
+
+export interface WideScanResult {
+  scanRunId: string;
+  marketSession: string;
+  evaluated: number;
+  qualifiedCount: number;
+  riskManager: { newEntriesAllowed: boolean; reasons: string[] };
+  rows: WideScanRow[];
+  note: string;
+}
+
+/** POST /api/short-term/wide-scan — the radar's full pipeline over the sub-₹100 wide screen. */
+export function runWideScan(params: StScanParams): Promise<WideScanResult> {
+  return post<WideScanResult>('/api/short-term/wide-scan', params);
+}

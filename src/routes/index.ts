@@ -98,6 +98,7 @@ export const createStockRoutes = (): Router => {
   router.get("/evidence/calibrators", evidenceController.calibrators); //   GET  /api/evidence/calibrators
   router.get("/evidence/governance", evidenceController.governance); //     GET  /api/evidence/governance
   router.get("/evidence/experiments", evidenceController.experiments); //   GET  /api/evidence/experiments
+  router.get("/evidence/baselines", evidenceController.baselines); //      GET  /api/evidence/baselines — model vs constant guess + stock-picking
   router.get("/evidence/lane-c", evidenceController.laneC); //              GET  /api/evidence/lane-c — TradeGate graded outcomes
 
   // ── Trade economics: the DETERMINISTIC arithmetic around a trade ──────────
@@ -189,6 +190,9 @@ export const createStockRoutes = (): Router => {
   router.get("/short-term/latest", shortTermController.latest); //                      GET  /api/short-term/latest
   router.get("/short-term/alerts", shortTermController.alerts); //                      GET  /api/short-term/alerts
   router.get("/short-term/model-lab", shortTermController.modelLab); //                 GET  /api/short-term/model-lab
+  router.get("/short-term/wide-screen", shortTermController.wideScreen); //           GET  /api/short-term/wide-screen — all NSE companies < ₹100, tradeability screen
+  router.get("/short-term/wide-screen/report.md", shortTermController.wideScreenMarkdown);
+  router.post("/short-term/wide-scan", requireAuth, shortTermController.wideScan); //               POST /api/short-term/wide-scan — entry/exit/action for every wide-screen stock
   router.get("/short-term/ai-usage", shortTermController.aiUsage); //                   GET  /api/short-term/ai-usage
   router.get("/short-term/preferences", requireAuth, shortTermController.getPreferences); // GET /api/short-term/preferences
   router.put("/short-term/preferences", requireAuth, shortTermController.putPreferences); // PUT /api/short-term/preferences

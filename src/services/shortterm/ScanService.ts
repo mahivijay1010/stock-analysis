@@ -21,7 +21,7 @@ import {
   ShortTermShadowPrediction,
   ShortTermTransition,
 } from "../../entities";
-import { NSE_UNIVERSE } from "../../data/nseUniverse";
+import { NSE_UNIVERSE, UniverseStock } from "../../data/nseUniverse";
 import { marketDataService } from "../market/MarketDataService";
 import { analysisCloses } from "../market/canonical";
 import { buildSectorIndex } from "../research/excessReturns";
@@ -103,8 +103,26 @@ function stateForAction(a: ShortTermActionV2): CandidateState {
   }
 }
 
+/**
+ * Options for scanning a universe other than NSE_UNIVERSE (e.g. the wide
+ * sub-₹100 screen). The pipeline — setups, plan, EV, sizing, gates, action
+ * state — is identical; only the stock list differs.
+ *  - persistAll: store EVERY evaluated stock (not just "interesting" ones) so
+ *    each one has a detail page.
+ *  - shadow: false keeps these stocks OUT of short_term_shadow_predictions,
+ *    which feeds the radar's live-authority evidence — a different universe
+ *    must not silently change the 152-stock radar's track record.
+ */
+export interface ScanUniverseOptions {
+  universe?: UniverseStock[];
+  label?: string;
+  persistAll?: boolean;
+  shadow?: boolean;
+  returnAll?: boolean;
+}
+
 export class ShortTermScanService {
-  async scan(paramsIn: Partial<ScanParams>): Promise<{
+  async scan(paramsIn: Partial<ScanParams>, opts: ScanUniverseOptions = {}): Promise<{
     scanRunId: string;
     params: ScanParams;
     marketStatus: Awaited<ReturnType<typeof liveMarketDataProvider.getMarketStatus>>;
@@ -116,8 +134,14 @@ export class ShortTermScanService {
     qualifiedCount: number;
     watchlistCount: number;
     emptyMessage: string | null;
+    /** Every evaluated stock, when opts.returnAll. */
+    all?: ShortTermCandidateView[];
+    universeLabel: string;
   }> {
-    const params: ScanParams = { ...DEFAULT_SCAN_PARAMS, ...paramsIn };
+    // Omitted fields arrive as `undefined` from parseParams; spreading them would
+    // overwrite the defaults (strategy: undefined crashed the strategy filter).
+    const given = Object.fromEntries(Object.entries(paramsIn).filter(([, v]) => v !== undefined)) as Partial<ScanParams>;
+    const params: ScanParams = { ...DEFAULT_SCAN_PARAMS, ...given };
     const marketStatus = await liveMarketDataProvider.getMarketStatus();
     const health = await modelHealthService.assess("quant-v1").catch(() => null);
 
@@ -171,7 +195,8 @@ export class ShortTermScanService {
     });
 
     // ── STAGE 0: deterministic scan over the filtered universe ──────────────
-    const universe = NSE_UNIVERSE.filter((u) => (params.sector ? u.sector === params.sector : true));
+    const universe = (opts.universe ?? NSE_UNIVERSE).filter((u) => (params.sector ? u.sector === params.sector : true));
+    const universeLabel = opts.label ?? "NSE_UNIVERSE";
     const nifty = await marketDataService.getNiftyBars("1y");
     const niftyCloses = new Map(nifty.map((b) => [b.date, b.close]));
     // P0 #4 — real regime inputs (fetched once): VIX level + 1y percentile.
@@ -507,7 +532,7 @@ export class ShortTermScanService {
         dataProvider: liveMarketDataProvider.name,
         dataFreshness: shown[0]?.freshness.state ?? "DELAYED",
         dataTimestamp: new Date(),
-        diagnostics: { scanned: views.length, riskManager: riskManager as unknown as Record<string, unknown> },
+        diagnostics: { scanned: views.length, universe: universeLabel, shadow: opts.shadow !== false, riskManager: riskManager as unknown as Record<string, unknown> },
       })
     );
 
@@ -516,7 +541,7 @@ export class ShortTermScanService {
     const alertRepo = AppDataSource.getRepository(ShortTermAlert);
     const shadowRepo = AppDataSource.getRepository(ShortTermShadowPrediction);
 
-    const interesting = interestingViews;
+    const interesting = opts.persistAll ? views : interestingViews;
     for (const v of interesting) {
       // Previous state for transition tracking.
       const prev = await candRepo
@@ -566,7 +591,7 @@ export class ShortTermScanService {
         })
       );
       // Shadow prediction for every PASSING candidate (S9) — one per anchor.
-      if (v.gates.passed) {
+      if (v.gates.passed && opts.shadow !== false) {
         await shadowRepo
           .createQueryBuilder()
           .insert()
@@ -597,6 +622,8 @@ export class ShortTermScanService {
       passedGates: passedGatesCount,
       qualifiedCount: qualified.length,
       watchlistCount: watchlist.length,
+      all: opts.returnAll ? views : undefined,
+      universeLabel,
       emptyMessage:
         shown.length === 0
           ? "No statistically attractive short-term setups currently pass the risk and evidence gates. Interesting setups are on the Research Watchlist below."

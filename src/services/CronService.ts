@@ -211,6 +211,42 @@ export class CronService {
         expression: "0 16 * * *",
         run: () => this.nightlyIntradayCalibration(),
       },
+      {
+        // Daily-horizon learning loop (research/dailyChallengerRun.ts): score
+        // the ACTIVE direction policy per horizon against fixed challengers on
+        // PROSPECTIVE rows (prediction_date ≥ 2026-10-01) and promote only under
+        // the pre-registered rule. After the 18:30 grading so it sees today's
+        // matured outcomes. Weekdays only.
+        name: "nightly-daily-challenger",
+        expression: "15 19 * * *",
+        run: () => this.nightlyDailyChallenger(),
+      },
+      {
+        // Pre-registered stock-selection study (docs/stock-selection-preregistration.md):
+        // re-scores the frozen signals so new PROSPECTIVE formation dates accrue.
+        // Sealed-year verdicts cannot change (bars are not revised). Weekdays.
+        name: "nightly-selection-study",
+        expression: "30 19 * * *",
+        run: () => this.nightlySelectionStudy(),
+      },
+      {
+        // NSE publishes the day's bhavcopy-with-delivery after ~18:30 IST. Top up
+        // nse_delivery, refresh the surveillance lists, then write the sub-₹100
+        // wide-universe report to docs/reports/. Weekdays only.
+        name: "nightly-wide-screen",
+        expression: "50 19 * * *",
+        run: () => this.nightlyWideScreen(),
+      },
+      {
+        // Daily learning from the web (Firecrawl → DeepSeek → validated, dated
+        // facts in stock_knowledge), then the pre-registered news-signal study
+        // (docs/news-signal-preregistration.md) re-scored on matured calls.
+        // Credit-budgeted: FIRECRAWL_DAILY_SEARCHES (default 15), stops below
+        // FIRECRAWL_CREDIT_RESERVE (default 100). Weekdays only.
+        name: "nightly-web-knowledge",
+        expression: "10 20 * * *",
+        run: () => this.nightlyWebKnowledge(),
+      },
     ];
 
     for (const job of jobs) {
@@ -237,6 +273,10 @@ export class CronService {
     "evening-verify-predictions",
     "evening-resolve-shadow-outcomes",
     "nightly-intraday-calibration",
+    "nightly-daily-challenger",
+    "nightly-selection-study",
+    "nightly-wide-screen",
+    "nightly-web-knowledge",
   ]);
   private static readonly WEEKLY_JOBS: Record<string, number> = {
     "weekly-official-filings-refresh": 6,
@@ -303,6 +343,54 @@ export class CronService {
     for (const h of r.perHorizon) {
       console.log(`🧪 [CRON]   ${h.horizonMin}m n=${h.nTotal} incumbent hold-out ${h.incumbentHoldoutHitPct?.toFixed(2) ?? "n/a"}% — ${h.decision.reason}`);
     }
+  }
+
+  /** 19:15 IST weekdays — see dailyChallengerRun.ts for the pre-registered rule. */
+  private async nightlyDailyChallenger(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
+    const { runDailyChallenger } = await import("./research/dailyChallengerRun");
+    const r = await runDailyChallenger();
+    console.log(`🧪 [CRON] daily challenger: ${r.note}`);
+  }
+
+  /** 19:30 IST weekdays — see selectionStudy.ts. */
+  private async nightlySelectionStudy(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
+    const { runSelectionStudy } = await import("./research/selectionStudy");
+    const r = await runSelectionStudy();
+    console.log(`🧪 [CRON] selection study: ${r.headline}`);
+  }
+
+  /** 19:50 IST weekdays — delivery top-up, surveillance refresh, sub-₹100 report. */
+  private async nightlyWideScreen(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
+    const { backfill } = await import("../scripts/backfillNseDelivery");
+    const { refreshMaster, refreshEtfTags, refreshSurveillance } = await import("../scripts/refreshWideUniverse");
+    const { buildWideScreenReport, renderMarkdown } = await import("./shortterm/wideScreenReport");
+    const { writeFileSync, mkdirSync } = await import("fs");
+    const from = new Date(Date.now() - 10 * 86_400_000).toISOString().slice(0, 10);
+    const d = await backfill(from);
+    const today = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+    await refreshMaster();
+    await refreshEtfTags();
+    const s = await refreshSurveillance(today);
+    const rep = await buildWideScreenReport();
+    mkdirSync("docs/reports", { recursive: true });
+    writeFileSync(`docs/reports/sub100-wide-screen-${rep.screen.asOf}.md`, renderMarkdown(rep));
+    writeFileSync(`docs/reports/sub100-wide-screen-${rep.screen.asOf}.json`, JSON.stringify(rep));
+    console.log(`📋 [CRON] wide screen ${rep.screen.asOf}: delivery +${d.loaded} sessions, ASM ${s.asm} GSM ${s.gsm}, ${rep.screen.under100} under ₹100, ${rep.stocks.length} pass`);
+  }
+
+  /** 20:10 IST weekdays — web knowledge gathering, then the news-signal study. */
+  private async nightlyWebKnowledge(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
+    const { runWebKnowledge } = await import("./knowledge/webKnowledgeJob");
+    const { runNewsSignalStudy } = await import("./research/newsSignalStudy");
+    const k = await runWebKnowledge();
+    console.log(`🌐 [CRON] web knowledge ${k.date}: ${k.skippedReason ?? `${k.searched} searched, ${k.factsAdded} facts added, ${k.rejected} rejected, ${k.failures.length} failed`}; credits ${k.creditsBefore} → ${k.creditsAfter}`);
+    const s = await runNewsSignalStudy();
+    console.log(`🧪 [CRON] news-signal study: ${s.why}`);
+    if (k.failures.length && k.searched === 0) throw new Error(`web knowledge failed: ${k.failures.slice(0, 3).join(" | ")}`);
   }
 
   stopAll(): void {

@@ -22,6 +22,11 @@ const PRICES: Record<string, { in: number; out: number }> = {
   "gpt-5.6-luna": { in: Number(process.env.AI_PRICE_LUNA_IN ?? 0.1), out: Number(process.env.AI_PRICE_LUNA_OUT ?? 0.4) },
   "gpt-5.6-terra": { in: Number(process.env.AI_PRICE_TERRA_IN ?? 1.25), out: Number(process.env.AI_PRICE_TERRA_OUT ?? 5) },
   "gpt-5.6-sol": { in: Number(process.env.AI_PRICE_SOL_IN ?? 5), out: Number(process.env.AI_PRICE_SOL_OUT ?? 20) },
+  // DeepSeek: prices NOT verified (no pricing endpoint). Defaults are deliberately the
+  // OpenAI tier prices they replace, so the budget over- rather than under-counts.
+  // Set AI_PRICE_DEEPSEEK_* from the DeepSeek pricing page to make the meter exact.
+  "deepseek-flash": { in: Number(process.env.AI_PRICE_DEEPSEEK_FLASH_IN ?? 1.25), out: Number(process.env.AI_PRICE_DEEPSEEK_FLASH_OUT ?? 5) },
+  "deepseek-v4-pro": { in: Number(process.env.AI_PRICE_DEEPSEEK_PRO_IN ?? 5), out: Number(process.env.AI_PRICE_DEEPSEEK_PRO_OUT ?? 20) },
 };
 
 export interface AiUsageReport {
@@ -36,7 +41,8 @@ export interface AiUsageReport {
 
 export class AiCostGovernor {
   private tier(model: string): "LUNA" | "TERRA" | "SOL" | "OTHER" {
-    if (model.includes("luna")) return "LUNA";
+    if (model.includes("luna") || model.includes("deepseek-flash")) return "LUNA";
+    if (model.includes("deepseek-v4-pro")) return "SOL";
     if (model.includes("terra")) return "TERRA";
     if (model.includes("sol")) return "SOL";
     return "OTHER";
@@ -55,7 +61,7 @@ export class AiCostGovernor {
         `SELECT model_name, SUM(tokens_in)::text AS tin, SUM(tokens_out)::text AS tout,
                 CASE WHEN created_at >= date_trunc('day', now()) THEN 'today' ELSE 'month' END AS day
            FROM ai_reviews
-          WHERE provider = 'openai' AND created_at >= date_trunc('month', now())
+          WHERE provider IN ('openai','deepseek') AND created_at >= date_trunc('month', now())
           GROUP BY model_name, day`
       ).catch(() => []);
     let todayUsd = 0;
@@ -67,7 +73,7 @@ export class AiCostGovernor {
     }
     const callRows: Array<{ model_name: string; n: string }> = await AppDataSource.query(
       `SELECT model_name, COUNT(*)::text AS n FROM ai_reviews
-        WHERE provider = 'openai' AND created_at >= date_trunc('day', now()) GROUP BY model_name`
+        WHERE provider IN ('openai','deepseek') AND created_at >= date_trunc('day', now()) GROUP BY model_name`
     ).catch(() => []);
     const calls: Record<string, number> = { LOCAL: 0, LUNA: 0, TERRA: 0, SOL: 0 };
     for (const r of callRows) calls[this.tier(r.model_name)] = (calls[this.tier(r.model_name)] ?? 0) + Number(r.n);
@@ -260,7 +266,7 @@ export class ShortTermTradeAnalyst {
         state = ceiling;
         clamped = true;
       }
-      const review: ShortTermAiReview = { ...data, state, provider: "openai", model: meta.modelSnapshot ?? model, clamped, clampNote };
+      const review: ShortTermAiReview = { ...data, state, provider: provider.name, model: meta.modelSnapshot ?? model, clamped, clampNote };
 
       const repo = AppDataSource.getRepository(AiReview);
       await repo.save(
@@ -269,7 +275,7 @@ export class ShortTermTradeAnalyst {
           role: "short_term_analyst",
           promptVersion: "st-analyst-v1",
           modelName: meta.modelSnapshot ?? model,
-          provider: "openai",
+          provider: provider.name,
           inputHash,
           requestContext: { depth: opts.depth, question: opts.question ?? null },
           response: review as unknown as Record<string, unknown>,

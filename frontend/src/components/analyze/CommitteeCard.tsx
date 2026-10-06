@@ -40,7 +40,16 @@ export function CommitteeCard({ ticker }: { ticker: string }) {
   });
 
   if (q.isPending || q.isError) return null; // committee absence never blocks the page
-  const data = q.data!;
+  // Only a risk-committee review belongs here. The latest-review endpoint used
+  // to return the newest ai_reviews row of ANY role (e.g. a short-term analyst
+  // review, which has no newEntryAction / missingCriticalEvidence) and the card
+  // crashed reading it — treat anything that is not a committee review as none.
+  const raw = q.data!;
+  const isCommittee =
+    !!raw.review &&
+    (raw.review.role == null || raw.review.role === 'risk_committee') &&
+    typeof raw.review.response?.newEntryAction === 'string';
+  const data = isCommittee ? raw : { ...raw, review: null };
 
   if (!data.available && !data.review) {
     return (
@@ -102,9 +111,9 @@ export function CommitteeCard({ ticker }: { ticker: string }) {
               <span className="text-slate-600">Model disagreement:</span> {r.response.modelDisagreement}
             </p>
           )}
-          {r.response.missingCriticalEvidence.length > 0 && (
+          {(r.response.missingCriticalEvidence ?? []).length > 0 && (
             <p className="text-xs leading-relaxed text-slate-500">
-              <span className="text-slate-600">Missing evidence:</span> {r.response.missingCriticalEvidence.join('; ')}
+              <span className="text-slate-600">Missing evidence:</span> {(r.response.missingCriticalEvidence ?? []).join('; ')}
             </p>
           )}
           <p className="text-[10px] text-slate-600">

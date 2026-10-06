@@ -84,6 +84,15 @@ export class EvidenceController {
   };
 
   /** GET /api/evidence/lane-c — TradeGate's own graded track record. */
+  baselines = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { baselineReport } = await import("../services/evidence/baselineScoreboard");
+      ok(res, await baselineReport());
+    } catch (err) {
+      next(err);
+    }
+  };
+
   laneC = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       ok(res, await decisionOutcomeService.laneCReport());

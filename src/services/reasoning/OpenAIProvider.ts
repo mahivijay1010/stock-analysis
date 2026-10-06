@@ -54,7 +54,7 @@ const MAX_OUTPUT_TOKENS = 3000;
 
 /** Audit metadata attached to every structured call (Part 1 storage contract). */
 export interface AiCallMeta {
-  provider: "openai";
+  provider: "openai" | "deepseek";
   model: string;
   modelSnapshot: string | null;
   promptVersion: string;
@@ -101,7 +101,7 @@ const SHARED_DISCIPLINE = `Non-negotiable discipline:
 - Cite evidence by the ids provided in the input where the schema asks for citedEvidenceIds.`;
 
 export class OpenAIProvider implements InvestmentReasoningProvider {
-  readonly name = "openai";
+  readonly name: string = "openai";
   private client: OpenAI | null = null;
 
   private get apiKey(): string {

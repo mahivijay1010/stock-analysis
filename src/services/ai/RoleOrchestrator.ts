@@ -85,7 +85,7 @@ export class RoleOrchestrator {
         role,
         promptVersion: meta?.promptVersion ?? ROLE_PROMPT_VERSION,
         modelName: meta?.modelSnapshot ?? meta?.model ?? "unknown",
-        provider: "openai",
+        provider: meta?.provider ?? "openai",
         inputHash: cacheHash,
         requestContext: context,
         response: (validationError ? { rejected: true } : (response as Record<string, unknown>)) ?? {},

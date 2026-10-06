@@ -16,6 +16,8 @@ import type {
   PredictionLedgerRow,
   SelectivityReport,
   LaneCReport,
+  BaselineReport,
+  SelectionReport,
 } from '@/lib/types';
 
 /**
@@ -219,6 +221,7 @@ function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
   const graded = p.rows.filter((r) => r.grade !== 'PENDING');
   const pending = p.rows.filter((r) => r.grade === 'PENDING');
   const b = bundle.predictions; // whole-table counts for the chip labels
+  const lostToConstant = (bundle.baselines?.horizons ?? []).some((h) => h.edgeVsBestConstantPp != null && h.edgeVsBestConstantPp <= 0);
 
   return (
     <div className="space-y-4">
@@ -230,7 +233,17 @@ function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          <Stat label="Hit rate" value={`${b.hitRatePct}%`} tone={(b.hitRatePct ?? 0) < 55 ? 'warn' : 'good'} sub={`over ${b.graded} matured predictions`} />
+          <Stat
+            label="Hit rate"
+            value={`${b.hitRatePct}%`}
+            // A hit rate a constant guess beat is not "good", however high it looks.
+            tone={(b.hitRatePct ?? 0) < 55 || lostToConstant ? 'warn' : 'good'}
+            sub={
+              lostToConstant
+                ? `over ${b.graded} matured predictions — but a constant guess did better (see below)`
+                : `over ${b.graded} matured predictions`
+            }
+          />
           <Stat
             label="Mean absolute error"
             value={b.meanAbsErrorPct != null ? `${b.meanAbsErrorPct}pp` : '—'}
@@ -239,6 +252,10 @@ function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
           />
         </div>
       )}
+
+      {bundle.baselines && <BaselineCard report={bundle.baselines} />}
+
+      {bundle.selection && <SelectionCard report={bundle.selection} />}
 
       {bundle.selectivity && <SelectivityCard report={bundle.selectivity} />}
 
@@ -381,6 +398,170 @@ function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
  * renders the measured trade, including the case where the model never emits
  * high confidence at all — which is a fact about the model, shown, not hidden.
  */
+/**
+ * The daily model beside the constants that score on the same rows. Raw hit
+ * rate rewards riding the tape (always-DOWN beat quant-v1 at every horizon in
+ * Sep 2026), so this card leads with the regime-proof numbers: edge over the
+ * best constant, and stock-picking hit rate against the day's median stock.
+ */
+function BaselineCard({ report: r }: { report: BaselineReport }) {
+  const [open, setOpen] = useState(true);
+  const f = (x: number | null | undefined, d = 1) => (x == null ? '—' : `${x.toFixed(d)}%`);
+  const pp = (x: number | null | undefined) => (x == null ? '—' : `${x > 0 ? '+' : ''}${x.toFixed(1)} pp`);
+  const policyOf = (h: number) => r.policies.find((p) => p.horizonDays === h);
+  return (
+    <section className="rounded-xl border border-amber-400/20 bg-amber-400/[0.03] p-4">
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-start justify-between gap-3 text-left">
+        <div className="flex gap-3">
+          <Scale className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+          <div>
+            <p className="font-medium text-slate-200">Does it beat a constant guess? — skill, not regime</p>
+            <p className="mt-0.5 text-xs text-slate-400">{r.headline}</p>
+          </div>
+        </div>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="mt-3 border-t border-white/10 pt-3">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-[11px] uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-2 py-1.5 text-left">Horizon</th>
+                  <th className="px-2 py-1.5 text-right">Model</th>
+                  <th className="px-2 py-1.5 text-right">Always-UP</th>
+                  <th className="px-2 py-1.5 text-right">Always-DOWN</th>
+                  <th className="px-2 py-1.5 text-right">vs best constant</th>
+                  <th className="px-2 py-1.5 text-right">Stock-picking</th>
+                  <th className="px-2 py-1.5 text-right">Days</th>
+                  <th className="px-2 py-1.5 text-left">Active policy</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {r.horizons.map((h) => {
+                  const edge = h.edgeVsBestConstantPp;
+                  const xs = h.model.crossSectionalHitPct;
+                  return (
+                    <tr key={h.horizonDays}>
+                      <td className="px-2 py-1.5 tabular-nums text-slate-300">{h.horizonDays}d</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-slate-300">{f(h.model.hitRatePct)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{f(h.baselines.alwaysUpPct)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{f(h.baselines.alwaysDownPct)}</td>
+                      <td className={`px-2 py-1.5 text-right tabular-nums ${edge == null ? 'text-slate-600' : edge > 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{pp(edge)}</td>
+                      <td className={`px-2 py-1.5 text-right tabular-nums ${xs == null ? 'text-slate-600' : xs > 50 ? 'text-emerald-300' : 'text-rose-300'}`}>{f(xs)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{h.model.days}</td>
+                      <td className="px-2 py-1.5 text-slate-400">{policyOf(h.horizonDays)?.policy ?? '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <ul className="mt-3 space-y-1 text-xs text-slate-400">
+            {r.horizons.map((h) => (
+              <li key={h.horizonDays}>{h.verdict}</li>
+            ))}
+          </ul>
+          <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.02] p-3 text-xs text-slate-400">
+            <p className="font-medium text-slate-300">Nightly challenger (pre-registered {r.challenger.preregisteredOn})</p>
+            <p className="mt-1">
+              A policy changes only on predictions made on/after {r.challenger.preregisteredOn}: ≥{r.challenger.rule.minCalls} calls over ≥
+              {r.challenger.rule.minDays} days, stock-picking &gt; {r.challenger.rule.minCrossSectionalPct}% and ≥{r.challenger.rule.minCrossSectionalLiftPp} pp
+              over the active policy, and beating the no-hindsight constant.
+            </p>
+            <p className="mt-1 text-slate-500">
+              {r.challenger.lastRunAt ? `Last run ${new Date(r.challenger.lastRunAt).toLocaleString()}: ${r.challenger.lastDecision ?? ''}` : 'Not run yet.'}
+            </p>
+          </div>
+          <p className="mt-2 text-[11px] text-slate-600">{r.definition}</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Pre-registered stock-selection signals, judged only on ranking stocks within
+ * a day. A signal unlocks a "confident" tier only if it passes on the sealed
+ * year; until then the system has no basis for a confident call.
+ */
+function SelectionCard({ report: r }: { report: SelectionReport }) {
+  const [open, setOpen] = useState(false);
+  const f = (x: number | null | undefined, d = 1) => (x == null ? '—' : x.toFixed(d));
+  return (
+    <section className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-start justify-between gap-3 text-left">
+        <div className="flex gap-3">
+          <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-violet-300" />
+          <div>
+            <p className="font-medium text-slate-200">Stock-selection signals — pre-registered, sealed-year test</p>
+            <p className="mt-0.5 text-xs text-slate-400">{r.headline}</p>
+          </div>
+        </div>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="mt-3 border-t border-white/10 pt-3">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-[11px] uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-2 py-1.5 text-left">Signal</th>
+                  <th className="px-2 py-1.5 text-right">Horizon</th>
+                  <th className="px-2 py-1.5 text-right">Sealed IC (t)</th>
+                  <th className="px-2 py-1.5 text-right">Stock-picking</th>
+                  <th className="px-2 py-1.5 text-right">Spread</th>
+                  <th className="px-2 py-1.5 text-right">Dev IC (t)</th>
+                  <th className="px-2 py-1.5 text-right">Prospective dates</th>
+                  <th className="px-2 py-1.5 text-left">Verdict</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {r.results.map((s) => (
+                  <tr key={s.key}>
+                    <td className="px-2 py-1.5 text-slate-300" title={s.describe}>{s.key}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-400">{s.horizon}d</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-300">
+                      {f(s.sealed.meanIc, 3)} ({f(s.sealed.icT, 2)})
+                    </td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums ${(s.sealed.crossSectionalHitPct ?? 0) > 50 ? 'text-slate-300' : 'text-rose-300'}`}>
+                      {f(s.sealed.crossSectionalHitPct)}%
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-400">{f(s.sealed.meanSpreadPct, 2)}%</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
+                      {f(s.development.meanIc, 3)} ({f(s.development.icT, 2)})
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{s.prospective.nonOverlappingDates}</td>
+                    <td className="px-2 py-1.5">
+                      <span className={s.pass ? 'text-emerald-300' : 'text-rose-300'}>{s.pass ? 'PASS' : 'FAIL'}</span>
+                      {s.confidentTier && <span className="ml-1 text-slate-400">· confident tier: {s.confidentTier}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ul className="mt-3 space-y-1 text-xs text-slate-400">
+            {r.results.map((s) => (
+              <li key={s.key}>
+                <span className="text-slate-300">{s.key}:</span> {s.why}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px] text-slate-600">
+            Pass needs, on the sealed year {r.periods.sealedFrom} → {r.periods.sealedTo}: ≥{r.rule.minNonOverlappingDates} non-overlapping dates, IC t ≥{' '}
+            {r.rule.minIcT}, stock-picking &gt; {r.rule.minCrossSectionalHitPct}%, and a positive development-period IC. Stock-picking = calls vs the day&apos;s
+            median stock; a constant scores 50%. Universe is today&apos;s constituents (survivorship-biased). Definitions frozen in {r.doc}. Last run{' '}
+            {new Date(r.ranAt).toLocaleString()}.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function SelectivityCard({ report: r }: { report: SelectivityReport }) {
   const [open, setOpen] = useState(false);
   return (

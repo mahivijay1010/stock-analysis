@@ -62,6 +62,35 @@ export function parseParams(src: Record<string, unknown>): Partial<ScanParams> {
 }
 
 export class ShortTermController {
+  /** GET /api/short-term/wide-screen — every NSE company under ₹100 through the tradeability screen (descriptive; no direction). */
+  wideScreen = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { buildWideScreenReport } = await import("../services/shortterm/wideScreenReport");
+      ok(res, await buildWideScreenReport());
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** POST /api/short-term/wide-scan — the full short-term pipeline (entry/exit/action) over the sub-₹100 wide screen. */
+  wideScan = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { runWideScan } = await import("../services/shortterm/wideScan");
+      ok(res, await runWideScan(parseParams((req.body ?? {}) as Record<string, unknown>)), 201);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/short-term/wide-screen/report.md — the same, rendered as the versioned markdown report. */
+  wideScreenMarkdown = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { buildWideScreenReport, renderMarkdown } = await import("../services/shortterm/wideScreenReport");
+      res.type("text/markdown; charset=utf-8").send(renderMarkdown(await buildWideScreenReport()));
+    } catch (err) {
+      next(err);
+    }
+  };
   /** POST /api/short-term/scan — run a scan with the user's parameters (auth). */
   scan = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {

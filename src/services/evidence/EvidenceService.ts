@@ -30,6 +30,8 @@
 import { AppDataSource } from "../../config/database";
 import { buildSelectivityReport, SelectivityReport } from "./selectivity";
 import { decisionOutcomeService, LaneCReport } from "./DecisionOutcomeService";
+import { baselineReport, BaselineReport } from "./baselineScoreboard";
+import { selectionReport, SelectionReport } from "./selectionReport";
 
 export const EVIDENCE_VERSION = "evidence-ledger-v1";
 
@@ -191,6 +193,11 @@ export interface EvidenceBundle {
   /** Lane C — the TradeGate's OWN graded track record (decision_outcome_ledger).
    *  Everything above grades the legacy quant engine; this grades the gate. */
   laneC: LaneCReport;
+  /** Daily model vs naive constants + cross-sectional skill (research/dailySkill.ts).
+   *  Null if the report failed — it must never take the whole bundle down. */
+  baselines: BaselineReport | null;
+  /** Latest pre-registered stock-selection study run (docs/stock-selection-preregistration.md). */
+  selection: SelectionReport | null;
 }
 
 function num(v: unknown): number | null {
@@ -525,7 +532,7 @@ export class EvidenceService {
 
   /** Everything the tab needs, in one round trip. */
   async bundle(predictionLimit = 200): Promise<EvidenceBundle> {
-    const [predictions, selectivity, calibrators, governance, experiments, pipeline, laneC] = await Promise.all([
+    const [predictions, selectivity, calibrators, governance, experiments, pipeline, laneC, baselines, selection] = await Promise.all([
       this.predictions(predictionLimit),
       this.selectivity(),
       this.calibrators(),
@@ -533,6 +540,14 @@ export class EvidenceService {
       this.experiments(),
       this.pipeline(),
       decisionOutcomeService.laneCReport(),
+      baselineReport().catch((err) => {
+        console.error("[evidence] baseline report failed:", err);
+        return null;
+      }),
+      selectionReport().catch((err) => {
+        console.error("[evidence] selection report failed:", err);
+        return null;
+      }),
     ]);
 
     const promoted = calibrators.filter((c) => c.promoted).length;
@@ -552,7 +567,7 @@ export class EvidenceService {
         governedModels: governance.length,
         modelsNotLive: notLive,
         experimentsRun: experiments.length,
-        headline: this.headline(predictions, calibrators.length - promoted, notLive, pipeline),
+        headline: this.headline(predictions, calibrators.length - promoted, notLive, pipeline, baselines),
       },
       pipeline,
       predictions,
@@ -561,6 +576,8 @@ export class EvidenceService {
       governance,
       experiments,
       laneC,
+      baselines,
+      selection,
     };
   }
 
@@ -570,7 +587,7 @@ export class EvidenceService {
    * The failure mode this guards against is a summary line that technically
    * holds while leaving a reader more confident than the evidence warrants.
    */
-  private headline(p: PredictionLedger, rejected: number, notLive: number, pipeline: PipelineHealth): string {
+  private headline(p: PredictionLedger, rejected: number, notLive: number, pipeline: PipelineHealth, baselines: BaselineReport | null = null): string {
     // A dead pipeline outranks every other statement: if nothing is running,
     // no reading of the tables below is meaningful.
     if (pipeline.neverRun) {
@@ -584,6 +601,11 @@ export class EvidenceService {
     }
     if (p.hitRatePct === null) {
       return `${p.wrong} of ${p.graded} matured predictions were wrong — too few outcomes to compute a meaningful hit rate. ${rejected} calibrator fit${rejected === 1 ? "" : "s"} were rejected and ${notLive} model${notLive === 1 ? " is" : "s are"} held below LIVE on the evidence.`;
+    }
+    // A hit rate a constant guess beat is regime, not skill — say that first.
+    const lost = (baselines?.horizons ?? []).some((h) => h.edgeVsBestConstantPp != null && h.edgeVsBestConstantPp <= 0);
+    if (lost && baselines) {
+      return `${p.hitRatePct}% hit rate on ${p.graded} matured predictions — but ${baselines.headline.charAt(0).toLowerCase()}${baselines.headline.slice(1)} ${notLive} model${notLive === 1 ? "" : "s"} held below LIVE.`;
     }
     return `${p.wrong} of ${p.graded} matured predictions were wrong (${p.hitRatePct}% hit rate). ${rejected} calibrator fit${rejected === 1 ? "" : "s"} rejected; ${notLive} model${notLive === 1 ? "" : "s"} held below LIVE.`;
   }

@@ -112,7 +112,7 @@ export class ShortTermRiskCritic {
       // Cap-only: never above the deterministic ceiling.
       const proposed = data.actionCap as ShortTermActionV2;
       const finalCap = actionRank(proposed) > actionRank(i.deterministicCeiling) ? i.deterministicCeiling : proposed;
-      const result: ShortTermCriticResult = { ...data, actionCap: finalCap, provider: "openai", model: meta.modelSnapshot ?? model };
+      const result: ShortTermCriticResult = { ...data, actionCap: finalCap, provider: provider.name, model: meta.modelSnapshot ?? model };
       const repo = AppDataSource.getRepository(AiReview);
       await repo.save(
         repo.create({
@@ -120,7 +120,7 @@ export class ShortTermRiskCritic {
           role: "short_term_critic",
           promptVersion: "st-critic-v1",
           modelName: meta.modelSnapshot ?? model,
-          provider: "openai",
+          provider: provider.name,
           inputHash,
           requestContext: { depth: opts.depth },
           response: result as unknown as Record<string, unknown>,

@@ -7,7 +7,7 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * prospective evidence and must never be edited after the fact. A regrade
  * writes a new row under a new grader_version — hence the composite unique key.
  */
-export class CreateDecisionOutcomeLedger1789900000000 implements MigrationInterface {
+export class CreateDecisionOutcomeLedger1790100000000 implements MigrationInterface {
   public async up(q: QueryRunner): Promise<void> {
     await q.query(`CREATE TABLE IF NOT EXISTS decision_outcome_ledger (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

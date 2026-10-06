@@ -19,6 +19,7 @@ import { fmtDateTime, inr, signedPct } from '@/lib/format';
 import { Button, Card, Chip, ErrorState, Input, Select, ViewHero } from '@/components/ui';
 import { TradeRadarOrb } from '@/components/market/TradeRadarOrb';
 import { AIEvidenceProgress } from '@/components/market/AIEvidenceProgress';
+import { WideScreenPanel } from './WideScreenPanel';
 
 /*
  * SHORT-TERM TRADE RADAR V2 — qualification integrity. Two sections:
@@ -357,6 +358,8 @@ export function ShortTermView() {
         </div>
         {result && !result.riskManager.newEntriesAllowed && <p className="mt-2 text-xs text-amber-300">{result.riskManager.reasons.join(' · ')} — the radar stays visible, entries are disabled.</p>}
       </Card>
+
+      <WideScreenPanel scanParams={params} onOpen={setOpenTicker} />
 
       {scan.isPending && <div className="short-scan-progress" role="status"><span /><span /><span /><p>Measuring setups, confirmation, after-cost expectancy and risk gates…</p></div>}
 

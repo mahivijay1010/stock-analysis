@@ -1152,6 +1152,8 @@ export interface CommitteeReviewView {
 export interface AiReviewRecord {
   id: string;
   ticker: string;
+  /** e.g. 'risk_committee'. Older backends may return other roles' rows here. */
+  role?: string;
   promptVersion: string;
   modelName: string;
   provider: string;
@@ -1381,6 +1383,82 @@ export interface EvidenceBundle {
   experiments: EvidenceExperiment[];
   /** Lane C — the TradeGate's own graded ledger (optional: older backends). */
   laneC?: LaneCReport | null;
+  /** Daily model vs naive constants + cross-sectional skill (optional: older backends). */
+  baselines?: BaselineReport | null;
+  /** Latest pre-registered stock-selection study run (optional: older backends). */
+  selection?: SelectionReport | null;
+}
+
+// ── Pre-registered stock-selection study (docs/stock-selection-preregistration.md) ──
+
+export interface SelectionPeriodStats {
+  dates: number;
+  nonOverlappingDates: number;
+  meanIc: number | null;
+  icT: number | null;
+  crossSectionalHitPct: number | null;
+  meanSpreadPct: number | null;
+  tiers: Array<{ key: string; calls: number; hitPct: number | null; lb95Pct: number | null }>;
+}
+
+export interface SelectionSignalResult {
+  key: string;
+  describe: string;
+  horizon: number;
+  development: SelectionPeriodStats;
+  sealed: SelectionPeriodStats;
+  prospective: SelectionPeriodStats;
+  pass: boolean;
+  why: string;
+  clearsCost: boolean | null;
+  confidentTier: string | null;
+}
+
+export interface SelectionReport {
+  runId: string;
+  ranAt: string;
+  headline: string;
+  periods: { developmentFrom: string; sealedFrom: string; sealedTo: string; prospectiveFrom: string };
+  rule: { minNonOverlappingDates: number; minIcT: number; minCrossSectionalHitPct: number };
+  results: SelectionSignalResult[];
+  doc: string;
+}
+
+// ── Daily model vs naive baselines (research/dailySkill.ts) ──────────────────
+// Raw hit rate can be earned by riding the tape: always-DOWN beat quant-v1 at
+// every horizon in Sep 2026. These fields are the regime-proof view.
+
+export interface DailyPolicyScore {
+  n: number;
+  calls: number;
+  coveragePct: number | null;
+  hitRatePct: number | null;
+  crossSectionalHitPct: number | null;
+  spreadPct: number | null;
+  days: number;
+}
+
+export interface DailyHorizonScoreboard {
+  horizonDays: number;
+  model: DailyPolicyScore;
+  baselines: { alwaysUpPct: number | null; alwaysDownPct: number | null; hindsightBestPct: number | null; hindsightBest: 'UP' | 'DOWN' | null };
+  edgeVsBestConstantPp: number | null;
+  crossSectionalEdgePp: number | null;
+  verdict: string;
+}
+
+export interface BaselineReport {
+  version: string;
+  headline: string;
+  horizons: DailyHorizonScoreboard[];
+  policies: Array<{ horizonDays: number; version: string; policy: string; promotedAt: string | null; reason: string }>;
+  challenger: {
+    preregisteredOn: string;
+    rule: { minCalls: number; minDays: number; minCrossSectionalPct: number; minCrossSectionalLiftPp: number };
+    lastRunAt: string | null;
+    lastDecision: string | null;
+  };
+  definition: string;
 }
 
 // ── Lane C track record (decision_outcome_ledger) ────────────────────────────
