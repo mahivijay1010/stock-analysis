@@ -618,6 +618,16 @@ export class CronService {
     } catch (err) {
       console.error("⚖️ [CRON] Lane C grading failed:", err);
     }
+
+    // Sub-₹100 lane: grade matured wide-universe picks (isolated from the
+    // radar's evidence base). Reuses the same bracket simulator. Isolated try.
+    try {
+      const { wideLedgerService } = await import("./shortterm/WideLedgerService");
+      const wide = await wideLedgerService.resolveWideShadowOutcomes();
+      console.log(`🪙 [CRON] Sub-₹100 lane: ${wide.resolved} picks graded, ${wide.pending} still pending`);
+    } catch (err) {
+      console.error("🪙 [CRON] Sub-₹100 grading failed:", err);
+    }
   }
 
   /** 00:00 IST — Analysis rows older than 365 days only. */

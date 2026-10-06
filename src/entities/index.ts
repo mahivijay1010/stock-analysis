@@ -87,3 +87,6 @@ export {
 
 // Lane C graded track record (decision-grader-v1)
 export { DecisionOutcomeLedger } from "./DecisionOutcomeLedger";
+
+// Sub-₹100 wide-universe lane: its own prospective ledger + AI dossier store
+export { WideShadowPrediction } from "./WideShadowPrediction";

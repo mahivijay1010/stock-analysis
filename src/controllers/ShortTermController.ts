@@ -99,6 +99,30 @@ export class ShortTermController {
       next(err);
     }
   };
+
+  /** GET /api/short-term/wide-track-record — the sub-₹100 lane's graded, deduped,
+   *  sample-size-gated track record (its OWN scoreboard, isolated from the radar). */
+  wideTrackRecord = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { wideLedgerService } = await import("../services/shortterm/WideLedgerService");
+      ok(res, await wideLedgerService.trackRecord());
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** POST /api/short-term/wide-scout?limit=N — run the DeepSeek AI scout over the
+   *  most recent unscouted sub-₹100 picks (cap-only; cost-governed). Auth. */
+  wideScout = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { wideLedgerService } = await import("../services/shortterm/WideLedgerService");
+      const raw = Number(req.query.limit);
+      const limit = Number.isFinite(raw) && raw > 0 ? Math.min(raw, 50) : 20;
+      ok(res, await wideLedgerService.scoutShortlist(limit), 201);
+    } catch (err) {
+      next(err);
+    }
+  };
   /** POST /api/short-term/scan — run a scan with the user's parameters (auth). */
   scan = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {

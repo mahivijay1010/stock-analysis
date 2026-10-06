@@ -55,6 +55,7 @@ import {
   LivePredictionRevision,
   LiveDecisionEvent,
   DecisionOutcomeLedger,
+  WideShadowPrediction,
 } from "../entities";
 import * as dotenv from "dotenv";
 
@@ -134,6 +135,7 @@ export const AppDataSource = new DataSource({
     LivePredictionRevision,
     LiveDecisionEvent,
     DecisionOutcomeLedger,
+    WideShadowPrediction,
   ],
   migrations: [__dirname + "/../migrations/*.{js,ts}"],
   subscribers: [],
