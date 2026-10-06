@@ -55,8 +55,8 @@ export function flagsFor(r: ScreenRow): string[] {
   return f;
 }
 
-export async function buildWideScreenReport(): Promise<WideScreenReport> {
-  const screen = await runWideScreen();
+export async function buildWideScreenReport(opts: { maxPrice?: number } = {}): Promise<WideScreenReport> {
+  const screen = await runWideScreen(opts);
   const passing = screen.rows.filter((r) => r.passed);
   const symbols = passing.map((r) => r.symbol);
   const rows: Array<{ symbol: string; kind: string; fact: string; source_kind: string; source_url: string | null; observed_at: string; confidence: string; sentiment: string | null; materiality: string | null }> =

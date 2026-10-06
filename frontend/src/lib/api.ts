@@ -825,9 +825,9 @@ export interface WideScreenReport {
   knowledgeCoverage: { withFacts: number; total: number };
 }
 
-/** GET /api/short-term/wide-screen — every NSE company under ₹100 through the tradeability screen. */
-export function getWideScreen(): Promise<WideScreenReport> {
-  return get<WideScreenReport>('/api/short-term/wide-screen');
+/** GET /api/short-term/wide-screen — every NSE company at or below `maxPrice` through the tradeability screen. */
+export function getWideScreen(maxPrice?: number): Promise<WideScreenReport> {
+  return get<WideScreenReport>('/api/short-term/wide-screen', maxPrice ? { maxPrice } : undefined);
 }
 
 export interface WideReferenceLevels {
@@ -842,12 +842,21 @@ export interface WideReferenceLevels {
   asOf: string;
 }
 
+export interface RecommendationScore {
+  score: number;
+  components: { setup: number; tradeability: number; knowledge: number };
+  reasons: string[];
+  cautions: string[];
+}
+
 export interface WideScanRow {
   symbol: string;
   ticker: string;
   evaluation: StCandidate | null;
   reference: WideReferenceLevels | null;
   decision: { newBuyer: 'BUY' | 'WAIT' | 'WATCH' | 'NO TRADE'; holder: 'HOLD' | 'EXIT' | 'TRAIL' | 'TAKE PARTIAL'; why: string };
+  recommendation: RecommendationScore;
+  rank: number;
 }
 
 export interface WideScanResult {
@@ -857,6 +866,8 @@ export interface WideScanResult {
   qualifiedCount: number;
   riskManager: { newEntriesAllowed: boolean; reasons: string[] };
   rows: WideScanRow[];
+  tradeable: WideScanRow[];
+  watch: WideScanRow[];
   note: string;
 }
 

@@ -32,8 +32,11 @@ import { AppDataSource } from "../../config/database";
 
 export const WIDE_SCREEN_VERSION = "wide-screen-v1";
 
+/** Default price cap; callers may override it (the UI asks the user). */
+export const DEFAULT_MAX_PRICE = 100;
+
 export const SCREEN_RULES = {
-  maxPrice: 100,
+  maxPrice: DEFAULT_MAX_PRICE,
   minPrice: 5,
   minSessions: 240,
   minMedianTurnoverLacs: 200, // ₹2 crore
@@ -198,22 +201,27 @@ export function rankPassing(rows: ScreenRow[]): void {
 export interface WideScreenResult {
   version: string;
   asOf: string;
-  rules: typeof SCREEN_RULES;
+  /** SCREEN_RULES with maxPrice replaced by the cap this run used. */
+  rules: Omit<typeof SCREEN_RULES, "maxPrice"> & { maxPrice: number };
   universeSize: number;
+  /** Companies at or below the requested cap. */
   under100: number;
   passed: number;
   rows: ScreenRow[];
   caveat: string;
 }
 
-export async function runWideScreen(): Promise<WideScreenResult> {
+export async function runWideScreen(opts: { maxPrice?: number } = {}): Promise<WideScreenResult> {
+  // The cap is the user's input; everything else in SCREEN_RULES is fixed.
+  const maxPrice = Number.isFinite(opts.maxPrice) && (opts.maxPrice ?? 0) > 0 ? Math.min(100_000, opts.maxPrice!) : SCREEN_RULES.maxPrice;
+  const rules = { ...SCREEN_RULES, maxPrice };
   const [{ d: asOf }]: Array<{ d: string }> = await AppDataSource.query(`SELECT to_char(max(trade_date),'YYYY-MM-DD') d FROM nse_delivery`);
   // Companies only: NSE lists ETFs in the EQ series; nse_securities tags them from NSE's ETF list.
   const under: Array<{ symbol: string }> = await AppDataSource.query(
     `SELECT d.symbol FROM nse_delivery d JOIN nse_securities s ON s.symbol = d.symbol AND s.instrument_type = 'STOCK'
       WHERE d.trade_date = $1 AND d.series = 'EQ' AND d.close_price < $2
       ORDER BY d.symbol`,
-    [asOf, SCREEN_RULES.maxPrice]
+    [asOf, maxPrice]
   );
   const [{ n: universeSize }]: Array<{ n: string }> = await AppDataSource.query(`SELECT count(*) n FROM nse_delivery WHERE trade_date = $1 AND series = 'EQ'`, [asOf]);
   const symbols = under.map((u) => u.symbol);
@@ -278,7 +286,7 @@ export async function runWideScreen(): Promise<WideScreenResult> {
   return {
     version: WIDE_SCREEN_VERSION,
     asOf,
-    rules: SCREEN_RULES,
+    rules,
     universeSize: Number(universeSize),
     under100: symbols.length,
     passed: rows.filter((r) => r.passed).length,

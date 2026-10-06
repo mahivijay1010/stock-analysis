@@ -15,6 +15,7 @@ import { liveMarketDataProvider } from "./LiveMarketDataProvider";
 import { shortTermScanService } from "./ScanService";
 import { ScanParams, ShortTermCandidateView } from "./types";
 import { WideScreenReport, buildWideScreenReport } from "./wideScreenReport";
+import { RecommendationScore, recommendationScore } from "./recommendation";
 
 export const WIDE_SCAN_LABEL = "WIDE_SUB100";
 
@@ -106,6 +107,10 @@ export interface WideScanRow {
   evaluation: ShortTermCandidateView | null;
   reference: ReferenceLevels | null;
   decision: DecisionView;
+  /** Quality-of-opportunity ranking (NOT an expected-return forecast). */
+  recommendation: RecommendationScore;
+  /** Position within its bucket: 1 = best. */
+  rank: number;
 }
 
 export interface WideScanResult {
@@ -117,13 +122,18 @@ export interface WideScanResult {
   qualifiedCount: number;
   riskManager: { newEntriesAllowed: boolean; reasons: string[] };
   rows: WideScanRow[];
+  /** Rows the pipeline cleared for entry (BUY/WAIT), best first. */
+  tradeable: WideScanRow[];
+  /** Everything else, best first — quality without a tradeable setup today. */
+  watch: WideScanRow[];
   note: string;
 }
 
 const toYahoo = (symbol: string) => `${symbol}.NS`;
 
 export async function runWideScan(paramsIn: Partial<ScanParams>): Promise<WideScanResult> {
-  const report = await buildWideScreenReport();
+  // priceMax is the user's cap; it drives the screen itself, not just a filter.
+  const report = await buildWideScreenReport({ maxPrice: paramsIn.priceMax ?? undefined });
   const universe: UniverseStock[] = report.stocks.map((s) => ({
     ticker: toYahoo(s.symbol),
     name: s.companyName ?? s.symbol,
@@ -132,7 +142,7 @@ export async function runWideScan(paramsIn: Partial<ScanParams>): Promise<WideSc
 
   const scan = await shortTermScanService.scan(
     // The wide screen already applied price and liquidity; the scan must not cap the list or spend AI per stock.
-    { ...paramsIn, priceMax: paramsIn.priceMax ?? report.screen.rules.maxPrice, limit: 0, aiDepth: "LOCAL_ONLY" },
+    { ...paramsIn, priceMax: report.screen.rules.maxPrice, limit: 0, aiDepth: "LOCAL_ONLY" },
     { universe, label: WIDE_SCAN_LABEL, persistAll: true, shadow: false, returnAll: true }
   );
 
@@ -144,8 +154,25 @@ export async function runWideScan(paramsIn: Partial<ScanParams>): Promise<WideSc
     const bars = await liveMarketDataProvider.getCompletedBars(ticker, "1y").catch(() => [] as Bar[]);
     const evaluation = byTicker.get(ticker) ?? null;
     const reference = referenceLevels(bars);
-    rows.push({ symbol: s.symbol, ticker, evaluation, reference, decision: decisionFor(evaluation, reference) });
+    const decision = decisionFor(evaluation, reference);
+    const recommendation = recommendationScore({
+      rankingScoreV2: evaluation?.rankingScore ?? null,
+      tier: (evaluation?.tier as "A" | "B" | "C" | "D" | undefined) ?? null,
+      action: evaluation?.action ?? null,
+      liquidityPct: s.rank?.liquidity ?? null,
+      stabilityPct: s.rank?.stability ?? null,
+      corporateActionSuspect: s.corporateActionSuspect,
+      facts: s.facts.map((f) => ({ kind: f.kind, sentiment: f.sentiment, materiality: f.materiality })),
+    });
+    rows.push({ symbol: s.symbol, ticker, evaluation, reference, decision, recommendation, rank: 0 });
   }
+
+  // Rank within buckets: a stock with no tradeable setup can never outrank one
+  // that has a confirmed plan, however good the company looks.
+  const tradeable = rows.filter((r) => r.decision.newBuyer === "BUY" || r.decision.newBuyer === "WAIT").sort((a, b) => b.recommendation.score - a.recommendation.score);
+  const watch = rows.filter((r) => !(r.decision.newBuyer === "BUY" || r.decision.newBuyer === "WAIT")).sort((a, b) => b.recommendation.score - a.recommendation.score);
+  tradeable.forEach((r, i) => (r.rank = i + 1));
+  watch.forEach((r, i) => (r.rank = i + 1));
 
   return {
     report,
@@ -156,6 +183,8 @@ export async function runWideScan(paramsIn: Partial<ScanParams>): Promise<WideSc
     qualifiedCount: scan.qualifiedCount,
     riskManager: { newEntriesAllowed: scan.riskManager.newEntriesAllowed, reasons: scan.riskManager.reasons },
     rows,
+    tradeable,
+    watch,
     note:
       "Entry, stop and targets come from the same short-term pipeline as the radar, with the same gates. A plan is a level map, not a forecast: " +
       "an action only reaches ENTRY CONFIRMED when the setup has validated out-of-sample evidence, the entry is confirmed and the EV lower bound survives costs. " +

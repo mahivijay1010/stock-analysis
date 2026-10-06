@@ -61,12 +61,20 @@ export function parseParams(src: Record<string, unknown>): Partial<ScanParams> {
   };
 }
 
+/** ?maxPrice= — the user's price cap for the wide screen. Invalid/absent ⇒ undefined (service default). */
+function priceCapOf(req: Request): number | undefined {
+  const raw = Number(req.query.maxPrice);
+  if (!Number.isFinite(raw) || raw <= 0) return undefined;
+  if (raw > 100_000) throw new HttpError(400, `maxPrice must be between 1 and 100000 (got ${raw}).`);
+  return raw;
+}
+
 export class ShortTermController {
   /** GET /api/short-term/wide-screen — every NSE company under ₹100 through the tradeability screen (descriptive; no direction). */
-  wideScreen = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  wideScreen = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { buildWideScreenReport } = await import("../services/shortterm/wideScreenReport");
-      ok(res, await buildWideScreenReport());
+      ok(res, await buildWideScreenReport({ maxPrice: priceCapOf(req) }));
     } catch (err) {
       next(err);
     }
@@ -83,10 +91,10 @@ export class ShortTermController {
   };
 
   /** GET /api/short-term/wide-screen/report.md — the same, rendered as the versioned markdown report. */
-  wideScreenMarkdown = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  wideScreenMarkdown = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { buildWideScreenReport, renderMarkdown } = await import("../services/shortterm/wideScreenReport");
-      res.type("text/markdown; charset=utf-8").send(renderMarkdown(await buildWideScreenReport()));
+      res.type("text/markdown; charset=utf-8").send(renderMarkdown(await buildWideScreenReport({ maxPrice: priceCapOf(req) })));
     } catch (err) {
       next(err);
     }
