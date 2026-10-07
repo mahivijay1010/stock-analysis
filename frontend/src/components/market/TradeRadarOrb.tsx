@@ -35,7 +35,7 @@ export function TradeRadarOrb({
         <span className="trade-radar-ring trade-radar-ring-outer"><i /></span>
         <span className="trade-radar-ring trade-radar-ring-middle"><i /></span>
         <span className="trade-radar-ring trade-radar-ring-inner"><i /></span>
-        <span className="trade-radar-core"><b>{active ? 'LIVE' : 'READY'}</b></span>
+        <span className="trade-radar-core"><b>{active ? 'SCAN' : 'READY'}</b></span>
         <span className="trade-radar-scan" />
       </div>
       <figcaption className="sr-only">

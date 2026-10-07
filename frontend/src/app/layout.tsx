@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import '@fontsource-variable/manrope';
 import './globals.css';
+import './trade-radar.css';
 import { Providers } from '@/components/Providers';
 import { Backdrop } from '@/components/Backdrop';
 
