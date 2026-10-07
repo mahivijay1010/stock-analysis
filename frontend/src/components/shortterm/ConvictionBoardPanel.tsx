@@ -46,6 +46,7 @@ function ConvictionCard({ s, onOpen }: { s: ScoredConviction; onOpen: (t: string
               {s.symbol}
             </button>
             {s.buyGrade && <Chip tone="emerald" glow>BUY-grade</Chip>}
+            {s.tradeabilityBlocked && <Chip tone="rose" title={s.tradeabilityReasons.join(' · ')}>not tradeable</Chip>}
           </div>
           <p className="truncate text-[11px] text-slate-500">{s.companyName ?? s.industry ?? '—'}</p>
         </div>
@@ -93,6 +94,14 @@ function ConvictionCard({ s, onOpen }: { s: ScoredConviction; onOpen: (t: string
               <div><p className="text-slate-600">Entry ≤</p><p className="tabular-nums text-slate-300">{money(s.entry)}</p></div>
               <div><p className="text-slate-600">Stop</p><p className="tabular-nums text-rose-300">{money(s.stop)}</p></div>
               <div><p className="text-slate-600">Target 1</p><p className="tabular-nums text-emerald-300">{money(s.target1)}</p></div>
+            </div>
+          )}
+          {s.liquidity && (
+            <div className="mb-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] sm:grid-cols-4">
+              <div><p className="text-slate-600">Daily value</p><p className="tabular-nums text-slate-300">{s.liquidity.medianDailyValueInr20d != null ? `₹${(s.liquidity.medianDailyValueInr20d / 1e7).toFixed(2)}cr` : '—'}</p></div>
+              <div><p className="text-slate-600">Days to exit ₹1cr</p><p className="tabular-nums text-slate-300">{s.liquidity.daysToExitAt1crore ?? '—'}</p></div>
+              <div><p className="text-slate-600">Delivery 20d</p><p className="tabular-nums text-slate-300">{s.liquidity.delivPct20d != null ? `${s.liquidity.delivPct20d}%` : '—'}</p></div>
+              <div><p className="text-slate-600">Circuit band</p><p className="tabular-nums text-slate-300">{s.liquidity.inferredCircuitBandPct != null ? `~${s.liquidity.inferredCircuitBandPct}%` : 'none'}</p></div>
             </div>
           )}
           <ul className="space-y-0.5 text-[11px] text-slate-500">

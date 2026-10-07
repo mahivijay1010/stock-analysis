@@ -50,6 +50,16 @@ export interface ConvictionInput {
   aiCapAction: "AFFIRM" | "CAP_TO_WATCH" | "CAP_TO_NO_TRADE" | null;
   aiConfidence: "LOW" | "MEDIUM" | "HIGH" | null;
   aiRedFlags: number;
+  /** Liquidity/tradeability truth (Layer 0). A hard block forces LOW and bars
+   *  BUY-grade; warnings dampen conviction. Null when not computed. */
+  tradeability?: { tradeable: boolean; hardBlocks: string[]; warnings: string[] } | null;
+  liquidity?: {
+    medianDailyValueInr20d: number | null;
+    daysToExitAt1crore: number | null;
+    delivPct20d: number | null;
+    deliveryDivergencePp: number | null;
+    inferredCircuitBandPct: 5 | 10 | 20 | null;
+  } | null;
 }
 
 export interface ConvictionComponents {
@@ -80,6 +90,11 @@ export interface ScoredConviction {
   aiRedFlags: number;
   /** Clears EVERY gate (fail-closed). Almost always false — by design. */
   buyGrade: boolean;
+  /** True when a hard tradeability block fired (surveillance/series/illiquid/5%
+   *  band). Such a stock can never be HIGH or BUY-grade. */
+  tradeabilityBlocked: boolean;
+  tradeabilityReasons: string[];
+  liquidity: ConvictionInput["liquidity"];
   /** Plain-language, honest bullets explaining the score and its limits. */
   reasons: string[];
 }
@@ -162,13 +177,30 @@ export function scoreConviction(c: ConvictionInput): ScoredConviction {
   // Tradeability / data quality — can you actually trade it at the modelled cost.
   const tradeability = clamp(((c.dataQuality ?? 0) / 100) * 10, 0, 10);
 
-  const components: ConvictionComponents = { actionability, rewardRisk, expectedValue, aiRisk, tradeability };
-  const score = round1(actionability + rewardRisk + expectedValue + aiRisk + tradeability);
+  // Tradeability warnings dampen the tradeability component (still tradeable).
+  const warnings = c.tradeability?.warnings ?? [];
+  const dampedTradeability = clamp(tradeability - warnings.length * 1.5, 0, 10);
+  for (const w of warnings) reasons.push(`Liquidity: ${w}.`);
+
+  const components: ConvictionComponents = { actionability, rewardRisk, expectedValue, aiRisk, tradeability: dampedTradeability };
+  let score = round1(actionability + rewardRisk + expectedValue + aiRisk + dampedTradeability);
+
+  // Layer-0 HARD gate: surveillance / restricted series / illiquid / 5% band.
+  // A blocked stock is not tradeable for this purpose — it cannot be HIGH and
+  // cannot be BUY-grade, no matter how the setup scores.
+  const hardBlocks = c.tradeability && c.tradeability.tradeable === false ? c.tradeability.hardBlocks : [];
+  const tradeabilityBlocked = hardBlocks.length > 0;
+  if (tradeabilityBlocked) {
+    score = Math.min(score, TIER_BANDS.medium - 0.1); // forced below HIGH
+    for (const b of hardBlocks) reasons.unshift(`NOT TRADEABLE — ${b}.`);
+  }
 
   const tier: ConvictionTier = score >= TIER_BANDS.high ? "HIGH" : score >= TIER_BANDS.medium ? "MEDIUM" : "LOW";
 
-  // BUY-GRADE: the fail-closed absolute bar. Everything must align.
+  // BUY-GRADE: the fail-closed absolute bar. Everything must align — and the
+  // stock must actually be tradeable.
   const buyGrade =
+    !tradeabilityBlocked &&
     c.gatesPassed &&
     (c.action === "ENTRY_CONFIRMED" || c.action === "TIMING_OK") &&
     rr != null &&
@@ -176,9 +208,12 @@ export function scoreConviction(c: ConvictionInput): ScoredConviction {
     ev != null &&
     ev > 0 &&
     c.aiCapAction !== "CAP_TO_NO_TRADE";
-  if (buyGrade) reasons.unshift("Clears every gate: confirmed entry, reward:risk ≥ 1.5, positive EV, AI not capping.");
+  if (buyGrade) reasons.unshift("Clears every gate: confirmed entry, reward:risk ≥ 1.5, positive EV, AI not capping, tradeable.");
 
   return {
+    tradeabilityBlocked,
+    tradeabilityReasons: [...hardBlocks, ...warnings],
+    liquidity: c.liquidity ?? null,
     symbol: c.symbol,
     ticker: c.ticker,
     companyName: c.companyName,

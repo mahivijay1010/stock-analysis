@@ -901,6 +901,15 @@ export interface ScoredConviction {
   aiCapAction: 'AFFIRM' | 'CAP_TO_WATCH' | 'CAP_TO_NO_TRADE' | null;
   aiRedFlags: number;
   buyGrade: boolean;
+  tradeabilityBlocked: boolean;
+  tradeabilityReasons: string[];
+  liquidity: {
+    medianDailyValueInr20d: number | null;
+    daysToExitAt1crore: number | null;
+    delivPct20d: number | null;
+    deliveryDivergencePp: number | null;
+    inferredCircuitBandPct: 5 | 10 | 20 | null;
+  } | null;
   reasons: string[];
 }
 

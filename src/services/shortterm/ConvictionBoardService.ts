@@ -7,6 +7,7 @@
 
 import { AppDataSource } from "../../config/database";
 import { buildConvictionBoard, ConvictionBoard, ConvictionInput } from "./convictionBoard";
+import { liquidityService } from "./LiquidityService";
 
 interface CandidateRow {
   ticker: string;
@@ -62,11 +63,17 @@ export class ConvictionBoardService {
     );
     const dossierByTicker = new Map(dossiers.map((d) => [d.ticker, d]));
 
+    // Layer-0 liquidity/tradeability truth for the whole candidate set (2 queries).
+    const symbols = candidates.map((c) => String((c.payload?.ticker ?? c.ticker) as string).replace(/\.(NS|BO)$/, ""));
+    const liquidityBySymbol = await liquidityService.profilesFor([...new Set(symbols)]).catch(() => new Map());
+
     const inputs: ConvictionInput[] = candidates.map((c) => {
       const p = c.payload ?? {};
       const plan = (p.plan ?? {}) as Record<string, unknown>;
       const freshness = (p.freshness ?? {}) as Record<string, unknown>;
       const d = dossierByTicker.get(c.ticker);
+      const symbol = String(p.ticker ?? c.ticker).replace(/\.(NS|BO)$/, "");
+      const liq = liquidityBySymbol.get(symbol);
       const cap = d?.cap === "AFFIRM" || d?.cap === "CAP_TO_WATCH" || d?.cap === "CAP_TO_NO_TRADE" ? d.cap : null;
       const conf = d?.conf === "LOW" || d?.conf === "MEDIUM" || d?.conf === "HIGH" ? d.conf : null;
       return {
@@ -89,6 +96,16 @@ export class ConvictionBoardService {
         aiCapAction: cap,
         aiConfidence: conf,
         aiRedFlags: Number(d?.flags ?? 0),
+        tradeability: liq ? { tradeable: liq.gate.tradeable, hardBlocks: liq.gate.hardBlocks, warnings: liq.gate.warnings } : null,
+        liquidity: liq
+          ? {
+              medianDailyValueInr20d: liq.profile.medianDailyValueInr20d,
+              daysToExitAt1crore: liq.profile.daysToExitAt1crore,
+              delivPct20d: liq.profile.delivPct20d,
+              deliveryDivergencePp: liq.profile.deliveryDivergencePp,
+              inferredCircuitBandPct: liq.profile.inferredCircuitBandPct,
+            }
+          : null,
       };
     });
 
