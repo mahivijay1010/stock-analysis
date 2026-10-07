@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, BookOpen, CheckCircle2, ChevronDown, Crosshair, FlaskConical, Lightbulb, Loader2, RefreshCw, Scale, Search, ShieldAlert, Target, XCircle } from 'lucide-react';
 import { getEvidence, getEvidencePredictions, getJournal } from '@/lib/api';
+import { OutcomeReviewPanel } from './OutcomeReviewPanel';
 import type {
   EvidenceBundle,
   ExpectationRow,
@@ -260,6 +261,8 @@ function PredictionsPanel({ bundle }: { bundle: EvidenceBundle }) {
       {bundle.selectivity && <SelectivityCard report={bundle.selectivity} />}
 
       {bundle.laneC && <LaneCCard report={bundle.laneC} />}
+
+      <OutcomeReviewPanel />
 
       {/* Filters: narrow the ROWS, never the denominators above. */}
       <div className="flex flex-wrap items-center gap-2">

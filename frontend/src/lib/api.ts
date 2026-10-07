@@ -741,6 +741,73 @@ export function getEvidence(limit = 200): Promise<EvidenceBundle> {
   return get<EvidenceBundle>(`/api/evidence?limit=${limit}`);
 }
 
+// ── Predicted vs happened (GET /api/evidence/outcome-review) ─────────────────
+export interface CalibrationBin {
+  lo: number;
+  hi: number;
+  count: number;
+  predictedMean: number | null;
+  actualRate: number | null;
+  wilsonLo: number | null;
+  wilsonHi: number | null;
+  withheld: boolean;
+}
+export interface CalibrationReport {
+  n: number;
+  bins: CalibrationBin[];
+  brier: number | null;
+  ece: number | null;
+  overallPredictedMean: number | null;
+  overallActualRate: number | null;
+  reliability: 'WELL_CALIBRATED' | 'OVERCONFIDENT' | 'UNDERCONFIDENT' | 'INSUFFICIENT';
+  headline: string;
+}
+export interface CohortRate {
+  key: string;
+  n: number;
+  hitRatePct: number;
+  wilsonLb95Pct: number;
+  meanActualReturnPct: number | null;
+}
+export interface SurpriseRow {
+  ticker: string;
+  recommendation: string;
+  predictedReturnPct: number | null;
+  actualReturnPct: number | null;
+  surprisePct: number;
+  kind: string;
+  outcomeDate: string | null;
+}
+export interface LaneMaturity {
+  lane: string;
+  logged: number;
+  graded: number;
+  note: string;
+}
+export interface OutcomeReview {
+  version: string;
+  generatedAt: string;
+  laneA: {
+    graded: number;
+    overallHitRatePct: number | null;
+    overallHitWilsonLb95Pct: number | null;
+    meanPredictedReturnPct: number | null;
+    meanActualReturnPct: number | null;
+    band80CoveragePct: number | null;
+    calibration: CalibrationReport;
+    byRecommendation: CohortRate[];
+    byHorizon: CohortRate[];
+    surprises: SurpriseRow[];
+  };
+  lanes: LaneMaturity[];
+  headline: string;
+  caveat: string;
+}
+
+export function getOutcomeReview(): Promise<OutcomeReview> {
+  return get<OutcomeReview>('/api/evidence/outcome-review');
+}
+
 /** Filtered ledger page: grade (WRONG/CORRECT/PENDING) and/or ticker prefix.
  *  Totals in the response always stay whole-table — a filter narrows the rows,
  *  never the denominator. */

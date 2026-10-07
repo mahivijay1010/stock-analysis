@@ -100,4 +100,15 @@ export class EvidenceController {
       next(err);
     }
   };
+
+  /** GET /api/evidence/outcome-review — the "predicted vs happened" feedback loop:
+   *  calibration curve, hit rates by cohort, band coverage, biggest surprises. */
+  outcomeReview = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { outcomeReviewService } = await import("../services/evidence/OutcomeReviewService");
+      ok(res, await outcomeReviewService.review());
+    } catch (err) {
+      next(err);
+    }
+  };
 }

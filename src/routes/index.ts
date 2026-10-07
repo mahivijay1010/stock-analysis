@@ -100,6 +100,7 @@ export const createStockRoutes = (): Router => {
   router.get("/evidence/experiments", evidenceController.experiments); //   GET  /api/evidence/experiments
   router.get("/evidence/baselines", evidenceController.baselines); //      GET  /api/evidence/baselines — model vs constant guess + stock-picking
   router.get("/evidence/lane-c", evidenceController.laneC); //              GET  /api/evidence/lane-c — TradeGate graded outcomes
+  router.get("/evidence/outcome-review", evidenceController.outcomeReview); // GET /api/evidence/outcome-review — predicted vs happened + calibration
 
   // ── Trade economics: the DETERMINISTIC arithmetic around a trade ──────────
   // Exact quantity, charges, breakeven, scenario P&L and tax. Outcomes are
