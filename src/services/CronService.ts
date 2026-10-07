@@ -379,6 +379,23 @@ export class CronService {
     writeFileSync(`docs/reports/sub100-wide-screen-${rep.screen.asOf}.md`, renderMarkdown(rep));
     writeFileSync(`docs/reports/sub100-wide-screen-${rep.screen.asOf}.json`, JSON.stringify(rep));
     console.log(`📋 [CRON] wide screen ${rep.screen.asOf}: delivery +${d.loaded} sessions, ASM ${s.asm} GSM ${s.gsm}, ${rep.screen.under100} under ₹100, ${rep.stocks.length} pass`);
+
+    // The sub-₹100 BOT: evaluate entry/exit for every passing stock (logs each
+    // gradeable pick to the prospective ledger), then run the DeepSeek risk
+    // scout over the shortlist so the Conviction Board is fresh each morning.
+    // Isolated — a scan/scout failure never sinks the screen refresh above.
+    try {
+      const { runWideScan } = await import("./shortterm/wideScan");
+      const scan = await runWideScan({ horizon: "5-10d" });
+      const { wideLedgerService } = await import("./shortterm/WideLedgerService");
+      const scout = await wideLedgerService.scoutShortlist(25);
+      console.log(
+        `🤖 [CRON] sub-₹100 bot: ${scan.evaluated} evaluated, ${scan.ledger.logged} picks logged; ` +
+          `scout ${scout.scouted} dossiers (${scout.capped} capped, ${scout.degraded} degraded)`
+      );
+    } catch (err) {
+      console.error("🤖 [CRON] sub-₹100 bot (scan/scout) failed:", err);
+    }
   }
 
   /** 20:10 IST weekdays — web knowledge gathering, then the news-signal study. */

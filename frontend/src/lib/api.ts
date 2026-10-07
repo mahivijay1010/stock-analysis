@@ -875,3 +875,49 @@ export interface WideScanResult {
 export function runWideScan(params: StScanParams): Promise<WideScanResult> {
   return post<WideScanResult>('/api/short-term/wide-scan', params);
 }
+
+// ── Conviction Board (GET /api/short-term/conviction-board) ───────────────────
+// Sub-₹100 picks tiered HIGH/MEDIUM/LOW by EVIDENCE strength + reward:risk —
+// NOT a probability of profit. A HIGH tier is the most complete setup available,
+// never a guarantee; 'buyGrade' is the fail-closed bar every gate must clear.
+export type ConvictionTier = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface ScoredConviction {
+  symbol: string;
+  ticker: string;
+  companyName: string | null;
+  industry: string | null;
+  price: number | null;
+  setupType: string;
+  decision: string;
+  tier: ConvictionTier;
+  score: number;
+  components: { actionability: number; rewardRisk: number; expectedValue: number; aiRisk: number; tradeability: number };
+  rewardRiskToT1: number | null;
+  evAfterCostsPct: number | null;
+  entry: number | null;
+  stop: number | null;
+  target1: number | null;
+  aiCapAction: 'AFFIRM' | 'CAP_TO_WATCH' | 'CAP_TO_NO_TRADE' | null;
+  aiRedFlags: number;
+  buyGrade: boolean;
+  reasons: string[];
+}
+
+export interface ConvictionBoard {
+  version: string;
+  generatedAt: string | null;
+  evaluated: number;
+  buyGradeCount: number;
+  tierCounts: { high: number; medium: number; low: number };
+  high: ScoredConviction[];
+  medium: ScoredConviction[];
+  low: ScoredConviction[];
+  caveat: string;
+  headline: string;
+}
+
+/** GET /api/short-term/conviction-board — the honest tiered sub-₹100 shortlist. */
+export function getConvictionBoard(): Promise<ConvictionBoard> {
+  return get<ConvictionBoard>('/api/short-term/conviction-board');
+}

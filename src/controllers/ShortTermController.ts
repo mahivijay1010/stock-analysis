@@ -100,6 +100,17 @@ export class ShortTermController {
     }
   };
 
+  /** GET /api/short-term/conviction-board — sub-₹100 picks tiered HIGH/MEDIUM/LOW
+   *  by EVIDENCE strength + reward:risk (never a profit promise), top 10 each. */
+  convictionBoard = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { convictionBoardService } = await import("../services/shortterm/ConvictionBoardService");
+      ok(res, await convictionBoardService.board());
+    } catch (err) {
+      next(err);
+    }
+  };
+
   /** GET /api/short-term/wide-track-record — the sub-₹100 lane's graded, deduped,
    *  sample-size-gated track record (its OWN scoreboard, isolated from the radar). */
   wideTrackRecord = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
