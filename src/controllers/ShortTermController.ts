@@ -100,6 +100,45 @@ export class ShortTermController {
     }
   };
 
+  /** GET /api/short-term/valuation?tickers=A,B — descriptive valuation/quality
+   *  + value-trap read for the given tickers (defaults to the latest wide-screen
+   *  passing names). Reads cached fundamentals; never a buy signal. */
+  valuation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { valuationService } = await import("../services/shortterm/ValuationService");
+      let tickers = String(req.query.tickers ?? "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      if (tickers.length === 0) {
+        const { buildWideScreenReport } = await import("../services/shortterm/wideScreenReport");
+        const rep = await buildWideScreenReport();
+        tickers = rep.stocks.slice(0, 120).map((s) => s.symbol);
+      }
+      const map = await valuationService.forTickers(tickers.slice(0, 200));
+      const rows = [...map.values()].sort((a, b) => (b.valueScore ?? -1) - (a.valueScore ?? -1));
+      ok(res, { rows, note: "Valuation is descriptive, not a buy signal. Value traps are flagged. The system has no measured stock-picking skill." });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** POST /api/short-term/refresh-fundamentals?limit=N — background-fetch
+   *  fundamentals for the wide-screen names missing them (slow; auth). */
+  refreshFundamentals = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { valuationService } = await import("../services/shortterm/ValuationService");
+      const { buildWideScreenReport } = await import("../services/shortterm/wideScreenReport");
+      const raw = Number(req.query.limit);
+      const limit = Number.isFinite(raw) && raw > 0 ? Math.min(raw, 200) : 50;
+      const rep = await buildWideScreenReport();
+      const symbols = rep.stocks.map((s) => s.symbol);
+      ok(res, await valuationService.refreshUniverse(symbols, { limit, onlyMissing: true }), 201);
+    } catch (err) {
+      next(err);
+    }
+  };
+
   /** GET /api/short-term/regime — the current market regime (NIFTY), cached. */
   regime = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {

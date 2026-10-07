@@ -21,6 +21,7 @@ import { TradeRadarOrb } from '@/components/market/TradeRadarOrb';
 import { AIEvidenceProgress } from '@/components/market/AIEvidenceProgress';
 import { WideScreenPanel } from './WideScreenPanel';
 import { ConvictionBoardPanel } from './ConvictionBoardPanel';
+import { ValuationPanel } from './ValuationPanel';
 
 /*
  * SHORT-TERM TRADE RADAR V2 — qualification integrity. Two sections:
@@ -361,6 +362,8 @@ export function ShortTermView() {
       </Card>
 
       <ConvictionBoardPanel onOpen={setOpenTicker} scanParams={{ budgetInr: params.budgetInr, horizon: params.horizon, riskPerTradePct: params.riskPerTradePct }} />
+
+      <ValuationPanel />
 
       <WideScreenPanel scanParams={params} onOpen={setOpenTicker} />
 

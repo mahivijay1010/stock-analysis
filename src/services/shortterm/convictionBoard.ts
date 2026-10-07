@@ -60,6 +60,18 @@ export interface ConvictionInput {
     deliveryDivergencePp: number | null;
     inferredCircuitBandPct: 5 | 10 | 20 | null;
   } | null;
+  /** Descriptive valuation context (NOT a gate, NOT predictive). Null when
+   *  fundamentals aren't loaded for the name. */
+  valuation?: {
+    verdict: string;
+    dcfMarginOfSafetyPct: number | null;
+    valueScore: number | null;
+    isValueTrap: boolean;
+    pe: number | null;
+    pb: number | null;
+    roce: number | null;
+    trapFlags: string[];
+  } | null;
 }
 
 export interface ConvictionComponents {
@@ -95,6 +107,7 @@ export interface ScoredConviction {
   tradeabilityBlocked: boolean;
   tradeabilityReasons: string[];
   liquidity: ConvictionInput["liquidity"];
+  valuation: ConvictionInput["valuation"];
   /** Plain-language, honest bullets explaining the score and its limits. */
   reasons: string[];
 }
@@ -212,10 +225,16 @@ export function scoreConviction(c: ConvictionInput): ScoredConviction {
     c.aiCapAction !== "CAP_TO_NO_TRADE";
   if (buyGrade) reasons.unshift("Clears every gate: confirmed entry, reward:risk ≥ 1.5, positive EV, AI not capping, tradeable.");
 
+  // Value-trap note surfaced on the card (context only — valuation never
+  // changes the conviction score; it is not a predictive signal).
+  if (c.valuation?.isValueTrap) reasons.push(`Valuation: possible value trap — ${c.valuation.trapFlags.slice(0, 2).join("; ")}.`);
+  else if (c.valuation?.verdict === "UNDERVALUED_QUALITY") reasons.push(`Valuation: DCF base case ${c.valuation.dcfMarginOfSafetyPct}% above price with decent quality (descriptive, not a buy signal).`);
+
   return {
     tradeabilityBlocked,
     tradeabilityReasons: [...hardBlocks, ...warnings],
     liquidity: c.liquidity ?? null,
+    valuation: c.valuation ?? null,
     symbol: c.symbol,
     ticker: c.ticker,
     companyName: c.companyName,

@@ -9,6 +9,7 @@ import { AppDataSource } from "../../config/database";
 import { buildConvictionBoard, ConvictionBoard, ConvictionInput } from "./convictionBoard";
 import { liquidityService } from "./LiquidityService";
 import { regimeService } from "./RegimeService";
+import { valuationService } from "./ValuationService";
 
 interface CandidateRow {
   ticker: string;
@@ -66,7 +67,9 @@ export class ConvictionBoardService {
 
     // Layer-0 liquidity/tradeability truth for the whole candidate set (2 queries).
     const symbols = candidates.map((c) => String((c.payload?.ticker ?? c.ticker) as string).replace(/\.(NS|BO)$/, ""));
-    const liquidityBySymbol = await liquidityService.profilesFor([...new Set(symbols)]).catch(() => new Map());
+    const uniqueSymbols = [...new Set(symbols)];
+    const liquidityBySymbol = await liquidityService.profilesFor(uniqueSymbols).catch(() => new Map());
+    const valuationBySymbol = await valuationService.forTickers(uniqueSymbols).catch(() => new Map());
 
     const inputs: ConvictionInput[] = candidates.map((c) => {
       const p = c.payload ?? {};
@@ -75,6 +78,7 @@ export class ConvictionBoardService {
       const d = dossierByTicker.get(c.ticker);
       const symbol = String(p.ticker ?? c.ticker).replace(/\.(NS|BO)$/, "");
       const liq = liquidityBySymbol.get(symbol);
+      const val = valuationBySymbol.get(symbol);
       const cap = d?.cap === "AFFIRM" || d?.cap === "CAP_TO_WATCH" || d?.cap === "CAP_TO_NO_TRADE" ? d.cap : null;
       const conf = d?.conf === "LOW" || d?.conf === "MEDIUM" || d?.conf === "HIGH" ? d.conf : null;
       return {
@@ -107,6 +111,10 @@ export class ConvictionBoardService {
               inferredCircuitBandPct: liq.profile.inferredCircuitBandPct,
             }
           : null,
+        valuation:
+          val && val.verdict !== "INSUFFICIENT_DATA"
+            ? { verdict: val.verdict, dcfMarginOfSafetyPct: val.dcfMarginOfSafetyPct, valueScore: val.valueScore, isValueTrap: val.isValueTrap, pe: val.pe, pb: val.pb, roce: val.roce, trapFlags: val.trapFlags }
+            : null,
       };
     });
 

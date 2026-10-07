@@ -910,7 +910,42 @@ export interface ScoredConviction {
     deliveryDivergencePp: number | null;
     inferredCircuitBandPct: 5 | 10 | 20 | null;
   } | null;
+  valuation: {
+    verdict: string;
+    dcfMarginOfSafetyPct: number | null;
+    valueScore: number | null;
+    isValueTrap: boolean;
+    pe: number | null;
+    pb: number | null;
+    roce: number | null;
+    trapFlags: string[];
+  } | null;
   reasons: string[];
+}
+
+// ── Valuation / quality (GET /api/short-term/valuation) ──────────────────────
+export interface ValuationRow {
+  ticker: string;
+  symbol: string;
+  price: number | null;
+  verdict: string;
+  pe: number | null;
+  pb: number | null;
+  roe: number | null;
+  roce: number | null;
+  deRatio: number | null;
+  dcfMarginOfSafetyPct: number | null;
+  promoterHolding: number | null;
+  promoterChangeQoq: number | null;
+  valueScore: number | null;
+  isValueTrap: boolean;
+  trapFlags: string[];
+  notes: string[];
+}
+
+export function getValuation(tickers?: string[]): Promise<{ rows: ValuationRow[]; note: string }> {
+  const q = tickers && tickers.length ? `?tickers=${tickers.join(',')}` : '';
+  return get<{ rows: ValuationRow[]; note: string }>(`/api/short-term/valuation${q}`);
 }
 
 export interface ConvictionBoard {

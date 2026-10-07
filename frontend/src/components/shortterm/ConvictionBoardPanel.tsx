@@ -82,6 +82,14 @@ function ConvictionCard({ s, onOpen }: { s: ScoredConviction; onOpen: (t: string
           {capLabel}
         </Chip>
         {s.aiRedFlags > 0 && <Chip tone={s.aiRedFlags >= 7 ? 'rose' : 'zinc'}>{s.aiRedFlags} flags</Chip>}
+        {s.valuation && (
+          <Chip
+            tone={s.valuation.isValueTrap ? 'rose' : s.valuation.verdict === 'UNDERVALUED_QUALITY' ? 'emerald' : 'zinc'}
+            title={s.valuation.trapFlags.join(' · ') || s.valuation.verdict}
+          >
+            {s.valuation.isValueTrap ? 'value trap' : s.valuation.verdict === 'UNDERVALUED_QUALITY' ? `undervalued${s.valuation.dcfMarginOfSafetyPct != null ? ` +${Math.round(s.valuation.dcfMarginOfSafetyPct)}%` : ''}` : s.valuation.verdict.replace(/_/g, ' ').toLowerCase()}
+          </Chip>
+        )}
         <button onClick={() => setOpen((v) => !v)} className="ml-auto inline-flex items-center gap-0.5 text-[11px] text-slate-500 hover:text-slate-300">
           why <ChevronDown className={clsx('h-3 w-3 transition', open && 'rotate-180')} aria-hidden />
         </button>
