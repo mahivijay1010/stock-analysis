@@ -227,6 +227,13 @@ export function ConvictionBoardPanel({ onOpen, scanParams }: { onOpen: (ticker: 
         {reEval.isError && <p className="text-[11px] text-rose-300">Re-evaluation failed — try again.</p>}
       </div>
 
+      {data?.circuitBreaker && !data.circuitBreaker.canEnter && (
+        <div className="mt-3 flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/[0.08] p-3 text-[12px] text-rose-100">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" aria-hidden />
+          <span><span className="font-semibold">Circuit breaker {data.circuitBreaker.state}</span> — new entries are paused. {data.circuitBreaker.reason}</span>
+        </div>
+      )}
+
       {data && (
         <div className={clsx('mt-3 rounded-lg border p-3 text-[12px]', data.buyGradeCount > 0 ? 'border-emerald-500/25 bg-emerald-500/[0.04] text-emerald-100' : 'border-amber-500/25 bg-amber-500/[0.04] text-amber-100')}>
           {data.headline}

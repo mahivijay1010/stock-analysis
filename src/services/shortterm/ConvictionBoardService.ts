@@ -122,11 +122,14 @@ export class ConvictionBoardService {
     const regime = await regimeService.detect().catch(() => null);
     const { regimeGateFor } = await import("./regimeGates");
     const gate = regime ? regimeGateFor(regime.regime) : null;
+    const { riskControlService } = await import("./RiskControlService");
+    const breaker = await riskControlService.circuitBreaker().catch(() => null);
     return {
       ...board,
       regime: regime
         ? { regime: regime.regime, reasons: regime.reasons, realizedVolPct: regime.realizedVolPct, drawdownPct: regime.drawdownPct, sizeMultiplier: gate?.sizeMultiplier, gateNote: gate?.note }
         : null,
+      circuitBreaker: breaker ? { state: breaker.state, canEnter: breaker.canEnter, reason: breaker.reasons[0] ?? "" } : null,
     };
   }
 

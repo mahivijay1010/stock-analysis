@@ -100,6 +100,32 @@ export class ShortTermController {
     }
   };
 
+  /** GET /api/short-term/circuit-breaker — may the system open NEW risk now?
+   *  Trips on negative rolling expectancy or a deep drawdown; holds in cooldown
+   *  while the regime is risk-off. Reads the real resolved-trade stream. */
+  circuitBreaker = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { riskControlService } = await import("../services/shortterm/RiskControlService");
+      ok(res, await riskControlService.circuitBreaker());
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** POST /api/short-term/stress-test — replay a book against historical
+   *  small-cap crashes. Body: { positions:[{ticker, sector?, valueInr, stopPct?}], capitalInr }. */
+  stressTest = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { riskControlService } = await import("../services/shortterm/RiskControlService");
+      const body = (req.body ?? {}) as { positions?: Array<{ ticker: string; sector?: string | null; valueInr: number; stopPct?: number | null }>; capitalInr?: number };
+      const positions = Array.isArray(body.positions) ? body.positions.filter((p) => p && typeof p.ticker === "string" && p.valueInr > 0).slice(0, 50) : [];
+      const capital = Number(body.capitalInr) > 0 ? Number(body.capitalInr) : positions.reduce((a, p) => a + p.valueInr, 0) || 100000;
+      ok(res, await riskControlService.stressTest(positions, capital));
+    } catch (err) {
+      next(err);
+    }
+  };
+
   /** POST /api/short-term/portfolio-risk — VaR/CVaR, concentration, sector caps
    *  and correlation clusters for a book of positions. Body: { positions:
    *  [{ticker, sector?, valueInr, beta?}], capitalInr }. Turns picks into a portfolio. */

@@ -125,6 +125,8 @@ export interface ConvictionBoard {
   low: ScoredConviction[];
   /** Market regime context + its gate overlay (set by the service; null when unavailable). */
   regime?: { regime: string; reasons: string[]; realizedVolPct: number | null; drawdownPct: number | null; sizeMultiplier?: number; gateNote?: string } | null;
+  /** Drawdown circuit breaker — when canEnter is false, NEW entries are paused. */
+  circuitBreaker?: { state: string; canEnter: boolean; reason: string } | null;
   caveat: string;
   headline: string;
 }

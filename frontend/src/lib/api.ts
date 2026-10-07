@@ -1027,6 +1027,7 @@ export interface ConvictionBoard {
   medium: ScoredConviction[];
   low: ScoredConviction[];
   regime?: { regime: string; reasons: string[]; realizedVolPct: number | null; drawdownPct: number | null; sizeMultiplier?: number; gateNote?: string } | null;
+  circuitBreaker?: { state: string; canEnter: boolean; reason: string } | null;
   caveat: string;
   headline: string;
 }
