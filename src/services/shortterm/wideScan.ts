@@ -15,7 +15,51 @@ import { liveMarketDataProvider } from "./LiveMarketDataProvider";
 import { shortTermScanService } from "./ScanService";
 import { ScanParams, ShortTermCandidateView } from "./types";
 import { WideScreenReport, buildWideScreenReport } from "./wideScreenReport";
-import { RecommendationScore, recommendationScore } from "./recommendation";
+import { RecommendationScore, rankRecommendations, RankedPick } from "./recommendation";
+import { wideLedgerService, LogPicksInput } from "./WideLedgerService";
+import { WideScreenEvidence } from "./wideLedger";
+
+/** Compact, citable evidence from a screen row — the ONLY thing the AI scout is
+ *  later allowed to reason over (quantitative, no fabricated news). */
+function screenEvidenceOf(s: {
+  symbol: string;
+  companyName?: string | null;
+  industry?: string | null;
+  price: number;
+  medianTurnoverLacs20?: number | null;
+  medianTrades20?: number | null;
+  avgDelivPct60?: number | null;
+  delivTrendPp?: number | null;
+  ret20Pct?: number | null;
+  ret60Pct?: number | null;
+  ret250Pct?: number | null;
+  vol60AnnPct?: number | null;
+  maxDrawdown1yPct?: number | null;
+  pctFrom1yHigh?: number | null;
+  indices?: string[];
+  surveillance?: Array<{ code: string }>;
+  corporateActionSuspect?: boolean;
+}): WideScreenEvidence {
+  return {
+    symbol: s.symbol,
+    companyName: s.companyName ?? null,
+    industry: s.industry ?? null,
+    price: s.price,
+    medianTurnoverCr20: s.medianTurnoverLacs20 != null ? Math.round((s.medianTurnoverLacs20 / 100) * 100) / 100 : null,
+    medianTrades20: s.medianTrades20 ?? null,
+    avgDelivPct60: s.avgDelivPct60 ?? null,
+    delivTrendPp: s.delivTrendPp ?? null,
+    ret20Pct: s.ret20Pct ?? null,
+    ret60Pct: s.ret60Pct ?? null,
+    ret250Pct: s.ret250Pct ?? null,
+    vol60AnnPct: s.vol60AnnPct ?? null,
+    maxDrawdown1yPct: s.maxDrawdown1yPct ?? null,
+    pctFrom1yHigh: s.pctFrom1yHigh ?? null,
+    indices: s.indices ?? [],
+    surveillanceCodes: (s.surveillance ?? []).map((x) => x.code),
+    corporateActionSuspect: s.corporateActionSuspect ?? false,
+  };
+}
 
 export const WIDE_SCAN_LABEL = "WIDE_SUB100";
 
@@ -174,24 +218,66 @@ export async function runWideScan(paramsIn: Partial<ScanParams>): Promise<WideSc
   );
 
   const byTicker = new Map((scan.all ?? []).map((v) => [v.ticker, v]));
-  const rows: WideScanRow[] = [];
-  const logRows: LogPicksInput["rows"] = [];
   const todayIso = new Date().toISOString().slice(0, 10);
+
+  // Base rows carry the screen row so ranking + ledger evidence can read it.
+  type ScreenStock = (typeof report.stocks)[number];
+  interface Base {
+    symbol: string;
+    ticker: string;
+    evaluation: ShortTermCandidateView | null;
+    reference: ReferenceLevels | null;
+    decision: DecisionView;
+    screen: ScreenStock;
+  }
+  const base: Base[] = [];
   for (const s of report.stocks) {
     const ticker = toYahoo(s.symbol);
     // Same cached completed bars the scan just used — no extra provider load.
-    const bars = await liveMarketDataProvider
-      .getCompletedBars(ticker, "1y")
-      .catch(() => [] as Bar[]);
+    const bars = await liveMarketDataProvider.getCompletedBars(ticker, "1y").catch(() => [] as Bar[]);
     const evaluation = byTicker.get(ticker) ?? null;
     const reference = referenceLevels(bars);
-    rows.push({
-      symbol: s.symbol,
-      ticker,
-      evaluation,
-      reference,
-      decision: decisionFor(evaluation, reference),
-    });
+    base.push({ symbol: s.symbol, ticker, evaluation, reference, decision: decisionFor(evaluation, reference), screen: s });
+  }
+
+  // Rank into tradeable/watch — a QUALITY-of-opportunity ordering, never an
+  // expected-return forecast. A stock with no setup can only ever be a watch item.
+  const { tradeable: tRanked, watch: wRanked } = rankRecommendations(base, (b) => ({
+    rankingScoreV2: b.evaluation?.rankingScore ?? null,
+    tier: (b.evaluation?.tier as "A" | "B" | "C" | "D" | undefined) ?? null,
+    action: b.evaluation?.action ?? null,
+    liquidityPct: b.screen.rank?.liquidity ?? null,
+    stabilityPct: b.screen.rank?.stability ?? null,
+    corporateActionSuspect: b.screen.corporateActionSuspect,
+    facts: (b.screen.facts ?? []).map((f) => ({ kind: f.kind, sentiment: f.sentiment, materiality: f.materiality })),
+    decision: b.decision.newBuyer,
+  }));
+  const toRow = (p: RankedPick<Base>): WideScanRow => ({
+    symbol: p.item.symbol,
+    ticker: p.item.ticker,
+    evaluation: p.item.evaluation,
+    reference: p.item.reference,
+    decision: p.item.decision,
+    recommendation: p.recommendation,
+    rank: p.rank,
+  });
+  const tradeable = tRanked.map(toRow);
+  const watch = wRanked.map(toRow);
+  const rows = [...tradeable, ...watch];
+
+  // Log every gradeable pick prospectively (idempotent). Never fatal to the scan.
+  const logRows: LogPicksInput["rows"] = base.map((b) => ({
+    symbol: b.symbol,
+    ticker: b.ticker,
+    evaluation: b.evaluation as LogPicksInput["rows"][number]["evaluation"],
+    decision: { newBuyer: b.decision.newBuyer },
+    screen: screenEvidenceOf(b.screen),
+  }));
+  let ledger = { logged: 0, skipped: { ungradeable: 0, noEvaluation: 0 } };
+  try {
+    ledger = await wideLedgerService.logPicks({ horizon: scan.params.horizon, rows: logRows, fallbackAnchor: todayIso });
+  } catch (err) {
+    console.warn("⚠️ wide-ledger logPicks failed (scan still returned):", (err as Error).message);
   }
 
   return {

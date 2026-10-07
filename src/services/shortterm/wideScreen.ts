@@ -34,6 +34,14 @@ export const WIDE_SCREEN_VERSION = "wide-screen-v1";
 
 /** Default price cap; callers may override it (the UI asks the user). */
 export const DEFAULT_MAX_PRICE = 100;
+/** Hard ceiling on the caller-configurable price cap — still an affordable-names screen. */
+export const WIDE_SCREEN_MAX_PRICE_CEILING = 2000;
+
+/** Resolve the caller's requested price cap to a safe, bounded value. */
+export function resolveMaxPrice(requested?: number | null): number {
+  if (requested == null || !Number.isFinite(requested)) return DEFAULT_MAX_PRICE;
+  return Math.min(WIDE_SCREEN_MAX_PRICE_CEILING, Math.max(6, Math.round(requested)));
+}
 
 export const SCREEN_RULES = {
   maxPrice: DEFAULT_MAX_PRICE,
@@ -224,7 +232,8 @@ export interface WideScreenResult {
   caveat: string;
 }
 
-export async function runWideScreen(): Promise<WideScreenResult> {
+export async function runWideScreen(opts: { maxPrice?: number | null } = {}): Promise<WideScreenResult> {
+  const maxPrice = resolveMaxPrice(opts.maxPrice);
   const [{ d: asOf }]: Array<{ d: string }> = await AppDataSource.query(
     `SELECT to_char(max(trade_date),'YYYY-MM-DD') d FROM nse_delivery`,
   );
@@ -327,6 +336,8 @@ export async function runWideScreen(): Promise<WideScreenResult> {
       a.symbol.localeCompare(b.symbol),
   );
 
+  // Echo the ACTUAL ceiling used so every surface shows the price the data reflects.
+  const rules = { ...SCREEN_RULES, maxPrice };
   return {
     version: WIDE_SCREEN_VERSION,
     asOf,
