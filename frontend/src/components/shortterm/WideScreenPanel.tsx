@@ -9,7 +9,9 @@ import {
   ChevronDown,
   ExternalLink,
   Filter,
+  ListFilter,
   RefreshCw,
+  Search,
   ShieldAlert,
 } from "lucide-react";
 import { getWideScreen, runWideScan, StScanParams, WideScanRow, WideStock } from "@/lib/api";
@@ -217,110 +219,6 @@ function PlanBlock({ w, onOpen }: { w: WideScanRow; onOpen: (ticker: string) => 
         </button>
       )}
     </div>
-  );
-}
-
-/**
- * The ranked answer to "which of these?". Split is load-bearing: a stock with
- * no tradeable setup can never appear under "best to act on", however good the
- * company looks — that is what keeps this a recommendation and not a tip sheet.
- */
-function TopPicks({
-  tradeable,
-  watch,
-  onOpen,
-}: {
-  tradeable: WideScanRow[];
-  watch: WideScanRow[];
-  onOpen: (t: string) => void;
-}) {
-  const Pick = ({ w: row, idx }: { w: WideScanRow; idx: number }) => {
-    const p = row.evaluation?.plan;
-    return (
-      <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-display text-sm font-semibold text-slate-100">
-            #{idx + 1} {row.symbol}
-          </span>
-          <Chip tone={DECISION_TONE[row.decision.newBuyer] ?? "zinc"}>{row.decision.newBuyer}</Chip>
-          {row.evaluation && <Chip tone="zinc">tier {row.evaluation.tier}</Chip>}
-          <span className="ml-auto text-[11px] text-slate-500">
-            score {row.recommendation.score}
-          </span>
-        </div>
-        {p?.entryZoneLow != null && (
-          <p className="mt-1.5 tabular-nums text-slate-300">
-            Entry ₹{p.entryZoneLow}–{p.entryZoneHigh} · stop{" "}
-            <span className="text-rose-300">₹{p.initialStop}</span> · T1{" "}
-            <span className="text-emerald-300">₹{p.target1}</span>
-            {p.rewardRiskToTarget1 != null && <> · R:R {p.rewardRiskToTarget1}</>}
-          </p>
-        )}
-        {row.recommendation.reasons.length > 0 && (
-          <ul className="mt-1.5 space-y-0.5 text-slate-400">
-            {row.recommendation.reasons.slice(0, 3).map((x, k) => (
-              <li key={k}>+ {x}</li>
-            ))}
-          </ul>
-        )}
-        {row.recommendation.cautions.length > 0 && (
-          <ul className="mt-1 space-y-0.5 text-amber-200/70">
-            {row.recommendation.cautions.slice(0, 3).map((x, k) => (
-              <li key={k}>− {x}</li>
-            ))}
-          </ul>
-        )}
-        <button
-          type="button"
-          onClick={() => onOpen(row.ticker)}
-          className="mt-1.5 inline-flex items-center gap-1 text-cyan-300 hover:underline"
-        >
-          Full detail <ArrowUpRight className="h-3 w-3" aria-hidden />
-        </button>
-      </div>
-    );
-  };
-
-  return (
-    <section className="mt-3 rounded-xl border border-cyan-400/20 bg-cyan-400/[0.03] p-3 text-xs">
-      <p className="flex items-center gap-2 font-medium text-slate-200">
-        <Award className="h-4 w-4 text-cyan-300" aria-hidden /> Best of this list, ranked
-      </p>
-      {tradeable.length > 0 ? (
-        <>
-          <p className="mt-0.5 text-slate-500">Cleared for entry by the pipeline, best first.</p>
-          <div className="mt-2 grid gap-2 lg:grid-cols-2">
-            {tradeable.slice(0, 4).map((r, i) => (
-              <Pick key={r.symbol} w={r} idx={i} />
-            ))}
-          </div>
-        </>
-      ) : (
-        <p className="mt-0.5 text-slate-400">
-          <span className="text-slate-300">Nothing is cleared for entry today.</span> No stock at
-          this price cap has a confirmed setup that passes the evidence and cost gates — that is a
-          real answer, not a gap. The strongest watch candidates are below.
-        </p>
-      )}
-      {watch.length > 0 && (
-        <>
-          <p className="mt-3 text-slate-500">
-            Strongest without a tradeable setup — watch, do not buy on this alone:
-          </p>
-          <div className="mt-2 grid gap-2 lg:grid-cols-2">
-            {watch.slice(0, tradeable.length > 0 ? 2 : 4).map((r, i) => (
-              <Pick key={r.symbol} w={r} idx={i} />
-            ))}
-          </div>
-        </>
-      )}
-      <p className="mt-2 text-[11px] text-slate-600">
-        Ranked on measured things: setup evidence and its priced plan, liquidity and stability,
-        minus known risks from the knowledge base. It is a quality-of-opportunity order, NOT a
-        prediction of which will rise — no directional signal in this system has passed its
-        pre-registered test.
-      </p>
-    </section>
   );
 }
 
@@ -648,7 +546,7 @@ export function WideScreenPanel({
 }) {
   const q = useQuery({
     queryKey: ["wide-screen"],
-    queryFn: getWideScreen,
+    queryFn: () => getWideScreen(),
     staleTime: 10 * 60_000,
     retry: 0,
   });
@@ -656,6 +554,7 @@ export function WideScreenPanel({
   const signedIn = auth?.status === "authenticated";
   const evalM = useMutation({ mutationFn: (p: StScanParams) => runWideScan(p) });
   const [decisionFilter, setDecisionFilter] = useState("ALL");
+  const [maxPrice, setMaxPrice] = useState("100");
   const evalBy = useMemo(
     () => new Map((evalM.data?.rows ?? []).map((w) => [w.symbol, w])),
     [evalM.data],
@@ -700,6 +599,7 @@ export function WideScreenPanel({
       (r) =>
         (showExcluded || r.passed) &&
         (industry === "ALL" || r.industry === industry) &&
+        (!maxPrice || (r.price ?? 0) <= Number(maxPrice)) &&
         (r.medianTurnoverLacs20 ?? 0) >= mt &&
         (!onlyWithFacts || r.facts.length > 0) &&
         (decisionFilter === "ALL" || evalBy.get(r.symbol)?.decision.newBuyer === decisionFilter) &&
