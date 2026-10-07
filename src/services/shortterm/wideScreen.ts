@@ -88,7 +88,8 @@ export function computeMetrics(symbol: string, rows: DailyRow[]): ScreenMetrics 
   const n = rows.length;
   const last = rows[n - 1];
   const closes = rows.map((r) => r.close);
-  const ret = (k: number) => (n > k && closes[n - 1 - k] > 0 ? (closes[n - 1] / closes[n - 1 - k] - 1) * 100 : null);
+  const ret = (k: number) =>
+    n > k && closes[n - 1 - k] > 0 ? (closes[n - 1] / closes[n - 1 - k] - 1) * 100 : null;
   const tail = <T>(xs: T[], k: number) => xs.slice(Math.max(0, xs.length - k));
 
   const dailyRets: number[] = [];
@@ -104,7 +105,9 @@ export function computeMetrics(symbol: string, rows: DailyRow[]): ScreenMetrics 
   const m60 = mean(last60);
   const vol60 =
     last60.length >= 20 && m60 != null
-      ? Math.sqrt(last60.reduce((a, r) => a + (r - m60) ** 2, 0) / (last60.length - 1)) * Math.sqrt(252) * 100
+      ? Math.sqrt(last60.reduce((a, r) => a + (r - m60) ** 2, 0) / (last60.length - 1)) *
+        Math.sqrt(252) *
+        100
       : null;
 
   const yr = tail(closes, 250);
@@ -125,7 +128,9 @@ export function computeMetrics(symbol: string, rows: DailyRow[]): ScreenMetrics 
     asOf: last.d,
     price: last.close,
     sessions: n,
-    medianTurnoverLacs20: median(tail(rows, SCREEN_RULES.liquidityWindow).map((r) => r.turnoverLacs ?? NaN)),
+    medianTurnoverLacs20: median(
+      tail(rows, SCREEN_RULES.liquidityWindow).map((r) => r.turnoverLacs ?? NaN),
+    ),
     medianTrades20: median(tail(rows, SCREEN_RULES.liquidityWindow).map((r) => r.trades ?? NaN)),
     avgDelivPct60: mean(tail(deliv, 60)),
     delivTrendPp: recent5 != null && base60 != null ? recent5 - base60 : null,
@@ -158,15 +163,23 @@ export interface ScreenRow extends ScreenMetrics {
 }
 
 /** Apply the hard exclusions. PURE. */
-export function exclusionsFor(m: ScreenMetrics, surveillance: Surveillance[], listingDate: string | null): string[] {
+export function exclusionsFor(
+  m: ScreenMetrics,
+  surveillance: Surveillance[],
+  listingDate: string | null,
+): string[] {
   const R = SCREEN_RULES;
   const out: string[] = [];
-  if (surveillance.length) out.push(`exchange surveillance: ${surveillance.map((s) => s.code).join(", ")}`);
+  if (surveillance.length)
+    out.push(`exchange surveillance: ${surveillance.map((s) => s.code).join(", ")}`);
   if (m.price < R.minPrice) out.push(`penny: close ₹${m.price.toFixed(2)} < ₹${R.minPrice}`);
   if (m.sessions < R.minSessions) out.push(`history: ${m.sessions} sessions < ${R.minSessions}`);
   if (m.medianTurnoverLacs20 == null || m.medianTurnoverLacs20 < R.minMedianTurnoverLacs)
-    out.push(`illiquid: median 20d turnover ₹${((m.medianTurnoverLacs20 ?? 0) / 100).toFixed(2)} cr < ₹${R.minMedianTurnoverLacs / 100} cr`);
-  if (m.medianTrades20 == null || m.medianTrades20 < R.minMedianTrades) out.push(`thin: median 20d trades ${Math.round(m.medianTrades20 ?? 0)} < ${R.minMedianTrades}`);
+    out.push(
+      `illiquid: median 20d turnover ₹${((m.medianTurnoverLacs20 ?? 0) / 100).toFixed(2)} cr < ₹${R.minMedianTurnoverLacs / 100} cr`,
+    );
+  if (m.medianTrades20 == null || m.medianTrades20 < R.minMedianTrades)
+    out.push(`thin: median 20d trades ${Math.round(m.medianTrades20 ?? 0)} < ${R.minMedianTrades}`);
   if (listingDate && m.asOf < addYear(listingDate)) out.push(`listed < 1 year (${listingDate})`);
   return out;
 }
@@ -211,47 +224,73 @@ export interface WideScreenResult {
   caveat: string;
 }
 
-export async function runWideScreen(opts: { maxPrice?: number } = {}): Promise<WideScreenResult> {
-  // The cap is the user's input; everything else in SCREEN_RULES is fixed.
-  const maxPrice = Number.isFinite(opts.maxPrice) && (opts.maxPrice ?? 0) > 0 ? Math.min(100_000, opts.maxPrice!) : SCREEN_RULES.maxPrice;
-  const rules = { ...SCREEN_RULES, maxPrice };
-  const [{ d: asOf }]: Array<{ d: string }> = await AppDataSource.query(`SELECT to_char(max(trade_date),'YYYY-MM-DD') d FROM nse_delivery`);
+export async function runWideScreen(): Promise<WideScreenResult> {
+  const [{ d: asOf }]: Array<{ d: string }> = await AppDataSource.query(
+    `SELECT to_char(max(trade_date),'YYYY-MM-DD') d FROM nse_delivery`,
+  );
   // Companies only: NSE lists ETFs in the EQ series; nse_securities tags them from NSE's ETF list.
   const under: Array<{ symbol: string }> = await AppDataSource.query(
     `SELECT d.symbol FROM nse_delivery d JOIN nse_securities s ON s.symbol = d.symbol AND s.instrument_type = 'STOCK'
       WHERE d.trade_date = $1 AND d.series = 'EQ' AND d.close_price < $2
       ORDER BY d.symbol`,
-    [asOf, maxPrice]
+    [asOf, maxPrice],
   );
-  const [{ n: universeSize }]: Array<{ n: string }> = await AppDataSource.query(`SELECT count(*) n FROM nse_delivery WHERE trade_date = $1 AND series = 'EQ'`, [asOf]);
+  const [{ n: universeSize }]: Array<{ n: string }> = await AppDataSource.query(
+    `SELECT count(*) n FROM nse_delivery WHERE trade_date = $1 AND series = 'EQ'`,
+    [asOf],
+  );
   const symbols = under.map((u) => u.symbol);
 
-  const hist: Array<{ symbol: string; d: string; c: string; t: string | null; n: string | null; p: string | null }> = await AppDataSource.query(
+  const hist: Array<{
+    symbol: string;
+    d: string;
+    c: string;
+    t: string | null;
+    n: string | null;
+    p: string | null;
+  }> = await AppDataSource.query(
     `SELECT symbol, to_char(trade_date,'YYYY-MM-DD') d, close_price c, turnover_lacs t, no_of_trades n, deliv_pct p
        FROM nse_delivery WHERE series = 'EQ' AND symbol = ANY($1) AND trade_date > $2::date - interval '400 days' ORDER BY symbol, trade_date`,
-    [symbols, asOf]
+    [symbols, asOf],
   );
   const bySymbol = new Map<string, DailyRow[]>();
   for (const h of hist) {
-    const r: DailyRow = { d: h.d, close: Number(h.c), turnoverLacs: h.t == null ? null : Number(h.t), trades: h.n == null ? null : Number(h.n), delivPct: h.p == null ? null : Number(h.p) };
+    const r: DailyRow = {
+      d: h.d,
+      close: Number(h.c),
+      turnoverLacs: h.t == null ? null : Number(h.t),
+      trades: h.n == null ? null : Number(h.n),
+      delivPct: h.p == null ? null : Number(h.p),
+    };
     const g = bySymbol.get(h.symbol);
     if (g) g.push(r);
     else bySymbol.set(h.symbol, [r]);
   }
 
-  const master: Array<{ symbol: string; company_name: string; industry: string | null; indices: string[]; listing_date: string | null }> = await AppDataSource.query(
+  const master: Array<{
+    symbol: string;
+    company_name: string;
+    industry: string | null;
+    indices: string[];
+    listing_date: string | null;
+  }> = await AppDataSource.query(
     `SELECT symbol, company_name, industry, indices, to_char(listing_date,'YYYY-MM-DD') listing_date FROM nse_securities WHERE symbol = ANY($1)`,
-    [symbols]
+    [symbols],
   );
   const masterBy = new Map(master.map((m) => [m.symbol, m]));
 
   // Latest surveillance observation per symbol (the exchange republishes the full list daily).
-  const surv: Array<{ symbol: string; fact: string; detail: { code?: string } | null; observed_at: string }> = await AppDataSource.query(
+  const surv: Array<{
+    symbol: string;
+    fact: string;
+    detail: { code?: string } | null;
+    observed_at: string;
+  }> = await AppDataSource.query(
     `SELECT DISTINCT ON (symbol, fact) symbol, fact, detail, to_char(observed_at,'YYYY-MM-DD') observed_at
        FROM stock_knowledge WHERE kind = 'SURVEILLANCE' AND symbol = ANY($1)
         AND observed_at = (SELECT max(observed_at) FROM stock_knowledge WHERE kind = 'SURVEILLANCE')
       ORDER BY symbol, fact, observed_at DESC`,
-    [symbols]
+    [symbols],
   );
   const survBy = new Map<string, Surveillance[]>();
   for (const s of surv) {
@@ -281,7 +320,12 @@ export async function runWideScreen(opts: { maxPrice?: number } = {}): Promise<W
     });
   }
   rankPassing(rows);
-  rows.sort((a, b) => Number(b.passed) - Number(a.passed) || (b.rank?.score ?? 0) - (a.rank?.score ?? 0) || a.symbol.localeCompare(b.symbol));
+  rows.sort(
+    (a, b) =>
+      Number(b.passed) - Number(a.passed) ||
+      (b.rank?.score ?? 0) - (a.rank?.score ?? 0) ||
+      a.symbol.localeCompare(b.symbol),
+  );
 
   return {
     version: WIDE_SCREEN_VERSION,

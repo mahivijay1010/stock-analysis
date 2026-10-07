@@ -532,7 +532,7 @@ export class ShortTermScanService {
         dataProvider: liveMarketDataProvider.name,
         dataFreshness: shown[0]?.freshness.state ?? "DELAYED",
         dataTimestamp: new Date(),
-        diagnostics: { scanned: views.length, universe: universeLabel, shadow: opts.shadow !== false, riskManager: riskManager as unknown as Record<string, unknown> },
+        diagnostics: { scanned: views.length, universe: universeLabel, shadow: opts.shadow !== false, maxPrice: params.priceMax ?? null, riskManager: riskManager as unknown as Record<string, unknown> },
       })
     );
 

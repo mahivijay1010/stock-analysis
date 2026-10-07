@@ -87,6 +87,8 @@ export interface ScoredConviction {
 export interface ConvictionBoard {
   version: string;
   generatedAt: string | null;
+  /** The price ceiling the underlying scan used (₹). Null if unknown/legacy. */
+  maxPrice: number | null;
   evaluated: number;
   buyGradeCount: number;
   tierCounts: { high: number; medium: number; low: number };
@@ -208,7 +210,7 @@ function compareConviction(a: ScoredConviction, b: ScoredConviction): number {
   return a.aiRedFlags - b.aiRedFlags;
 }
 
-export function buildConvictionBoard(inputs: ConvictionInput[], generatedAt: string | null): ConvictionBoard {
+export function buildConvictionBoard(inputs: ConvictionInput[], generatedAt: string | null, maxPrice: number | null = null): ConvictionBoard {
   const scored = inputs.map(scoreConviction).sort(compareConviction);
   const high = scored.filter((s) => s.tier === "HIGH");
   const medium = scored.filter((s) => s.tier === "MEDIUM");
@@ -230,6 +232,7 @@ export function buildConvictionBoard(inputs: ConvictionInput[], generatedAt: str
   return {
     version: CONVICTION_BOARD_VERSION,
     generatedAt,
+    maxPrice,
     evaluated: scored.length,
     buyGradeCount,
     tierCounts: { high: high.length, medium: medium.length, low: low.length },

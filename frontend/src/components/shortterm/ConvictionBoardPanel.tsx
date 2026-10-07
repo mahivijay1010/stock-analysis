@@ -1,11 +1,12 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { ChevronDown, Gauge, ShieldAlert, Sparkles, TrendingUp } from 'lucide-react';
-import { getConvictionBoard, ConvictionBoard, ScoredConviction, ConvictionTier } from '@/lib/api';
-import { Card, Chip } from '@/components/ui';
+import { ChevronDown, Gauge, Loader2, RefreshCw, ShieldAlert, Sparkles, TrendingUp } from 'lucide-react';
+import { getConvictionBoard, runWideScan, ConvictionBoard, ScoredConviction, ConvictionTier } from '@/lib/api';
+import { Button, Card, Chip, Input } from '@/components/ui';
+import { useAuth } from '@/components/auth/useAuth';
 
 /**
  * Conviction Board — the sub-₹100 shortlist, tiered by EVIDENCE strength and
@@ -128,10 +129,27 @@ function TierColumn({ tier, rows, onOpen }: { tier: ConvictionTier; rows: Scored
   );
 }
 
-export function ConvictionBoardPanel({ onOpen }: { onOpen: (ticker: string) => void }) {
-  const { data, isLoading, isError } = useQuery<ConvictionBoard>({ queryKey: ['conviction-board'], queryFn: getConvictionBoard, staleTime: 60_000 });
+export function ConvictionBoardPanel({ onOpen, scanParams }: { onOpen: (ticker: string) => void; scanParams?: { budgetInr?: number | null; horizon?: '1-3d' | '3-5d' | '5-10d' | '10-21d'; riskPerTradePct?: number | null } }) {
+  const { auth } = useAuth();
+  const isAuthenticated = auth?.status === 'authenticated';
+  const { data, isLoading, isError, refetch } = useQuery<ConvictionBoard>({ queryKey: ['conviction-board'], queryFn: getConvictionBoard, staleTime: 60_000 });
+  const [priceInput, setPriceInput] = useState('');
+
+  // Re-evaluate at a new price ceiling: runs the wide-scan at that cap (so the
+  // universe actually includes the ₹100–N stocks), then refreshes the board.
+  const reEval = useMutation({
+    mutationFn: (maxPrice: number) =>
+      runWideScan({ priceMax: maxPrice, budgetInr: scanParams?.budgetInr ?? 50000, horizon: scanParams?.horizon ?? '5-10d', riskPerTradePct: scanParams?.riskPerTradePct ?? 0.5 }),
+    onSuccess: () => refetch(),
+  });
 
   const generated = useMemo(() => (data?.generatedAt ? new Date(data.generatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : null), [data?.generatedAt]);
+  const ceiling = data?.maxPrice ?? 100;
+
+  const submitPrice = () => {
+    const n = Number(priceInput);
+    if (Number.isFinite(n) && n >= 6 && n <= 2000) reEval.mutate(Math.round(n));
+  };
 
   return (
     <Card className="p-4">
@@ -139,7 +157,7 @@ export function ConvictionBoardPanel({ onOpen }: { onOpen: (ticker: string) => v
         <div>
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-violet-400" aria-hidden />
-            <h2 className="font-display text-sm font-semibold tracking-wide text-slate-200">Conviction Board — sub-₹100, ranked by evidence</h2>
+            <h2 className="font-display text-sm font-semibold tracking-wide text-slate-200">Conviction Board — under ₹{ceiling}, ranked by evidence</h2>
           </div>
           <p className="mt-0.5 max-w-3xl text-[11px] text-slate-500">
             Tiers measure <span className="text-slate-300">how complete the setup is and its reward-to-risk</span> — not the odds of profit. The AI scout can only lower a tier, never raise it.
@@ -152,6 +170,35 @@ export function ConvictionBoardPanel({ onOpen }: { onOpen: (ticker: string) => v
             {generated && <Chip tone="zinc" title="last background evaluation">{generated}</Chip>}
           </div>
         )}
+      </div>
+
+      {/* Price-ceiling control: the board reflects whatever cap was last scanned. */}
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <label className="text-[11px] text-slate-500">
+          Max price ₹
+          <Input
+            type="number"
+            value={priceInput}
+            onChange={(e) => setPriceInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submitPrice()}
+            placeholder={String(ceiling)}
+            className="mt-1 w-28"
+            min={6}
+            max={2000}
+          />
+        </label>
+        <Button onClick={submitPrice} disabled={!isAuthenticated || reEval.isPending} className="h-9">
+          {reEval.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <RefreshCw className="h-3.5 w-3.5" aria-hidden />}
+          Re-evaluate at this price
+        </Button>
+        <p className="text-[11px] text-slate-600">
+          {!isAuthenticated
+            ? 'Sign in to re-evaluate at a new price.'
+            : reEval.isPending
+              ? 'Scanning the wider universe and scoring setups — ~30s…'
+              : `Showing stocks under ₹${ceiling}. Set a new ceiling (₹6–₹2000) to widen or narrow.`}
+        </p>
+        {reEval.isError && <p className="text-[11px] text-rose-300">Re-evaluation failed — try again.</p>}
       </div>
 
       {data && (

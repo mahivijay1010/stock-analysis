@@ -360,7 +360,7 @@ export function ShortTermView() {
         {result && !result.riskManager.newEntriesAllowed && <p className="mt-2 text-xs text-amber-300">{result.riskManager.reasons.join(' · ')} — the radar stays visible, entries are disabled.</p>}
       </Card>
 
-      <ConvictionBoardPanel onOpen={setOpenTicker} />
+      <ConvictionBoardPanel onOpen={setOpenTicker} scanParams={{ budgetInr: params.budgetInr, horizon: params.horizon, riskPerTradePct: params.riskPerTradePct }} />
 
       <WideScreenPanel scanParams={params} onOpen={setOpenTicker} />
 

@@ -907,6 +907,8 @@ export interface ScoredConviction {
 export interface ConvictionBoard {
   version: string;
   generatedAt: string | null;
+  /** The price ceiling (₹) the underlying scan used. */
+  maxPrice: number | null;
   evaluated: number;
   buyGradeCount: number;
   tierCounts: { high: number; medium: number; low: number };

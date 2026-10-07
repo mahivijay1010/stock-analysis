@@ -31,14 +31,15 @@ const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 export class ConvictionBoardService {
   /** Build the board from the most recent WIDE_SUB100 scan run. */
   async board(): Promise<ConvictionBoard> {
-    const runRows: Array<{ id: string; created_at: string }> = await AppDataSource.query(
-      `SELECT id, created_at FROM short_term_scan_runs
+    const runRows: Array<{ id: string; created_at: string; max_price: string | null }> = await AppDataSource.query(
+      `SELECT id, created_at, diagnostics->>'maxPrice' AS max_price FROM short_term_scan_runs
         WHERE diagnostics->>'universe' = 'WIDE_SUB100'
         ORDER BY created_at DESC LIMIT 1`
     );
-    if (runRows.length === 0) return buildConvictionBoard([], null);
+    if (runRows.length === 0) return buildConvictionBoard([], null, null);
     const runId = runRows[0].id;
     const generatedAt = new Date(runRows[0].created_at).toISOString();
+    const maxPrice = runRows[0].max_price != null && Number.isFinite(Number(runRows[0].max_price)) ? Number(runRows[0].max_price) : 100;
 
     const candidates: CandidateRow[] = await AppDataSource.query(
       `SELECT c.ticker, c.action, c.payload, r.created_at AS run_at
@@ -91,7 +92,7 @@ export class ConvictionBoardService {
       };
     });
 
-    return buildConvictionBoard(inputs, generatedAt);
+    return buildConvictionBoard(inputs, generatedAt, maxPrice);
   }
 
   /** Mirror of wideScan.decisionFor for the new-buyer label (kept local to
