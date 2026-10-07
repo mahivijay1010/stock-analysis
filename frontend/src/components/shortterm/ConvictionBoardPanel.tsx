@@ -174,6 +174,14 @@ export function ConvictionBoardPanel({ onOpen, scanParams }: { onOpen: (ticker: 
         </div>
         {data && (
           <div className="flex items-center gap-1.5">
+            {data.regime && (
+              <Chip
+                tone={data.regime.regime === 'TREND_UP' ? 'emerald' : data.regime.regime === 'CRISIS' || data.regime.regime === 'TREND_DOWN' ? 'rose' : 'amber'}
+                title={data.regime.reasons.join(' · ')}
+              >
+                {data.regime.regime.replace('_', ' ').toLowerCase()}
+              </Chip>
+            )}
             <Chip tone={data.buyGradeCount > 0 ? 'emerald' : 'zinc'} glow={data.buyGradeCount > 0}>{data.buyGradeCount} buy-grade</Chip>
             <Chip tone="zinc">{data.evaluated} evaluated</Chip>
             {generated && <Chip tone="zinc" title="last background evaluation">{generated}</Chip>}

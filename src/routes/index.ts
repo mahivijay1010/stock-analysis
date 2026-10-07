@@ -193,6 +193,9 @@ export const createStockRoutes = (): Router => {
   router.get("/short-term/wide-screen", shortTermController.wideScreen); //           GET  /api/short-term/wide-screen — all NSE companies < ₹100, tradeability screen
   router.get("/short-term/wide-screen/report.md", shortTermController.wideScreenMarkdown);
   router.post("/short-term/wide-scan", requireAuth, shortTermController.wideScan); //               POST /api/short-term/wide-scan — entry/exit/action for every wide-screen stock
+  router.get("/short-term/regime", shortTermController.regime); //                                 GET  /api/short-term/regime — current market regime
+  router.get("/short-term/trade-labels", shortTermController.tradeLabels); //                      GET  /api/short-term/trade-labels — triple-barrier label distribution
+  router.post("/short-term/generate-labels", requireAuth, shortTermController.generateLabels); //  POST /api/short-term/generate-labels?limit=N — backfill labels
   router.get("/short-term/conviction-board", shortTermController.convictionBoard); //              GET  /api/short-term/conviction-board — sub-₹100 picks tiered by evidence
   router.get("/short-term/wide-track-record", shortTermController.wideTrackRecord); //              GET  /api/short-term/wide-track-record — sub-₹100 lane graded scoreboard
   router.post("/short-term/wide-scout", requireAuth, shortTermController.wideScout); //              POST /api/short-term/wide-scout?limit=N — DeepSeek risk scout over recent picks

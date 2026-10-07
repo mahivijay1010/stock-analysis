@@ -110,6 +110,8 @@ export interface ConvictionBoard {
   high: ScoredConviction[];
   medium: ScoredConviction[];
   low: ScoredConviction[];
+  /** Market regime context (set by the service; null when unavailable). */
+  regime?: { regime: string; reasons: string[]; realizedVolPct: number | null; drawdownPct: number | null } | null;
   caveat: string;
   headline: string;
 }

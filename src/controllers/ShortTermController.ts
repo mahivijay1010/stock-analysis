@@ -100,6 +100,38 @@ export class ShortTermController {
     }
   };
 
+  /** GET /api/short-term/regime — the current market regime (NIFTY), cached. */
+  regime = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { regimeService } = await import("../services/shortterm/RegimeService");
+      ok(res, await regimeService.detect());
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /api/short-term/trade-labels — the triple-barrier label distribution. */
+  tradeLabels = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { labelingService } = await import("../services/shortterm/LabelingService");
+      ok(res, await labelingService.distribution());
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** POST /api/short-term/generate-labels?limit=N — backfill triple-barrier labels (auth). */
+  generateLabels = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { labelingService } = await import("../services/shortterm/LabelingService");
+      const raw = Number(req.query.limit);
+      const limit = Number.isFinite(raw) && raw > 0 ? Math.min(raw, 2000) : 500;
+      ok(res, await labelingService.generateFromShadowAnchors(limit), 201);
+    } catch (err) {
+      next(err);
+    }
+  };
+
   /** GET /api/short-term/conviction-board — sub-₹100 picks tiered HIGH/MEDIUM/LOW
    *  by EVIDENCE strength + reward:risk (never a profit promise), top 10 each. */
   convictionBoard = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {

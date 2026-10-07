@@ -8,6 +8,7 @@
 import { AppDataSource } from "../../config/database";
 import { buildConvictionBoard, ConvictionBoard, ConvictionInput } from "./convictionBoard";
 import { liquidityService } from "./LiquidityService";
+import { regimeService } from "./RegimeService";
 
 interface CandidateRow {
   ticker: string;
@@ -109,7 +110,12 @@ export class ConvictionBoardService {
       };
     });
 
-    return buildConvictionBoard(inputs, generatedAt, maxPrice);
+    const board = buildConvictionBoard(inputs, generatedAt, maxPrice);
+    const regime = await regimeService.detect().catch(() => null);
+    return {
+      ...board,
+      regime: regime ? { regime: regime.regime, reasons: regime.reasons, realizedVolPct: regime.realizedVolPct, drawdownPct: regime.drawdownPct } : null,
+    };
   }
 
   /** Mirror of wideScan.decisionFor for the new-buyer label (kept local to

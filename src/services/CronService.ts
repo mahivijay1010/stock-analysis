@@ -645,6 +645,19 @@ export class CronService {
     } catch (err) {
       console.error("🪙 [CRON] Sub-₹100 grading failed:", err);
     }
+
+    // Triple-barrier labels: accrue training data from matured anchors so the
+    // model layer has something honest to learn from later. Isolated try.
+    try {
+      const { labelingService } = await import("./shortterm/LabelingService");
+      const lab = await labelingService.generateFromShadowAnchors(500);
+      console.log(
+        `🏷️ [CRON] Triple-barrier labels: ${lab.labelsWritten} written (${JSON.stringify(lab.byLabel)}), ` +
+          `${lab.notMatured} not matured, ${lab.noData} no-data, of ${lab.anchorsExamined} anchors`
+      );
+    } catch (err) {
+      console.error("🏷️ [CRON] Labeling failed:", err);
+    }
   }
 
   /** 00:00 IST — Analysis rows older than 365 days only. */

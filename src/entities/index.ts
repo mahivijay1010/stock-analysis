@@ -90,3 +90,6 @@ export { DecisionOutcomeLedger } from "./DecisionOutcomeLedger";
 
 // Sub-₹100 wide-universe lane: its own prospective ledger + AI dossier store
 export { WideShadowPrediction } from "./WideShadowPrediction";
+
+// Triple-barrier supervised labels (model training-data foundation)
+export { TradeLabel } from "./TradeLabel";
