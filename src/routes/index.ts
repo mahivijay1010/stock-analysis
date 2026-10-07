@@ -193,6 +193,7 @@ export const createStockRoutes = (): Router => {
   router.get("/short-term/wide-screen", shortTermController.wideScreen); //           GET  /api/short-term/wide-screen — all NSE companies < ₹100, tradeability screen
   router.get("/short-term/wide-screen/report.md", shortTermController.wideScreenMarkdown);
   router.post("/short-term/wide-scan", requireAuth, shortTermController.wideScan); //               POST /api/short-term/wide-scan — entry/exit/action for every wide-screen stock
+  router.post("/short-term/portfolio-risk", shortTermController.portfolioRisk); //                  POST /api/short-term/portfolio-risk — VaR/CVaR/concentration/correlation for a book
   router.get("/short-term/valuation", shortTermController.valuation); //                            GET  /api/short-term/valuation?tickers= — descriptive valuation + value-trap read
   router.post("/short-term/refresh-fundamentals", requireAuth, shortTermController.refreshFundamentals); // POST — background-load fundamentals
   router.get("/short-term/regime", shortTermController.regime); //                                 GET  /api/short-term/regime — current market regime

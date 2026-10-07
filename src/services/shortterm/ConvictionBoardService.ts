@@ -120,9 +120,13 @@ export class ConvictionBoardService {
 
     const board = buildConvictionBoard(inputs, generatedAt, maxPrice);
     const regime = await regimeService.detect().catch(() => null);
+    const { regimeGateFor } = await import("./regimeGates");
+    const gate = regime ? regimeGateFor(regime.regime) : null;
     return {
       ...board,
-      regime: regime ? { regime: regime.regime, reasons: regime.reasons, realizedVolPct: regime.realizedVolPct, drawdownPct: regime.drawdownPct } : null,
+      regime: regime
+        ? { regime: regime.regime, reasons: regime.reasons, realizedVolPct: regime.realizedVolPct, drawdownPct: regime.drawdownPct, sizeMultiplier: gate?.sizeMultiplier, gateNote: gate?.note }
+        : null,
     };
   }
 

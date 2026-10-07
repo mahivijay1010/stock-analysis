@@ -100,6 +100,21 @@ export class ShortTermController {
     }
   };
 
+  /** POST /api/short-term/portfolio-risk — VaR/CVaR, concentration, sector caps
+   *  and correlation clusters for a book of positions. Body: { positions:
+   *  [{ticker, sector?, valueInr, beta?}], capitalInr }. Turns picks into a portfolio. */
+  portfolioRisk = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { portfolioRiskService } = await import("../services/shortterm/PortfolioRiskService");
+      const body = (req.body ?? {}) as { positions?: Array<{ ticker: string; sector?: string | null; valueInr: number; beta?: number | null }>; capitalInr?: number };
+      const positions = Array.isArray(body.positions) ? body.positions.filter((p) => p && typeof p.ticker === "string" && p.valueInr > 0).slice(0, 50) : [];
+      const capital = Number(body.capitalInr) > 0 ? Number(body.capitalInr) : positions.reduce((a, p) => a + p.valueInr, 0) || 100000;
+      ok(res, await portfolioRiskService.forPositions(positions, capital));
+    } catch (err) {
+      next(err);
+    }
+  };
+
   /** GET /api/short-term/valuation?tickers=A,B — descriptive valuation/quality
    *  + value-trap read for the given tickers (defaults to the latest wide-screen
    *  passing names). Reads cached fundamentals; never a buy signal. */

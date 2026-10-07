@@ -185,9 +185,10 @@ export function ConvictionBoardPanel({ onOpen, scanParams }: { onOpen: (ticker: 
             {data.regime && (
               <Chip
                 tone={data.regime.regime === 'TREND_UP' ? 'emerald' : data.regime.regime === 'CRISIS' || data.regime.regime === 'TREND_DOWN' ? 'rose' : 'amber'}
-                title={data.regime.reasons.join(' · ')}
+                title={[data.regime.gateNote, ...data.regime.reasons].filter(Boolean).join(' · ')}
               >
                 {data.regime.regime.replace('_', ' ').toLowerCase()}
+                {data.regime.sizeMultiplier != null && data.regime.sizeMultiplier !== 1 && ` · size ×${data.regime.sizeMultiplier}`}
               </Chip>
             )}
             <Chip tone={data.buyGradeCount > 0 ? 'emerald' : 'zinc'} glow={data.buyGradeCount > 0}>{data.buyGradeCount} buy-grade</Chip>

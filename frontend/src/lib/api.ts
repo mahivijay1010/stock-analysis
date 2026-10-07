@@ -959,7 +959,7 @@ export interface ConvictionBoard {
   high: ScoredConviction[];
   medium: ScoredConviction[];
   low: ScoredConviction[];
-  regime?: { regime: string; reasons: string[]; realizedVolPct: number | null; drawdownPct: number | null } | null;
+  regime?: { regime: string; reasons: string[]; realizedVolPct: number | null; drawdownPct: number | null; sizeMultiplier?: number; gateNote?: string } | null;
   caveat: string;
   headline: string;
 }
