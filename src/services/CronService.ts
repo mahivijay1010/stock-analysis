@@ -526,6 +526,17 @@ export class CronService {
     } catch (err) {
       console.error("📚 [CRON] Rotating intelligence refresh failed:", err);
     }
+
+    // Paper pilot: run one cycle of the full decision flow on fake money so the
+    // apparatus is exercised against reality and a prospective track record
+    // accrues. Isolated — a paper failure never sinks the morning job.
+    try {
+      const { paperTradingService } = await import("./shortterm/PaperTradingService");
+      const c = await paperTradingService.runCycle();
+      console.log(`🧪 [CRON] Paper pilot ${c.date}: ${c.resolved} resolved, ${c.opened} opened, ${c.rejected} rejected (regime ${c.regime}); equity ₹${c.equityInr}`);
+    } catch (err) {
+      console.error("🧪 [CRON] Paper pilot cycle failed:", err);
+    }
   }
 
   /**

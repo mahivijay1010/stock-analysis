@@ -57,6 +57,9 @@ import {
   DecisionOutcomeLedger,
   WideShadowPrediction,
   TradeLabel,
+  PaperPilotAccount,
+  PaperPilotPosition,
+  PaperPilotEquity,
 } from "../entities";
 import * as dotenv from "dotenv";
 
@@ -138,6 +141,9 @@ export const AppDataSource = new DataSource({
     DecisionOutcomeLedger,
     WideShadowPrediction,
     TradeLabel,
+    PaperPilotAccount,
+    PaperPilotPosition,
+    PaperPilotEquity,
   ],
   migrations: [__dirname + "/../migrations/*.{js,ts}"],
   subscribers: [],

@@ -100,6 +100,27 @@ export class ShortTermController {
     }
   };
 
+  /** GET /api/short-term/paper-account — the paper pilot's equity curve, open
+   *  positions, closed trades and stats (the system running on fake money). */
+  paperAccount = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { paperTradingService } = await import("../services/shortterm/PaperTradingService");
+      ok(res, await paperTradingService.account());
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** POST /api/short-term/paper-cycle — run one paper-trading cycle now (auth). */
+  paperCycle = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { paperTradingService } = await import("../services/shortterm/PaperTradingService");
+      ok(res, await paperTradingService.runCycle(), 201);
+    } catch (err) {
+      next(err);
+    }
+  };
+
   /** GET /api/short-term/circuit-breaker — may the system open NEW risk now?
    *  Trips on negative rolling expectancy or a deep drawdown; holds in cooldown
    *  while the regime is risk-off. Reads the real resolved-trade stream. */

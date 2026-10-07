@@ -1036,3 +1036,21 @@ export interface ConvictionBoard {
 export function getConvictionBoard(): Promise<ConvictionBoard> {
   return get<ConvictionBoard>('/api/short-term/conviction-board');
 }
+
+// ── Paper pilot (GET /api/short-term/paper-account) ──────────────────────────
+export interface PaperAccountView {
+  version: string;
+  account: { name: string; startingCapitalInr: number; cashInr: number; lastCycleDate: string | null };
+  equityInr: number;
+  totalReturnPct: number;
+  drawdownFromPeakPct: number;
+  openPositions: Array<{ ticker: string; sector: string | null; qty: number; entry: number; stop: number; target: number; slippageBps: number; conviction: number | null; entryDate: string }>;
+  closedTrades: Array<{ ticker: string; entry: number; exit: number | null; exitReason: string | null; pnlInr: number | null; realizedR: number | null; entryDate: string; exitDate: string | null }>;
+  stats: { closed: number; winRatePct: number | null; expectancyR: number | null; realizedPnlInr: number; meanSlippageBps: number | null };
+  equityCurve: Array<{ date: string; equityInr: number }>;
+  caveat: string;
+}
+
+export function getPaperAccount(): Promise<PaperAccountView> {
+  return get<PaperAccountView>('/api/short-term/paper-account');
+}

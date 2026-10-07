@@ -30,7 +30,7 @@ export const REGIME_GATES: Record<Regime, RegimeGateProfile> = {
   TREND_UP: { regime: "TREND_UP", sizeMultiplier: 1.0, convictionBump: 0, stopAtrMultiplier: 1.0, allowedSetups: "ALL", note: "Risk-on: normal size, full setup menu." },
   CHOPPY: { regime: "CHOPPY", sizeMultiplier: 0.75, convictionBump: 5, stopAtrMultiplier: 1.0, allowedSetups: "MEAN_REVERSION_ONLY", note: "No clean trend: fade extremes, avoid breakouts (they fail in chop)." },
   HIGH_VOL: { regime: "HIGH_VOL", sizeMultiplier: 0.5, convictionBump: 8, stopAtrMultiplier: 1.5, allowedSetups: "ALL", note: "High vol: widen stops but HALVE size so rupee risk stays constant." },
-  TREND_DOWN: { regime: "TREND_DOWN", sizeMultiplier: 0.5, convictionBump: 10, stopAtrMultiplier: 0.85, allowedSetups: "TREND_ONLY", note: "Downtrend: half size, tighter stops, only trade WITH the trend (short bias / avoid longs)." },
+  TREND_DOWN: { regime: "TREND_DOWN", sizeMultiplier: 0.5, convictionBump: 10, stopAtrMultiplier: 0.85, allowedSetups: "MEAN_REVERSION_ONLY", note: "Downtrend (long-only): half size, tighter stops, ONLY oversold mean-reversion bounces — never buy momentum/breakouts into a falling market." },
   CRISIS: { regime: "CRISIS", sizeMultiplier: 0.0, convictionBump: 100, stopAtrMultiplier: 0.75, allowedSetups: "TREND_ONLY", note: "Risk-off crisis: new long entries OFF. Capital preservation only." },
 };
 

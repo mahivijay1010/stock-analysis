@@ -93,3 +93,6 @@ export { WideShadowPrediction } from "./WideShadowPrediction";
 
 // Triple-barrier supervised labels (model training-data foundation)
 export { TradeLabel } from "./TradeLabel";
+
+// Paper-trading pilot: a managed portfolio on fake money (runs the full flow)
+export { PaperPilotAccount, PaperPilotPosition, PaperPilotEquity } from "./PaperPilot";

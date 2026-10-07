@@ -98,11 +98,12 @@ describe("regimeGates", () => {
     expect(regimeGateFor("HIGH_VOL").stopAtrMultiplier).toBeGreaterThan(1); // wider stops
   });
 
-  test("CHOPPY allows only mean-reversion; TREND_DOWN only trend setups", () => {
+  test("CHOPPY and TREND_DOWN (long-only) allow only mean-reversion, not breakouts", () => {
     expect(setupAllowedInRegime("BREAKOUT", REGIME_GATES.CHOPPY.allowedSetups)).toBe(false);
     expect(setupAllowedInRegime("PULLBACK", REGIME_GATES.CHOPPY.allowedSetups)).toBe(true);
-    expect(setupAllowedInRegime("MOMENTUM", REGIME_GATES.TREND_DOWN.allowedSetups)).toBe(true);
-    expect(setupAllowedInRegime("MEAN_REVERSION", REGIME_GATES.TREND_DOWN.allowedSetups)).toBe(false);
+    // Long-only in a downtrend: oversold bounces yes, momentum/breakout no.
+    expect(setupAllowedInRegime("MOMENTUM", REGIME_GATES.TREND_DOWN.allowedSetups)).toBe(false);
+    expect(setupAllowedInRegime("MEAN_REVERSION", REGIME_GATES.TREND_DOWN.allowedSetups)).toBe(true);
   });
 
   test("an unknown regime falls back to the cautious CHOPPY profile", () => {
