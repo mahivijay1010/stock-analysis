@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
+  ArrowLeft,
   BarChart3,
   ChartCandlestick,
   ChevronRight,
@@ -18,7 +19,9 @@ import {
   ScrollText,
   Settings,
   X,
-  type LucideIcon, Zap } from 'lucide-react';
+  Zap,
+  type LucideIcon,
+} from 'lucide-react';
 import { getHealth } from '@/lib/api';
 import { SearchBox } from '@/components/analyze/SearchBox';
 import { AmountInput } from '@/components/analyze/AmountInput';
@@ -211,6 +214,7 @@ function SecondaryMenu({ tab, onChoose }: { tab: TabId; onChoose: (id: TabId) =>
 export function Header({
   tab,
   stockLabel,
+  originTab,
   onTabChange,
   onOpenStock,
   onAmountChange,
@@ -218,11 +222,31 @@ export function Header({
   tab: TabId;
   /** Ticker shown in the breadcrumb when the Stock Detail drill-down is open. */
   stockLabel?: string | null;
+  /** The list Stock Detail was opened from; the breadcrumb returns there. */
+  originTab?: TabId | null;
   onTabChange: (tab: TabId) => void;
   onOpenStock: (ticker: string) => void;
   onAmountChange: (amount: number | null) => void;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
+
+  // Where "back" goes from Stock Detail: the list it was opened from, else the
+  // default screen. Never 'stock', which would be a no-op.
+  const backTab: TabId = originTab && originTab !== 'stock' ? originTab : 'watchlist';
+  const backLabel = PRIMARY.find((i) => i.id === backTab)?.label ?? SECONDARY.find((i) => i.id === backTab)?.label ?? 'Watchlist';
+
+  // Escape leaves the drill-down, matching the Short-Term detail view.
+  useEffect(() => {
+    if (tab !== 'stock') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      onTabChange(backTab);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tab, backTab, onTabChange]);
   const active = ALL_NAV.find((item) => item.id === tab) ?? null;
 
   const choose = (id: TabId) => {
@@ -259,15 +283,30 @@ export function Header({
 
       <header className="workspace-topbar fixed top-0 right-0 left-[248px] z-40 hidden h-[72px] items-center justify-between px-8 lg:flex">
         <div className="flex items-center gap-2 text-xs">
-          <span className="topbar-product-label">Market observatory</span>
-          <ChevronRight className="h-3 w-3 text-slate-700" aria-hidden />
           {tab === 'stock' ? (
-            <span className="flex items-center gap-1.5 font-medium text-slate-300">
-              <ChartCandlestick className="h-3.5 w-3.5 text-slate-500" aria-hidden />
-              {stockLabel ? `Stock detail · ${stockLabel}` : 'Stock detail'}
-            </span>
+            <>
+              {/* The drill-down's way out: back to the list it was opened from. */}
+              <button
+                type="button"
+                onClick={() => onTabChange(backTab)}
+                className="flex items-center gap-1 rounded px-1.5 py-1 font-medium text-slate-400 transition-colors hover:text-cyan-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                title={`Back to ${backLabel} (Esc)`}
+              >
+                <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+                {backLabel}
+              </button>
+              <ChevronRight className="h-3 w-3 text-slate-700" aria-hidden />
+              <span className="flex items-center gap-1.5 font-medium text-slate-300">
+                <ChartCandlestick className="h-3.5 w-3.5 text-slate-500" aria-hidden />
+                {stockLabel ? `Stock detail · ${stockLabel}` : 'Stock detail'}
+              </span>
+            </>
           ) : (
-            <span className="font-medium text-slate-300">{active?.label ?? 'Watchlist'}</span>
+            <>
+              <span className="topbar-product-label">Market observatory</span>
+              <ChevronRight className="h-3 w-3 text-slate-700" aria-hidden />
+              <span className="font-medium text-slate-300">{active?.label ?? 'Watchlist'}</span>
+            </>
           )}
         </div>
         <div className="flex min-w-0 items-center gap-2.5">
@@ -280,7 +319,19 @@ export function Header({
       </header>
 
       <header className="mobile-topbar fixed inset-x-0 top-0 z-50 flex h-16 items-center justify-between px-4 lg:hidden">
-        <Brand />
+        {tab === 'stock' ? (
+          <button
+            type="button"
+            onClick={() => onTabChange(backTab)}
+            className="flex items-center gap-1.5 text-sm font-medium text-slate-300"
+            aria-label={`Back to ${backLabel}`}
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden />
+            {backLabel}
+          </button>
+        ) : (
+          <Brand />
+        )}
         <div className="flex items-center gap-2">
           <ThemeToggle compact />
           <button type="button" onClick={() => setMoreOpen(true)} className="icon-button" aria-label="Open navigation">

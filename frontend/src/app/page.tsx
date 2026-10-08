@@ -14,6 +14,8 @@ import { StockDetailView } from '@/components/analyze/AnalyzeView';
 import { SandboxView } from '@/components/admin/AdminView';
 
 const TICKER_KEY = 'stocksense.lastTicker';
+/** Where the user was before drilling into Stock Detail, so "back" returns there. */
+const ORIGIN_TAB_KEY = 'stocksense.stockOriginTab';
 const PENDING_PURCHASE_KEY = 'stocksense.pendingPurchase';
 
 const CANONICAL_TABS: readonly TabId[] = [
@@ -83,6 +85,9 @@ export default function Home() {
   const [ticker, setTicker] = useState<string | null>(null);
   const [amount, setAmount] = useState<number | null>(null);
   const [pendingPurchase, setPendingPurchase] = useState<string | null>(null);
+  // The list the Stock Detail drill-down was opened FROM. Survives a reload via
+  // sessionStorage so the back control still points somewhere sensible.
+  const [originTab, setOriginTab] = useState<TabId | null>(null);
 
   useEffect(() => {
     const applyRoute = (normalize: boolean) => {
@@ -91,6 +96,12 @@ export default function Home() {
       if (route.tab === 'stock') {
         const t = route.ticker ?? window.sessionStorage.getItem(TICKER_KEY);
         if (t) setTicker(t.toUpperCase());
+        try {
+          const o = window.sessionStorage.getItem(ORIGIN_TAB_KEY);
+          if (o && CANONICAL_TABS.includes(o as TabId) && o !== 'stock') setOriginTab(o as TabId);
+        } catch {
+          /* storage unavailable */
+        }
       }
       if (normalize) {
         window.history.replaceState(null, '', hashFor(route.tab, route.ticker));
@@ -117,6 +128,14 @@ export default function Home() {
   const openTab = useCallback(
     (t: TabId) => {
       setTab(t);
+      if (t !== 'stock') {
+        setOriginTab(null);
+        try {
+          window.sessionStorage.removeItem(ORIGIN_TAB_KEY);
+        } catch {
+          /* non-fatal */
+        }
+      }
       window.history.replaceState(null, '', hashFor(t, ticker));
       window.scrollTo({ top: 0 });
     },
@@ -124,18 +143,35 @@ export default function Home() {
   );
 
   /** Drill into Stock Detail from any list row or search result. */
-  const openStock = useCallback((t: string) => {
-    const up = t.toUpperCase();
-    setTicker(up);
-    try {
-      window.sessionStorage.setItem(TICKER_KEY, up);
-    } catch {
-      /* non-fatal */
-    }
-    setTab('stock');
-    window.history.replaceState(null, '', hashFor('stock', up));
-    window.scrollTo({ top: 0 });
-  }, []);
+  const openStock = useCallback(
+    (t: string) => {
+      const up = t.toUpperCase();
+      setTicker(up);
+      // Remember the list we came from. Opening one stock from another keeps
+      // the original list as the destination rather than chaining stock→stock.
+      const from = tab === 'stock' ? originTab : tab;
+      if (from && from !== 'stock') {
+        setOriginTab(from);
+        try {
+          window.sessionStorage.setItem(ORIGIN_TAB_KEY, from);
+        } catch {
+          /* non-fatal */
+        }
+      }
+      try {
+        window.sessionStorage.setItem(TICKER_KEY, up);
+      } catch {
+        /* non-fatal */
+      }
+      setTab('stock');
+      // pushState (not replaceState) so the browser's own Back button returns
+      // to the list instead of leaving the app.
+      if (tab !== 'stock') window.history.pushState(null, '', hashFor('stock', up));
+      else window.history.replaceState(null, '', hashFor('stock', up));
+      window.scrollTo({ top: 0 });
+    },
+    [tab, originTab],
+  );
 
   const consumePendingPurchase = useCallback(() => {
     setPendingPurchase(null);
@@ -167,7 +203,14 @@ export default function Home() {
 
   return (
     <div className="min-h-screen">
-      <Header tab={tab} stockLabel={ticker} onTabChange={openTab} onOpenStock={openStock} onAmountChange={setAmount} />
+      <Header
+        tab={tab}
+        stockLabel={ticker}
+        originTab={originTab}
+        onTabChange={openTab}
+        onOpenStock={openStock}
+        onAmountChange={setAmount}
+      />
       <main
         className="workspace-main w-full px-4 pt-24 pb-28 sm:px-6 lg:ml-[248px] lg:w-[calc(100%-248px)] lg:px-8 lg:pt-[96px] lg:pb-16 2xl:px-10"
         data-workspace={tab}
