@@ -7,6 +7,7 @@ import {
   ArrowUpRight,
   Award,
   ChevronDown,
+  ChevronUp,
   ExternalLink,
   Filter,
   ListFilter,
@@ -530,6 +531,18 @@ function StockRow({
               Direction: <span className="font-medium text-slate-300">no call</span> — the system
               has no demonstrated skill at predicting which of these rise.
             </p>
+            {/* The drawer is tall; the header chevron scrolls out of reach, so
+                it can also be closed from where the reader actually ends up. */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpen(false);
+              }}
+              className="mt-3 inline-flex items-center gap-1 rounded border border-white/10 px-2 py-1 text-[11px] text-slate-400 hover:border-white/20 hover:text-slate-200"
+            >
+              <ChevronUp className="h-3 w-3" aria-hidden /> Close {r.symbol}
+            </button>
           </td>
         </tr>
       )}

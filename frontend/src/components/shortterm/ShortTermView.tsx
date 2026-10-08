@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
@@ -450,6 +450,20 @@ function DetailPanel({
   });
   const reval = useMutation({ mutationFn: () => runShortTermRevalidate(ticker) });
 
+  // Escape returns to the radar from anywhere in this view — the detail is
+  // long enough that a non-sticky back button scrolls out of reach.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const el = document.activeElement as HTMLElement | null;
+      // Don't steal Escape from a field the user is typing in.
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      onBack();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onBack]);
+
   if (q.isPending)
     return (
       <Card className="p-5">
@@ -467,9 +481,10 @@ function DetailPanel({
   const p = c.plan;
   return (
     <div className="short-cockpit space-y-4">
-      <div className="short-cockpit-toolbar flex flex-wrap items-center justify-between gap-2">
-        <Button variant="secondary" size="sm" onClick={onBack}>
+      <div className="short-cockpit-toolbar sticky top-0 z-20 -mx-1 flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-slate-950/85 px-1 py-2 backdrop-blur supports-[backdrop-filter]:bg-slate-950/70">
+        <Button variant="secondary" size="sm" onClick={onBack} title="Back to radar (Esc)">
           <ArrowLeft className="h-3.5 w-3.5" aria-hidden /> Back to radar
+          <kbd className="ml-1.5 hidden rounded border border-white/15 px-1 text-[10px] text-slate-400 sm:inline">Esc</kbd>
         </Button>
         <nav aria-label="Short-term detail sections">
           <DetailTabButton id="overview" label="Overview" active={tab} onSelect={setTab} />
