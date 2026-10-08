@@ -18,6 +18,7 @@ import {
   Wallet,
   Eye,
   ChevronDown,
+  Globe2,
 } from 'lucide-react';
 import {
   getShortTermAiUsage,
@@ -38,6 +39,7 @@ import { WideScreenPanel } from './WideScreenPanel';
 import { ConvictionBoardPanel } from './ConvictionBoardPanel';
 import { ValuationPanel } from './ValuationPanel';
 import { PaperPilotPanel } from './PaperPilotPanel';
+import { GlobalSwingPanel } from './GlobalSwingPanel';
 
 /*
  * SHORT-TERM TRADE RADAR V2 — qualification integrity. Two sections:
@@ -98,6 +100,7 @@ const RADAR_GATES = [
 
 const WORKSPACE_TABS = [
   { id: 'conviction', label: 'Conviction board', icon: Layers3 },
+  { id: 'global', label: 'Global swing', icon: Globe2 },
   { id: 'paper', label: 'Paper pilot', icon: FlaskConical },
   { id: 'screener', label: 'Stock screener', icon: Table2 },
   { id: 'valuation', label: 'Valuation & quality', icon: Coins },
@@ -1024,6 +1027,15 @@ export function ShortTermView() {
           tabIndex={0}
         >
           <ValuationPanel />
+        </div>
+        <div
+          id="radar-panel-global"
+          role="tabpanel"
+          aria-labelledby="radar-tab-global"
+          hidden={workspaceTab !== 'global'}
+          tabIndex={0}
+        >
+          {workspaceTab === 'global' && <GlobalSwingPanel />}
         </div>
         <div
           id="radar-panel-paper"

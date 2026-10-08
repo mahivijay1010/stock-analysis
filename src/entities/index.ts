@@ -96,3 +96,22 @@ export { TradeLabel } from "./TradeLabel";
 
 // Paper-trading pilot: a managed portfolio on fake money (runs the full flow)
 export { PaperPilotAccount, PaperPilotPosition, PaperPilotEquity } from "./PaperPilot";
+
+// Money Desk: immutable capital plans / allocations / graded outcomes / daily snapshots
+export { CapitalPlan, CapitalAllocation, CapitalDecisionOutcome, DailyCapitalDecisionSnapshot } from "./CapitalDesk";
+
+// Universe + Research Engine 2.0: security master, coverage, scans, research, outcomes
+export {
+  SecurityMaster,
+  SecurityMasterChange,
+  SecurityDataCoverage,
+  UniverseSyncRun,
+  OpportunityScan,
+  OpportunityCandidate,
+  ResearchQueueItem,
+  CompanyResearchProfile,
+  OpportunityOutcome,
+} from "./Universe";
+
+// Global Market Intelligence: observations, immutable snapshots, regime days, events, relationship studies
+export { GlobalMarketObservation, GlobalMarketSnapshot, GlobalRegimeDay, GlobalEvent, GlobalRelationshipStudy, IndiaMarketDay } from "./GlobalMarket";

@@ -117,6 +117,15 @@ async function post<T>(url: string, body: unknown): Promise<T> {
   }
 }
 
+async function put<T>(url: string, body: unknown): Promise<T> {
+  try {
+    const res = await http.put<ApiEnvelope<T>>(url, body);
+    return unwrap(res.data, res.status);
+  } catch (err) {
+    throw normalizeError(err);
+  }
+}
+
 async function del<T>(url: string): Promise<T> {
   try {
     const res = await http.delete<ApiEnvelope<T>>(url);
@@ -1054,3 +1063,501 @@ export interface PaperAccountView {
 export function getPaperAccount(): Promise<PaperAccountView> {
   return get<PaperAccountView>('/api/short-term/paper-account');
 }
+
+// ── Global swing screen (GET /api/short-term/global-swing) ───────────────────
+// International large caps (US / ADR / home-market) ranked by how well their PAST
+// volatility, trend and liquidity fit a 10–15 trading-day swing profile.
+// Descriptive only — UNPROVEN, no direction forecast, no demonstrated edge.
+export type GlobalSwingTier = 'SHORTLIST' | 'WATCH' | 'AVOID';
+export type GlobalMarket = 'US' | 'ADR' | 'EU' | 'JP' | 'HK' | 'KR' | 'TW' | 'OTHER';
+export type GlobalAccess = 'US_BROKER' | 'ADR_ON_US' | 'HOME_MARKET_ONLY';
+
+export interface GlobalSwingRow {
+  ticker: string;
+  name: string;
+  market: GlobalMarket;
+  sector: string;
+  access: GlobalAccess;
+  currency: string;
+  price: number;
+  asOf: string;
+  bars: number;
+  atrPct20: number;
+  dailyVolPct20: number;
+  typicalMove12dPct: number;
+  ret20Pct: number;
+  ret60Pct: number;
+  ret120Pct: number;
+  sma50: number | null;
+  sma200: number | null;
+  aboveSma50: boolean | null;
+  aboveSma200: boolean | null;
+  maxDrawdown120Pct: number;
+  pos52w: number | null;
+  avgValue20: number;
+  earningsDate: string | null;
+  earningsInWindow: boolean | null;
+  earningsSource: 'finnhub' | 'manual' | null;
+  plan: { entry: number; stop: number; target: number; stopPct: number; targetPct: number; rewardRisk: number };
+  score: number;
+  tier: GlobalSwingTier;
+  reasons: string[];
+  blocks: string[];
+  roundTripCostPct: number;
+}
+
+export interface GlobalSwingContextRow {
+  symbol: string;
+  last: number;
+  ret5Pct: number;
+  ret20Pct: number;
+  asOf: string;
+}
+
+export interface GlobalSwingBoard {
+  generatedAt: string;
+  windowTradingDays: [number, number];
+  earningsWindowEnd: string;
+  context: { spy: GlobalSwingContextRow | null; vix: GlobalSwingContextRow | null };
+  shortlist: GlobalSwingRow[];
+  watch: GlobalSwingRow[];
+  avoid: GlobalSwingRow[];
+  failed: Array<{ ticker: string; error: string }>;
+  caveat: string;
+  method: string[];
+  evidence: { status: 'UNPROVEN'; gradedOutcomes: number; note: string };
+}
+
+/** GET /api/short-term/global-swing — cached 30 min server-side; refresh forces a rebuild. */
+export function getGlobalSwing(refresh = false): Promise<GlobalSwingBoard> {
+  return get<GlobalSwingBoard>('/api/short-term/global-swing', refresh ? { refresh: 1 } : undefined);
+}
+
+// ── Money Desk (GET /api/capital/today, POST /api/capital/simulate, …) ───────
+// A capital-allocation layer over the short-term engine. It sizes already-
+// qualified setups for the user's capital and profile, decides cash, and flags
+// holdings to reduce/exit. Every number is a system recommendation on measured
+// evidence — never a profit promise. Probability only when AVAILABLE.
+export type RiskProfileName = 'CONSERVATIVE' | 'BALANCED' | 'AGGRESSIVE';
+export type CapitalHorizon = '3-5d' | '5-10d' | '10-21d';
+
+export interface FreshnessContract {
+  quoteTimestamp: string | null;
+  quoteType: 'EOD_FINAL' | 'DELAYED_INTRADAY' | 'LIVE' | 'STALE' | 'UNKNOWN';
+  marketState: 'OPEN' | 'CLOSED' | 'PRE_OPEN' | 'UNKNOWN';
+  latestCompletedBarDate: string | null;
+  providerDelay: string;
+  featureCutoffAt: string | null;
+}
+
+export interface PlannedAllocation {
+  ticker: string;
+  name: string;
+  sector: string | null;
+  action: 'ALLOCATE' | 'WATCH';
+  recommendedAmountInr: number;
+  recommendedQuantity: number;
+  maxAmountInr: number;
+  percentageOfCapital: number;
+  entryPrice: number;
+  entryZoneLow: number | null;
+  entryZoneHigh: number | null;
+  entryType: string;
+  stopPrice: number;
+  target1: number;
+  target2: number | null;
+  target3: number | null;
+  expectedHoldingSessions: number;
+  riskAmountInr: number;
+  rewardRisk: number;
+  evAfterCostsPct: number | null;
+  ev80LowerPct: number | null;
+  evidenceTier: string;
+  evidenceScore: number | null;
+  setupType: string;
+  probability: { status: string; targetBeforeStop: number | null };
+  reasonCodes: string[];
+  riskReasons: string[];
+  invalidationReasons: string[];
+  sizingConstraints: string[];
+  decisionSnapshotId: string | null;
+  changesIf: string[];
+  environment: { global: EnvLabel; india: EnvLabel; sector: EnvLabel; setup: 'PASS' | 'FAIL'; label: string; macroRiskMultiplier: number };
+}
+
+export interface RejectedCandidate {
+  ticker: string;
+  name: string;
+  setupType: string;
+  tier: string;
+  action: string;
+  reasonCodes: string[];
+  whyNot: string[];
+  gateFailures: Array<{ gate: string; current: string; required: string }>;
+}
+
+export interface WithdrawalDecision {
+  ticker: string;
+  name: string;
+  action: 'HOLD' | 'TRAIL' | 'REDUCE' | 'EXIT';
+  qty: number;
+  currentValueInr: number | null;
+  investedInr: number;
+  pnlInr: number | null;
+  pnlPct: number | null;
+  recommendedRemainingInr: number | null;
+  amountToWithdrawInr: number | null;
+  qtyToSell: number | null;
+  trailStopPrice: number | null;
+  reasonCodes: string[];
+  reasons: string[];
+  invalidation: string[];
+  evidenceAsOf: string | null;
+}
+
+export interface CashSummary {
+  capitalAvailableInr: number;
+  capitalInvestedInr: number;
+  totalEquityInr: number;
+  cashReserveInr: number;
+  cashReservePct: number;
+  recommendedDeploymentInr: number;
+  recommendedCashInr: number;
+  maxDeployableInr: number;
+  riskBudgetInr: number;
+  riskUsedInr: number;
+  unusedRiskBudgetInr: number;
+  whyCash: string[];
+}
+
+export interface ScenarioSummary {
+  label: string;
+  maxPortfolioLossInr: number;
+  maxPortfolioLossPct: number;
+  maxUpsideAtTarget1Inr: number;
+  maxUpsideAtTarget1Pct: number;
+  riskPerPositionInr: number[];
+  concentrationLargestPct: number;
+  positions: number;
+}
+
+export interface GlobalDiagnostics {
+  snapshotAt: string | null; globalDataAsOf: string | null; indiaDataAsOf: string | null; scanned: number; valid: number;
+  byRegion: Record<string, { valid: number; total: number }>; byAssetClass: Record<string, { valid: number; total: number }>;
+  regime: string | null; regimeScore: number | null; transmission: string | null; indiaRegime: string | null;
+  sectorImpacts: Array<{ sector: string; name: string; label: string; reason: string }>; activeShocks: string[]; note: string;
+}
+
+export interface ScanCoverage {
+  global: GlobalDiagnostics;
+  asOf: string | null;
+  scanned: number;
+  dataValid: number;
+  liquid: number;
+  technicalScreen: number;
+  researchQualified: number;
+  shortTermSetups: number;
+  passedGates: number;
+  riskQualified: number;
+  modelHealthQualified: number;
+  engineQualified: number;
+  capitalAllocations: number;
+  zeroBecause: string[];
+  note: string;
+}
+
+export interface CapitalPlanResponse {
+  coverage: ScanCoverage;
+  version: string;
+  policyVersion: string;
+  asOf: string;
+  riskProfile: RiskProfileName;
+  horizon: CapitalHorizon;
+  maxPositions: number;
+  regime: { regime: string; reasons: string[]; sizeMultiplier: number };
+  global: { regime: string | null; transmission: EnvLabel | null; macroRiskMultiplier: number; maxPositionsAfterMacro: number; policy: string; reasons: string[]; globalDataAsOf: string | null; indiaDataAsOf: string | null };
+  circuitBreaker: { canEnter: boolean; reason: string | null };
+  freshness: FreshnessContract;
+  allocations: PlannedAllocation[];
+  conditional: PlannedAllocation[];
+  holds: WithdrawalDecision[];
+  withdrawals: WithdrawalDecision[];
+  rejected: RejectedCandidate[];
+  cash: CashSummary;
+  scenario: ScenarioSummary;
+  summary: string;
+  noNewAllocation: boolean;
+  candidatesEvaluated: number;
+  planId: string | null;
+  persisted: boolean;
+  modelHealth: { shortTermModel: string; note: string };
+  evidence: { candidatesSource: string; scanRunIds: string[]; scanRunAt: string | null; note: string };
+  scenarioNote?: string;
+}
+
+export interface DeskSettings {
+  capitalAvailableInr: number;
+  riskProfile: RiskProfileName;
+  horizon: CapitalHorizon;
+  maxPositions: number | null;
+  dailySnapshot: boolean;
+}
+
+export interface DeskRequestParams {
+  capital: number;
+  profile: RiskProfileName;
+  horizon: CapitalHorizon;
+  maxPositions?: number;
+}
+
+export function getCapitalToday(p: DeskRequestParams): Promise<CapitalPlanResponse> {
+  return get<CapitalPlanResponse>('/api/capital/today', {
+    capital: p.capital,
+    profile: p.profile,
+    horizon: p.horizon,
+    ...(p.maxPositions ? { maxPositions: p.maxPositions } : {}),
+  });
+}
+export function simulateCapital(p: DeskRequestParams): Promise<CapitalPlanResponse> {
+  return post<CapitalPlanResponse>('/api/capital/simulate', p);
+}
+export function getDeskSettings(): Promise<DeskSettings> {
+  return get<DeskSettings>('/api/capital/settings');
+}
+export function putDeskSettings(s: Partial<DeskSettings>): Promise<DeskSettings> {
+  return put<DeskSettings>('/api/capital/settings', s);
+}
+export function getCapitalHistory(limit = 20): Promise<{ plans: Array<{ id: string; kind: string; asOf: string; riskProfile: string; horizon: string; summary: string; deploymentInr: number; cashInr: number; regime: string }> }> {
+  return get('/api/capital/history', { limit });
+}
+
+export interface RateStat { n: number; pct: number | null; wilsonLb95Pct: number | null }
+export interface MeanStat { n: number; mean: number | null; ci95: [number, number] | null; median: number | null }
+export interface CapitalMetrics {
+  totalRecommendations: number;
+  resolved: number;
+  observed: number;
+  notFilled: number;
+  ambiguous: number;
+  winRate: RateStat;
+  avgReturnPct: MeanStat;
+  medianReturnPct: number | null;
+  profitFactor: number | null;
+  expectancyR: number | null;
+  maxDrawdownPct: number | null;
+  mfeR: number | null;
+  maeR: number | null;
+  benchmarkExcessPct: MeanStat;
+  withheld: boolean;
+  withheldReason: string | null;
+}
+export interface CapitalTrackRecord {
+  version: string;
+  generatedAt: string;
+  overall: CapitalMetrics;
+  precision: Array<{ k: number; plans: number; precision: number | null; withheldReason: string | null }>;
+  bySetupType: Array<{ key: string; metrics: CapitalMetrics }>;
+  byHorizon: Array<{ key: string; metrics: CapitalMetrics }>;
+  byRegime: Array<{ key: string; metrics: CapitalMetrics }>;
+  byRiskProfile: Array<{ key: string; metrics: CapitalMetrics }>;
+  bySector: Array<{ key: string; metrics: CapitalMetrics }>;
+  byLiquidityBucket: Array<{ key: string; metrics: CapitalMetrics }>;
+  byModelVersion: Array<{ key: string; metrics: CapitalMetrics }>;
+  headline: string;
+  caveat: string;
+}
+export function getCapitalTrackRecord(): Promise<CapitalTrackRecord> {
+  return get<CapitalTrackRecord>('/api/capital/track-record');
+}
+
+// ── Model Lab (GET /api/model-lab, GET /api/model-lab/learning) ──────────────
+export interface PromotionGate { id: string; rule: string; required: string; measured: string; passed: boolean | null }
+export interface ModelLabView {
+  version: string;
+  generatedAt: string;
+  pipeline: Array<{ stage: string; status: string; note: string }>;
+  currentModels: Array<{ key: string; scope: string; state: string; updatedAt: string | null; reasons: string[] }>;
+  experiments: Array<{ id: string; name: string; kind: string; modelVersion: string | null; status: string; startedAt: string | null; finishedAt: string | null; metrics: Record<string, unknown> | null; notes: string | null }>;
+  promotions: Array<{ modelKey: string; from: string; to: string; reason: string; evidenceRunId: string | null; at: string }>;
+  calibrators: Array<{ modelName: string; horizonDays: number; promoted: boolean; verdict: string | null; effectiveSamples: number | null; brierBefore: number | null; brierAfter: number | null }>;
+  setupEvidence: { asOf: string | null; cells: Array<Record<string, unknown>>; verdict: string | null };
+  shadowModels: Array<{ modelName: string; state: string; verdict: string | null; metrics: Record<string, unknown> }>;
+  lessons: Array<{ category: string; observation: string; lesson: string; actionTaken: string; createdAt: string }>;
+  capitalTrackRecord: CapitalTrackRecord;
+  promotionGates: PromotionGate[];
+  evidenceVerdict: string;
+  policy: string[];
+}
+export function getModelLab(): Promise<ModelLabView> {
+  return get<ModelLabView>('/api/model-lab');
+}
+export interface LearningFact { id: string; kind: 'FINDING' | 'INSUFFICIENT' | 'CONTEXT'; statement: string; metric: string; value: number | string | null; n: number; source: string }
+export interface LearningReport {
+  version: string;
+  generatedAt: string;
+  facts: LearningFact[];
+  narrative: Array<{ text: string; cites: string[] }>;
+  narrativeSource: 'deterministic' | 'llm' | 'llm-unavailable';
+  evidenceStatus: string;
+  caveat: string;
+}
+export function getLearningReport(ai = false): Promise<LearningReport> {
+  return get<LearningReport>('/api/model-lab/learning', ai ? { ai: 1 } : undefined);
+}
+
+// ── Universe + Research Engine 2.0 (GET /api/universe/*) ─────────────────────
+export interface UniverseHealth {
+  version: string;
+  generatedAt: string;
+  securities: { total: number; active: number; tradable: number; tierA: number; tierB: number; tierC: number; excluded: number; byType: Record<string, number>; byCapBucket: Record<string, number>; surveillance: number };
+  coverage: { computedAt: string | null; price: number; ohlcv: number; closeOnly: number; fundamentals: number; financialResults: number; corporateActions: number; announcements: number; news: number; technicalFeatures: number; meanScore: number | null; tradableWithTechnical: number };
+  freshness: { deliveryAsOf: string | null; ohlcvAsOf: string | null; masterSyncedAt: string | null; coverageComputedAt: string | null };
+  syncRuns: Array<{ job: string; source: string; status: string; startedAt: string; finishedAt: string | null; counts: Record<string, unknown>; error: string | null }>;
+  providers: Array<{ provider: string; state: string; lastSuccessAt: string | null; lastErrorAt: string | null; lastError: string | null; calls: number; failures: number }>;
+  failedSymbols: Array<{ symbol: string; reason: string }>;
+  retryQueue: Array<{ symbol: string; reason: string }>;
+  recentChanges: Array<{ symbol: string; changeType: string; oldValue: string | null; newValue: string | null; observedAt: string }>;
+  caveat: string;
+}
+export interface FunnelStage { stage: string; entered: number; passed: number; reasons: Record<string, number> }
+export interface ScanFunnel { scanId: string | null; asOf: string | null; regime: string | null; stages: FunnelStage[]; finalQualified: number; zeroBecause: string[]; durationMs: number; scanRunId: string | null }
+export interface ScannerRow {
+  symbol: string;
+  company_name: string;
+  sector: string | null;
+  liquidity_tier: string;
+  market_cap_bucket: string;
+  stage_reached: string;
+  rejected_at_stage: string | null;
+  rejection_reasons: string[];
+  signals: string[];
+  features: Record<string, number | string | boolean | null>;
+  technical_score: string | null;
+  fundamental_score: string | null;
+  event_score: string | null;
+  research_evidence_score: string | null;
+  liquidity_score: string | null;
+  risk_score: string | null;
+  model_health_score: string | null;
+  screen_rank: number | null;
+  setup_type: string | null;
+  action: string | null;
+  tier: string | null;
+  decision_status: string | null;
+  plan: Record<string, number | string | null> | null;
+  coverage_score: string | null;
+  ohlcv_available: boolean | null;
+  fundamentals_available: boolean | null;
+  news_available: boolean | null;
+  research_status: string | null;
+  researched_at: string | null;
+}
+export interface ScannerResult { scanId: string | null; asOf: string | null; regime: string | null; stages: FunnelStage[]; rows: ScannerRow[]; total: number; limit: number; sectors: string[] }
+export type ScannerFilters = Partial<Record<'tier' | 'cap' | 'sector' | 'stage' | 'signal' | 'setup' | 'trend' | 'q' | 'sort', string>> & Partial<Record<'minPrice' | 'maxPrice' | 'minRelVol' | 'minTechnical' | 'minFundamental' | 'min52w' | 'maxVol' | 'limit', number>> & { recentEvent?: '1' };
+
+export function getUniverseHealth(): Promise<UniverseHealth> { return get<UniverseHealth>('/api/universe/health'); }
+export function getUniverseFunnel(): Promise<ScanFunnel> { return get<ScanFunnel>('/api/universe/funnel'); }
+export function getScannerLatest(f: ScannerFilters = {}): Promise<ScannerResult> {
+  const params: Record<string, string | number> = {};
+  for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== '' && v !== null) params[k] = v as string | number;
+  return get<ScannerResult>('/api/universe/scan/latest', params);
+}
+export function runUniverseScan(body: { technicalKeep?: number; researchKeep?: number } = {}): Promise<{ funnel: ScanFunnel; queue: { queued: number } }> { return post('/api/universe/scan', body); }
+export function runUniverseSync(): Promise<{ sync: Record<string, unknown>; coverage: Record<string, number> }> { return post('/api/universe/sync', {}); }
+export interface ResearchQueueRow { symbol: string; priority: number; reasons: string[]; source: string; status: string; queuedAt: string; researchedAt: string | null; profileId: string | null }
+export function getResearchQueue(): Promise<{ items: ResearchQueueRow[] }> { return get('/api/universe/research-queue'); }
+
+export interface Sourced<T> { value: T; source: string; asOf: string | null }
+export interface EvidenceItem { id: string; section: string; statement: string; value: number | string | null; source: string; sourceUrl: string | null; asOf: string | null; kind: 'FACT' }
+export interface AiStatement { kind: 'FACT' | 'INFERENCE' | 'HYPOTHESIS'; text: string; cites: string[] }
+export interface AiResearchOutput { promptVersion: string; modelVersion: string; researchVersion: string; timestamp: string; facts: AiStatement[]; inferences: AiStatement[]; hypotheses: AiStatement[]; dropped: number; dropReasons: string[] }
+export interface ResearchProfile {
+  symbol: string;
+  researchVersion: string;
+  builtAt: string;
+  identity: { companyName: string; isin: string | null; exchange: string; series: string | null; instrumentType: string; sector: string | null; industry: string | null; marketCapBucket: string; marketCapSource: string | null; liquidityTier: string; listedDate: string | null; indices: string[] };
+  business: { summary: Sourced<string> | null; segments: Sourced<string[]> | null; keyDrivers: Sourced<string[]> | null; majorRisks: Sourced<string[]> | null };
+  fundamentals: Record<string, Sourced<number | null>>;
+  valuation: { metrics: Record<string, Sourced<number | null>>; context: Sourced<string> | null };
+  market: Record<string, Sourced<number | string | null>>;
+  events: Array<{ kind: string; fact: string; eventDate: string | null; source: string; sourceUrl: string | null; observedAt: string }>;
+  news: Array<{ kind: string; fact: string; sentiment: string | null; materiality: string | null; source: string; sourceUrl: string | null; observedAt: string }>;
+  results: Array<{ periodEnd: string; periodType: string; concept: string; value: number; source: string }>;
+  shortTerm: { evaluatedAt: string | null; setupType: string | null; action: string | null; tier: string | null; modelHealth: string | null; trend: string | null; entryZoneLow: number | null; entryZoneHigh: number | null; stop: number | null; target1: number | null; target2: number | null; rewardRisk: number | null; ev80LowerPct: number | null; support: number | null; resistance: number | null; whyNotEntry: string[]; source: string };
+  coverage: { score: number | null; ohlcv: boolean; fundamentals: boolean; news: boolean; events: boolean; results: boolean };
+  globalContext?: { globalRegime: string | null; indiaRegime: string | null; transmission: string | null; sectorLabel: string | null; sectorName: string | null; statements: Array<{ text: string; evidence: string }> };
+  dataAsOf: Record<string, string | null>;
+  gaps: string[];
+}
+export interface CompanyIntelligence {
+  symbol: string;
+  profile: ResearchProfile;
+  evidence: EvidenceItem[];
+  profileSource: 'built-now' | 'stored';
+  profileBuiltAt: string;
+  ai: AiResearchOutput | null;
+  aiBuiltAt: string | null;
+  decisionHistory: Array<{ plan_date: string; action: string; decision_status: string; recommended_amount_inr: string | null; entry_price: string | null; stop_price: string | null; target1: string | null; reason_codes: string[]; risk_profile: string; market_regime: string }>;
+  scanHistory: Array<{ as_of: string; stage_reached: string; rejected_at_stage: string | null; rejection_reasons: string[]; signals: string[]; setup_type: string | null; action: string | null; tier: string | null; technical_score: string | null }>;
+  risk: { liquidity_tier: string; liquidity_median_value_inr: string | null; surveillance: string | null; is_tradable: boolean; data_status: string } | null;
+}
+export function getCompanyIntelligence(symbol: string): Promise<CompanyIntelligence> { return get<CompanyIntelligence>(`/api/universe/company/${encodeURIComponent(symbol)}`); }
+export function researchCompany(symbol: string, ai: boolean): Promise<{ profile: ResearchProfile; evidence: EvidenceItem[]; profileId: string | null; ai: AiResearchOutput | null; aiNote: string | null }> {
+  return post(`/api/universe/research/${encodeURIComponent(symbol)}${ai ? '?ai=1' : ''}`, {});
+}
+export interface UniverseLearning extends CapitalTrackRecord {
+  byCapBucket: Array<{ key: string; metrics: CapitalMetrics }>;
+  byLiquidityTier: Array<{ key: string; metrics: CapitalMetrics }>;
+  byVolRegime: Array<{ key: string; metrics: CapitalMetrics }>;
+  byStage: Array<{ key: string; metrics: CapitalMetrics }>;
+  statements: Array<{ text: string; n: number; metric: string }>;
+}
+export function getUniverseLearning(): Promise<UniverseLearning> { return get<UniverseLearning>('/api/universe/learning'); }
+
+// ── Global Market Intelligence (GET /api/global/*) ───────────────────────────
+export type EnvLabel = 'TAILWIND' | 'NEUTRAL' | 'HEADWIND' | 'STRESS';
+export interface GlobalObservation {
+  instrument: string; name: string; assetClass: string; region: string; sessionDate: string; exchangeTz: string; localCloseAt: string; utcCloseAt: string; marketStatus: string;
+  price: number; return1d: number | null; return5d: number | null; return20d: number | null; chg5bps: number | null; chg20bps: number | null; volatility20: number | null; volume: number | null;
+  source: string; sourceTimestamp: string | null; freshness: 'FRESH' | 'DELAYED' | 'STALE'; dataQuality: number; isYield: boolean;
+}
+export interface RegimeComponent { name: string; score: number | null; value: number | null; unit: string; reasons: string[]; covered: boolean; inputs: string[] }
+export interface GlobalRegimeResult { regime: 'RISK_ON' | 'NEUTRAL' | 'CAUTIOUS' | 'RISK_OFF' | 'STRESSED'; score: number; components: RegimeComponent[]; reasons: string[]; dataCoverage: { covered: number; total: number; stale: number; missing: string[] } }
+export interface SectorImpact { sector: string; name: string; label: EnvLabel; drivers: Array<{ driver: string; correlation: number | null; beta: number | null; n: number; activeShock: string | null; direction: 'UP' | 'DOWN' | null }>; reasons: string[] }
+export interface GlobalPulse {
+  id: string | null; cutoffUtc: string; indiaSessionDate: string; globalDataAsOf: string | null; indiaDataAsOf: string | null;
+  observations: GlobalObservation[]; excludedForCutoff: Array<{ instrument: string; sessionDate: string; reason: string }>; missing: Array<{ instrument: string; reason: string }>;
+  coverage: { scanned: number; valid: number; byRegion: Record<string, { valid: number; total: number }>; byAssetClass: Record<string, { valid: number; total: number }>; stale: number };
+  regime: GlobalRegimeResult; india: { regime: string | null; reasons: string[]; diagnosis: { state: string; score: number; date: string } | null };
+  transmission: { label: EnvLabel; reasons: string[]; evidence: Array<{ shock: string; n: number; medianPct: number | null; winRatePct: number | null; benchmarkMeanPct: number | null }>; activeShocks: string[] };
+  sectors: SectorImpact[]; events: Array<{ event: string; region: string; scheduledAt: string; importance: string; expected: string | null; actual: string | null }>;
+  empty?: boolean; note?: string;
+}
+export function getGlobalPulse(): Promise<GlobalPulse> { return get<GlobalPulse>('/api/global/pulse'); }
+export function runGlobalSnapshot(): Promise<GlobalPulse> { return post<GlobalPulse>('/api/global/snapshot', {}); }
+export interface ShockStudyRow { driver: string; shock: string; target: string; horizon: number; n: number; meanPct: number | null; medianPct: number | null; winRatePct: number | null; wilsonLb95Pct: number | null; volPct: number | null; maxDrawdownPct: number | null; benchmarkMeanPct: number | null; benchmarkN: number; displayable: boolean; dataFrom: string | null; dataTo: string | null }
+export interface SensitivityRow { driver: string; target: string; n: number; correlation: number | null; beta: number | null; displayable: boolean; window: number; note: string }
+export function getGlobalStudies(): Promise<{ shocks: Array<{ driver: string; label: string }>; minN: number; studies: ShockStudyRow[]; sensitivities: SensitivityRow[]; caveat: string }> { return get('/api/global/studies'); }
+export interface RegimeTrackRecord { regimes: Array<{ regime: string; n: number; nifty: Record<string, { median: number | null; mean: number | null; winRatePct: number | null; n: number }>; sectors: Array<{ target: string; median5d: number | null; n: number }>; setups: Array<{ setupType: string; n: number; winRatePct: number | null; wilsonLb95Pct: number | null; expectancyR: number | null; withheld: boolean }> }>; unconditional5dMedian: number | null; caveat: string }
+export function getGlobalTrackRecord(): Promise<RegimeTrackRecord> { return get<RegimeTrackRecord>('/api/global/track-record'); }
+
+// ── India Market Diagnosis (GET /api/india/pulse) ────────────────────────────
+export interface IndiaComponent { name: string; score: number | null; value: number | null; unit: string; reasons: string[]; covered: boolean }
+export interface IndiaDiagnosis {
+  version: string;
+  sessionDate: string;
+  state: 'STRONG' | 'NEUTRAL' | 'WEAK' | 'STRESSED';
+  score: number;
+  components: IndiaComponent[];
+  reasons: string[];
+  coverage: { covered: number; total: number; missing: string[] };
+  authoritativeRegime: { regime: string; reasons: string[] } | null;
+}
+export interface IndiaPulse { diagnosis: IndiaDiagnosis | null; history: Array<{ date: string; state: string; score: number }>; note: string }
+export function getIndiaPulse(): Promise<IndiaPulse> { return get<IndiaPulse>('/api/india/pulse'); }
+
+// ── Sector Intelligence (GET /api/india/sectors) ─────────────────────────────
+export interface SectorComponent { name: string; score: number | null; value: number | null; unit: string; reasons: string[]; covered: boolean }
+export interface SectorRegimeRow { version: string; sector: string; name: string; sessionDate: string; state: 'STRONG' | 'NEUTRAL' | 'WEAK' | 'STRESSED'; score: number; components: SectorComponent[]; reasons: string[] }
+export interface IndiaSectors { regimes: SectorRegimeRow[]; history: Record<string, Array<{ date: string; state: string }>>; proxies: Array<{ key: string; name: string; industries: string[] }>; note: string }
+export function getIndiaSectors(): Promise<IndiaSectors> { return get<IndiaSectors>('/api/india/sectors'); }

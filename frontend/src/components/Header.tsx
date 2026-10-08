@@ -21,6 +21,8 @@ import {
   X,
   Zap,
   type LucideIcon,
+  Wallet,
+  Microscope,
 } from 'lucide-react';
 import { getHealth } from '@/lib/api';
 import { SearchBox } from '@/components/analyze/SearchBox';
@@ -28,6 +30,8 @@ import { AmountInput } from '@/components/analyze/AmountInput';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
 export type TabId =
+  | 'money-desk'
+  | 'model-lab'
   | 'watchlist'
   | 'discover'
   | 'short-term'
@@ -35,6 +39,8 @@ export type TabId =
   | 'track-record'
   | 'evidence'
   | 'stock'
+  | 'company'
+  | 'system'
   | 'sandbox'
   | 'diagnostics';
 
@@ -42,16 +48,19 @@ type NavItem = { id: TabId; label: string; short: string; description: string; i
 
 /** The three primary destinations in the simplified product shell. */
 const PRIMARY: NavItem[] = [
+  { id: 'money-desk', label: 'Money Desk', short: 'Desk', description: 'Where to put money today', icon: Wallet },
   { id: 'watchlist', label: 'Watchlist', short: 'Watch', description: 'Positions & live signals', icon: Eye },
   { id: 'discover', label: 'Discover', short: 'Discover', description: 'Opportunity universe', icon: Compass },
   { id: 'short-term', label: 'Short-Term', short: 'Short', description: '1–21 session setups', icon: Zap },
-  { id: 'live', label: 'Live', short: 'Live', description: 'Real-time NSE monitoring', icon: Radio },
   { id: 'track-record', label: 'Track Record', short: 'Record', description: 'Measured model evidence', icon: Gauge },
-  { id: 'evidence', label: 'Evidence', short: 'Evidence', description: 'Predictions, misses & what changed', icon: ScrollText },
+  { id: 'model-lab', label: 'Model Lab', short: 'Lab', description: 'Is the system learning?', icon: Microscope },
 ];
 
 /** Secondary destinations (gear menu): the sandbox desk + protected diagnostics. */
 const SECONDARY: NavItem[] = [
+  { id: 'system', label: 'System Diagnosis', short: 'System', description: 'Global → India → sectors → funnel, end to end', icon: Activity },
+  { id: 'live', label: 'Live', short: 'Live', description: 'Real-time NSE monitoring', icon: Radio },
+  { id: 'evidence', label: 'Evidence', short: 'Evidence', description: 'Predictions, misses & what changed', icon: ScrollText },
   { id: 'sandbox', label: 'Sandbox', short: 'Sandbox', description: 'Paper trading desk — practice records, isolated', icon: FlaskConical },
   { id: 'diagnostics', label: 'Diagnostics', short: 'Diag', description: 'Advanced model diagnostics', icon: Settings },
 ];
@@ -232,12 +241,12 @@ export function Header({
 
   // Where "back" goes from Stock Detail: the list it was opened from, else the
   // default screen. Never 'stock', which would be a no-op.
-  const backTab: TabId = originTab && originTab !== 'stock' ? originTab : 'watchlist';
+  const backTab: TabId = originTab && originTab !== 'stock' && originTab !== 'company' ? originTab : 'discover';
   const backLabel = PRIMARY.find((i) => i.id === backTab)?.label ?? SECONDARY.find((i) => i.id === backTab)?.label ?? 'Watchlist';
 
   // Escape leaves the drill-down, matching the Short-Term detail view.
   useEffect(() => {
-    if (tab !== 'stock') return;
+    if (tab !== 'stock' && tab !== 'company') return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       const el = document.activeElement as HTMLElement | null;
@@ -283,7 +292,7 @@ export function Header({
 
       <header className="workspace-topbar fixed top-0 right-0 left-[248px] z-40 hidden h-[72px] items-center justify-between px-8 lg:flex">
         <div className="flex items-center gap-2 text-xs">
-          {tab === 'stock' ? (
+          {tab === 'stock' || tab === 'company' ? (
             <>
               {/* The drill-down's way out: back to the list it was opened from. */}
               <button
@@ -298,7 +307,7 @@ export function Header({
               <ChevronRight className="h-3 w-3 text-slate-700" aria-hidden />
               <span className="flex items-center gap-1.5 font-medium text-slate-300">
                 <ChartCandlestick className="h-3.5 w-3.5 text-slate-500" aria-hidden />
-                {stockLabel ? `Stock detail · ${stockLabel}` : 'Stock detail'}
+                {tab === 'company' ? `Company intelligence${stockLabel ? ` · ${stockLabel}` : ''}` : stockLabel ? `Stock detail · ${stockLabel}` : 'Stock detail'}
               </span>
             </>
           ) : (
@@ -350,7 +359,7 @@ export function Header({
             </button>
           );
         })}
-        <button type="button" onClick={() => setMoreOpen(true)} className={clsx('mobile-nav-item', ['sandbox', 'diagnostics', 'stock'].includes(tab) && 'mobile-nav-item-active')}>
+        <button type="button" onClick={() => setMoreOpen(true)} className={clsx('mobile-nav-item', ['sandbox', 'diagnostics', 'stock', 'company', 'live', 'evidence', 'system'].includes(tab) && 'mobile-nav-item-active')}>
           <Menu className="h-[18px] w-[18px]" aria-hidden /><span>More</span>
         </button>
       </nav>
@@ -364,7 +373,7 @@ export function Header({
               transition={{ type: 'spring', stiffness: 420, damping: 36 }}
             >
               <div className="mb-3 flex items-center justify-between px-1">
-                <div><p className="font-display text-sm font-semibold text-white">Where next?</p><p className="mt-1 text-[10px] text-slate-500">Watchlist · Discover · Track Record — plus the sandbox desk</p></div>
+                <div><p className="font-display text-sm font-semibold text-white">Where next?</p><p className="mt-1 text-[10px] text-slate-500">Money Desk · Watchlist · Discover · Model Lab — plus Live, Evidence and the sandbox</p></div>
                 <button type="button" onClick={() => setMoreOpen(false)} className="icon-button" aria-label="Close navigation"><X className="h-4 w-4" aria-hidden /></button>
               </div>
               <div className="mb-3 px-1">

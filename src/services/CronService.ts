@@ -238,6 +238,52 @@ export class CronService {
         run: () => this.nightlyWideScreen(),
       },
       {
+        // Global Market Intelligence: immutable snapshot of everything that closed
+        // overnight (US/EU/commodities) + Asia so far, before the 08:45 scan and the
+        // 08:55 Money Desk snapshot consume it as context. Weekdays.
+        name: "morning-global-snapshot",
+        expression: "40 8 * * *",
+        run: () => this.morningGlobalSnapshot(),
+      },
+      {
+        // Weekly: recompute the global→India relationship studies and backfill regimes
+        // (registers an experiment run). Fires daily, acts on Saturday.
+        name: "weekly-global-studies",
+        expression: "30 7 * * *",
+        run: () => this.weeklyGlobalStudies(),
+      },
+      {
+        // Universe engine (docs/universe-diagnostic-2026-10-08.md): exchange security
+        // master sync + liquidity/activity classification + data coverage. After the
+        // bhavcopy top-up in nightly-wide-screen so the latest session is in the feed.
+        name: "nightly-universe-sync",
+        expression: "5 20 * * *",
+        run: () => this.nightlyUniverseSync(),
+      },
+      {
+        // Broad market scan over the tradable tiers → existing setup engine → research
+        // queue → selective research (profiles + budgeted AI). Writes the funnel.
+        name: "nightly-broad-scan",
+        expression: "25 20 * * *",
+        run: () => this.nightlyBroadScan(),
+      },
+      {
+        // M4: fundamentals rotation — refresh the stalest tier-A/B securities'
+        // ratios (and value-based market caps) through the existing scrape engine.
+        // After the broad scan so the night's coverage recompute sees both.
+        name: "nightly-fundamentals-rotation",
+        expression: "45 20 * * *",
+        run: () => this.nightlyFundamentalsRotation(),
+      },
+      {
+        // Money Desk: one immutable DailyCapitalDecisionSnapshot per account per
+        // session, from the 08:45 scan's persisted candidates. The exact state the
+        // desk believed at session start; never regenerated from later data.
+        name: "morning-capital-snapshot",
+        expression: "55 8 * * *",
+        run: () => this.morningCapitalSnapshot(),
+      },
+      {
         // Daily learning from the web (Firecrawl → DeepSeek → validated, dated
         // facts in stock_knowledge), then the pre-registered news-signal study
         // (docs/news-signal-preregistration.md) re-scored on matured calls.
@@ -277,10 +323,16 @@ export class CronService {
     "nightly-selection-study",
     "nightly-wide-screen",
     "nightly-web-knowledge",
+    "morning-capital-snapshot",
+    "nightly-universe-sync",
+    "nightly-broad-scan",
+    "morning-global-snapshot",
+    "nightly-fundamentals-rotation",
   ]);
   private static readonly WEEKLY_JOBS: Record<string, number> = {
     "weekly-official-filings-refresh": 6,
     "weekly-calibration-refresh": 0,
+    "weekly-global-studies": 6,
   };
 
   private catchupSpecs(jobs: JobSpec[]): CatchupJobSpec[] {
@@ -362,6 +414,87 @@ export class CronService {
   }
 
   /** 19:50 IST weekdays — delivery top-up, surveillance refresh, sub-₹100 report. */
+  /** 08:40 weekdays: global snapshot (context + risk input for the desk). */
+  private async morningGlobalSnapshot(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
+    const { globalIntelligenceService } = await import("./global/GlobalIntelligenceService");
+    await globalIntelligenceService.seedEvents();
+    const s = await globalIntelligenceService.snapshot({ persist: true, kind: "SNAPSHOT" });
+    console.log(`🌍 [CRON] Global: regime ${s.regime.regime} (${s.regime.score}), transmission ${s.transmission.label}, ${s.coverage.valid}/${s.coverage.scanned} valid, global data as of ${s.globalDataAsOf}`);
+    const { indiaMarketService } = await import("./global/IndiaMarketService");
+    const india = await indiaMarketService.diagnose({ persist: true });
+    if (india) console.log(`🇮🇳 [CRON] India: ${india.state} (${india.score}) for ${india.sessionDate} — ${india.reasons[1] ?? ""}`);
+    const { sectorIntelligenceService } = await import("./global/SectorIntelligenceService");
+    const sectors = await sectorIntelligenceService.diagnose({ persist: true });
+    console.log(`🏭 [CRON] Sectors: ${sectors.map((x) => `${x.sector.replace("SEC_", "")} ${x.state[0]}`).join(" ")}`);
+  }
+
+  /** Saturday: recompute relationship studies and backfill regime days. */
+  private async weeklyGlobalStudies(): Promise<void> {
+    if (istWeekday() !== 6) throw new NotScheduledToday();
+    const { globalIntelligenceService } = await import("./global/GlobalIntelligenceService");
+    const b = await globalIntelligenceService.backfillRegimeDays(500);
+    const r = await globalIntelligenceService.runStudies();
+    console.log(`🌍 [CRON] Global studies: ${r.studies} studies (${r.displayable} displayable), ${r.sensitivities} sensitivities, ${b.written} regime days`);
+  }
+
+  /** 20:05 weekdays: security master sync (NSE lists), liquidity/activity tiers, data coverage. */
+  private async nightlyUniverseSync(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
+    const { universeIngestionService } = await import("./universe/UniverseIngestionService");
+    const { securityDataCoverageService } = await import("./universe/SecurityDataCoverageService");
+    const sync = await universeIngestionService.syncSecurityUniverse();
+    try {
+      const { announcementIngestService } = await import("./universe/AnnouncementIngestService");
+      const ann = await announcementIngestService.sync(3);
+      console.log(`📰 [CRON] Announcements: ${ann.announcementsFetched} fetched, ${ann.calendarFetched} calendar rows, ${ann.inserted} new, ${ann.unknownSymbols} unknown symbols`);
+    } catch (err) {
+      console.error("📰 [CRON] Announcement ingest failed:", err);
+    }
+    const cov = await securityDataCoverageService.recomputeAll();
+    console.log(`🌐 [CRON] Universe: ${sync.discovered} discovered, ${sync.tradable} tradable, coverage OHLCV ${cov.withOhlcv} / fundamentals ${cov.withFundamentals} / news ${cov.withNews}`);
+  }
+
+  /** 20:25 weekdays: broad scan → research queue → selective research → grade matured broad-scan outcomes. */
+  private async nightlyBroadScan(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
+    const { marketOpportunityScanner } = await import("./universe/MarketOpportunityScanner");
+    const { researchQueueService } = await import("./universe/ResearchQueueService");
+    const { opportunityOutcomeService } = await import("./universe/OpportunityOutcomeService");
+    const f = await marketOpportunityScanner.run();
+    console.log(`🔭 [CRON] Broad scan: ${f.stages.map((s) => `${s.stage} ${s.passed}/${s.entered}`).join(" → ")}; final ${f.finalQualified}`);
+    const q = await researchQueueService.rebuild();
+    const d = await researchQueueService.drain({ ai: process.env.RESEARCH_AI_NIGHTLY !== "0" });
+    console.log(`🔭 [CRON] Research: ${q.queued} queued, ${d.researched} profiled, ${d.aiRuns} AI runs, ${d.failed} failed`);
+    const g = await opportunityOutcomeService.gradeMatured();
+    console.log(`🔭 [CRON] Broad-scan outcomes: ${g.graded} graded, ${g.pending} pending, ${g.failed} failed`);
+  }
+
+  /** 20:45 weekdays: refresh ratios + market caps for the stalest tier-A/B names. */
+  private async nightlyFundamentalsRotation(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
+    const { fundamentalsRotationService } = await import("./universe/FundamentalsRotationService");
+    const r = await fundamentalsRotationService.rotate();
+    console.log(`🧾 [CRON] Fundamentals rotation: ${r.refreshed}/${r.picked} refreshed, ${r.metricsSaved} metrics, ${r.capsSet} market caps set`);
+  }
+
+  /** 08:55 weekdays: immutable Money Desk snapshot for every account that opted in. */
+  private async morningCapitalSnapshot(): Promise<void> {
+    if (!isIstWeekday()) throw new NotScheduledToday();
+    const { capitalAllocationService } = await import("./capital/CapitalAllocationService");
+    const { loadDeskSettings } = await import("../controllers/CapitalController");
+    const { AppDataSource } = await import("../config/database");
+    const accounts: Array<{ id: string }> = await AppDataSource.query(`SELECT id FROM accounts`);
+    let created = 0;
+    for (const a of accounts) {
+      const s = await loadDeskSettings(a.id);
+      if (!s.dailySnapshot) continue;
+      const r = await capitalAllocationService.dailySnapshot(a.id, { capitalAvailableInr: s.capitalAvailableInr, riskProfile: s.riskProfile, horizon: s.horizon });
+      if (r.created) created += 1;
+    }
+    console.log(`💼 [CRON] Money Desk snapshots: ${created} created for ${accounts.length} account(s)`);
+  }
+
   private async nightlyWideScreen(): Promise<void> {
     if (!isIstWeekday()) throw new NotScheduledToday();
     const { backfill } = await import("../scripts/backfillNseDelivery");
@@ -655,6 +788,16 @@ export class CronService {
       console.log(`🪙 [CRON] Sub-₹100 lane: ${wide.resolved} picks graded, ${wide.pending} still pending`);
     } catch (err) {
       console.error("🪙 [CRON] Sub-₹100 grading failed:", err);
+    }
+
+    // Money Desk: grade matured capital recommendations (same bracket simulator,
+    // plus a NIFTY benchmark leg) so the desk earns — or fails to earn — a record.
+    try {
+      const { capitalOutcomeService } = await import("./capital/CapitalOutcomeService");
+      const g = await capitalOutcomeService.gradeMatured();
+      console.log(`💼 [CRON] Money Desk: ${g.graded} recommendations graded, ${g.pending} pending, ${g.failed} failed`);
+    } catch (err) {
+      console.error("💼 [CRON] Money Desk grading failed:", err);
     }
 
     // Triple-barrier labels: accrue training data from matured anchors so the

@@ -14,6 +14,9 @@ import {
   LearningJournalController,
 } from "../controllers";
 import { createAdminRoutes } from "./admin";
+import { CapitalController } from "../controllers/CapitalController";
+import { UniverseController } from "../controllers/UniverseController";
+import { GlobalController } from "../controllers/GlobalController";
 import { requireAuth, requireAuthOrAdminKey, requireCsrfHeader } from "../middleware/auth";
 import { computeTradeEconomics } from "../services/decision/tradeEconomics";
 
@@ -56,6 +59,9 @@ export const createStockRoutes = (): Router => {
   const ledgerController = new LedgerController();
   const forecastController = new ForecastController();
   const shortTermController = new ShortTermController();
+  const capitalController = new CapitalController();
+  const universeController = new UniverseController();
+  const globalController = new GlobalController();
 
   // ── Auth (Phase B2, spec §12) ─────────────────────────────────────────────
   // Session cookie: httpOnly + SameSite=Strict; CSRF = custom X-Requested-With
@@ -205,6 +211,40 @@ export const createStockRoutes = (): Router => {
   router.get("/short-term/trade-labels", shortTermController.tradeLabels); //                      GET  /api/short-term/trade-labels — triple-barrier label distribution
   router.post("/short-term/generate-labels", requireAuth, shortTermController.generateLabels); //  POST /api/short-term/generate-labels?limit=N — backfill labels
   router.get("/short-term/conviction-board", shortTermController.convictionBoard); //              GET  /api/short-term/conviction-board — sub-₹100 picks tiered by evidence
+  // ── Global Market Intelligence (spec §26–§44) ────────────────────────────
+  router.get("/global/pulse", globalController.pulse); //                             GET  /api/global/pulse
+  router.post("/global/snapshot", requireAuth, globalController.snapshot); //         POST /api/global/snapshot — immutable snapshot now
+  router.get("/global/studies", globalController.studies); //                         GET  /api/global/studies — shock studies + sensitivities
+  router.post("/global/run-studies", requireAuth, globalController.runStudies); //    POST /api/global/run-studies
+  router.get("/global/track-record", globalController.trackRecord); //                GET  /api/global/track-record — regime × forward returns × setups
+  router.post("/global/backfill", requireAuth, globalController.backfill); //         POST /api/global/backfill?days=
+  router.get("/global/events", globalController.events);
+  router.get("/india/pulse", globalController.indiaPulse); //                          GET  /api/india/pulse — India market diagnosis (breadth, VIX, INR, sectors)
+  router.post("/india/backfill", requireAuth, globalController.indiaBackfill);
+  router.get("/india/sectors", globalController.sectors); //                           GET  /api/india/sectors — per-sector regimes (diagnostic)
+  router.post("/india/sectors/backfill", requireAuth, globalController.sectorsBackfill); // POST /api/india/sectors/backfill?days= //      POST /api/india/backfill?days= //                           GET  /api/global/events
+  // ── Universe + Research Engine 2.0 (docs/universe-diagnostic-2026-10-08.md) ──
+  router.get("/universe/health", universeController.health); //                        GET  /api/universe/health
+  router.get("/universe/securities", universeController.securities); //                GET  /api/universe/securities?tier=&type=&cap=&q=
+  router.get("/universe/funnel", universeController.funnel); //                        GET  /api/universe/funnel — today's stage counts + reasons
+  router.get("/universe/scan/latest", universeController.scanLatest); //               GET  /api/universe/scan/latest — scanner table with filters
+  router.post("/universe/sync", requireAuth, universeController.sync); //              POST /api/universe/sync — security master + coverage now
+  router.post("/universe/scan", requireAuth, universeController.scan); //              POST /api/universe/scan — broad scan now
+  router.get("/universe/research-queue", universeController.researchQueue); //        GET  /api/universe/research-queue
+  router.post("/universe/research/:symbol", requireAuth, universeController.research); // POST /api/universe/research/:symbol?ai=1
+  router.get("/universe/company/:symbol", universeController.company); //             GET  /api/universe/company/:symbol — Company Intelligence
+  router.get("/universe/learning", universeController.learning); //                   GET  /api/universe/learning — segment performance (withheld < 10)
+  // ── Money Desk / capital allocation (docs/money-desk.md) ───────────────────
+  router.get("/capital/today", requireAuth, capitalController.today); //                GET  /api/capital/today?capital=&profile=&horizon=&maxPositions= — immutable plan
+  router.post("/capital/simulate", requireAuth, capitalController.simulate); //         POST /api/capital/simulate — same engine, not persisted (SCENARIO)
+  router.get("/capital/history", requireAuth, capitalController.history); //            GET  /api/capital/history — past immutable plans
+  router.get("/capital/track-record", capitalController.trackRecord); //                GET  /api/capital/track-record — graded desk outcomes vs NIFTY (withheld < 10)
+  router.post("/capital/grade", requireAuth, capitalController.grade); //               POST /api/capital/grade — grade matured recommendations now
+  router.get("/capital/settings", requireAuth, capitalController.getSettings); //       GET  /api/capital/settings
+  router.put("/capital/settings", requireAuth, capitalController.putSettings); //       PUT  /api/capital/settings — capital / profile / horizon defaults
+  router.get("/model-lab", capitalController.modelLab); //                              GET  /api/model-lab — read-only registry + promotion gates
+  router.get("/model-lab/learning", capitalController.learning); //                     GET  /api/model-lab/learning?ai=1 — Learning Analyst (facts first)
+  router.get("/short-term/global-swing", shortTermController.globalSwing); //                     GET  /api/short-term/global-swing — international 10–15d swing screen (UNPROVEN)
   router.get("/short-term/wide-track-record", shortTermController.wideTrackRecord); //              GET  /api/short-term/wide-track-record — sub-₹100 lane graded scoreboard
   router.post("/short-term/wide-scout", requireAuth, shortTermController.wideScout); //              POST /api/short-term/wide-scout?limit=N — DeepSeek risk scout over recent picks
   router.get("/short-term/ai-usage", shortTermController.aiUsage); //                   GET  /api/short-term/ai-usage

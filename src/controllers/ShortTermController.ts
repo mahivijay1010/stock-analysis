@@ -244,6 +244,18 @@ export class ShortTermController {
     }
   };
 
+  /** GET /api/short-term/global-swing?refresh=1 — descriptive 10–15 day swing screen of
+   *  international large caps (US/ADR/home-market). UNPROVEN: ranks volatility/trend fit,
+   *  never direction. Cached 30 min; refresh=1 rebuilds (public, read-only, rate-cheap). */
+  globalSwing = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { globalSwingService } = await import("../services/shortterm/GlobalSwingService");
+      ok(res, await globalSwingService.board(req.query.refresh === "1"));
+    } catch (err) {
+      next(err);
+    }
+  };
+
   /** GET /api/short-term/wide-track-record — the sub-₹100 lane's graded, deduped,
    *  sample-size-gated track record (its OWN scoreboard, isolated from the radar). */
   wideTrackRecord = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {

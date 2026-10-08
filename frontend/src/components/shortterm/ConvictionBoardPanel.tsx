@@ -255,7 +255,7 @@ export function ConvictionBoardPanel({
 }) {
   const { auth } = useAuth();
   const isAuthenticated = auth?.status === 'authenticated';
-  const { data, isLoading, isError, refetch } = useQuery<ConvictionBoard>({
+  const { data, isLoading, isError, error, refetch } = useQuery<ConvictionBoard>({
     queryKey: ['conviction-board'],
     queryFn: getConvictionBoard,
     staleTime: 60_000,
@@ -501,7 +501,13 @@ export function ConvictionBoardPanel({
       )}
       {isError && (
         <ErrorState
-          message="The latest conviction board is unavailable. Retry to reconnect to the research engine."
+          message={`The conviction board could not be loaded: ${
+            error instanceof Error ? error.message : 'unknown error'
+          }. ${
+            error instanceof Error && /Internal Server Error/i.test(error.message)
+              ? 'The backend hit an exception — check its log for the stack (a missing table means pending migrations).'
+              : 'Retry to reconnect to the research engine.'
+          }`}
           onRetry={() => refetch()}
         />
       )}

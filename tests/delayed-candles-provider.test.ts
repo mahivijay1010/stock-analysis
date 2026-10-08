@@ -248,3 +248,12 @@ describe("DelayedCandlesProvider end-to-end on fixtures", () => {
     expect(p.health().state).toBe("CONNECTED");
   });
 });
+
+describe("yahoo holiday placeholder bars", () => {
+  const { isHolidayPlaceholder } = jest.requireActual("../src/services/market/yahoo") as typeof import("../src/services/market/yahoo");
+  test("flat zero-volume bar is a placeholder; real zero-volume bar with range is not; indices with range are kept", () => {
+    expect(isHolidayPlaceholder(397.95, 397.95, 397.95, 397.95, 0)).toBe(true);
+    expect(isHolidayPlaceholder(397.95, 399, 395, 397.95, 0)).toBe(false);
+    expect(isHolidayPlaceholder(397.95, 397.95, 397.95, 397.95, 1000)).toBe(false);
+  });
+});

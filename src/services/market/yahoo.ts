@@ -137,6 +137,11 @@ async function getJson<T>(url: string): Promise<T> {
     : new Error(`Yahoo request failed: ${String(lastError)} [${url}]`);
 }
 
+/** A flat zero-volume bar is a Yahoo holiday placeholder, never an observed session. */
+export function isHolidayPlaceholder(open: number, high: number, low: number, close: number, volume: number): boolean {
+  return volume === 0 && open === high && high === low && low === close;
+}
+
 function toFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -195,6 +200,12 @@ export async function fetchChart(
     }
     // Indices (e.g. ^NSEI) report null/0 volume; treat missing volume as 0.
     const volume = toFiniteNumber(volumes[i]) ?? 0;
+    // Yahoo emits a PLACEHOLDER bar on NSE holidays (e.g. 2026-10-02): open=high=low=close
+    // = the prior close with zero volume. The exchange has no session that day. Such a bar
+    // is not a trading session — it would count as a zero-volume bar (liquidity gate) and
+    // distort returns/ATR — so it is dropped here, at the source. Verified 2026-10-08
+    // against the NSE bhavcopy (docs/universe-diagnostic-2026-10-08.md).
+    if (isHolidayPlaceholder(open, high, low, close, volume)) continue;
     const adjustedClose = toFiniteNumber(adjcloses[i]); // null when Yahoo omits it
     const date = unixToISTDateString(ts);
     barsByDate.set(date, { date, open, high, low, close, volume, adjustedClose });

@@ -12,6 +12,10 @@ import { EvidenceView } from '@/components/evidence/EvidenceView';
 import { TrackRecordView } from '@/components/TrackRecordView';
 import { StockDetailView } from '@/components/analyze/AnalyzeView';
 import { SandboxView } from '@/components/admin/AdminView';
+import { MoneyDeskView } from '@/components/capital/MoneyDeskView';
+import { ModelLabView } from '@/components/modellab/ModelLabView';
+import { CompanyIntelligenceView } from '@/components/company/CompanyIntelligenceView';
+import { SystemDiagnosisView } from '@/components/discover/SystemDiagnosisView';
 
 const TICKER_KEY = 'stocksense.lastTicker';
 /** Where the user was before drilling into Stock Detail, so "back" returns there. */
@@ -19,6 +23,8 @@ const ORIGIN_TAB_KEY = 'stocksense.stockOriginTab';
 const PENDING_PURCHASE_KEY = 'stocksense.pendingPurchase';
 
 const CANONICAL_TABS: readonly TabId[] = [
+  'money-desk',
+  'model-lab',
   'watchlist',
   'discover',
   'short-term',
@@ -26,6 +32,8 @@ const CANONICAL_TABS: readonly TabId[] = [
   'track-record',
   'evidence',
   'stock',
+  'company',
+  'system',
   'sandbox',
   'diagnostics',
 ];
@@ -43,10 +51,10 @@ function routeFromHash(): { tab: TabId; ticker: string | null } {
   const raw = window.location.hash.replace(/^#/, '');
   const [head, ...rest] = raw.split('/');
 
-  if (head === 'stock') {
+  if (head === 'stock' || head === 'company') {
     const t = rest.join('/').trim();
-    if (t) return { tab: 'stock', ticker: decodeURIComponent(t).toUpperCase() };
-    return { tab: 'stock', ticker: null };
+    if (t) return { tab: head, ticker: decodeURIComponent(t).toUpperCase() };
+    return { tab: head, ticker: null };
   }
   if ((CANONICAL_TABS as readonly string[]).includes(head)) return { tab: head as TabId, ticker: null };
 
@@ -68,11 +76,11 @@ function routeFromHash(): { tab: TabId; ticker: string | null } {
     return { tab: 'discover', ticker: null };
   if (head === 'accuracy') return { tab: 'track-record', ticker: null };
   if (head === 'desk' || head === 'admin') return { tab: 'sandbox', ticker: null };
-  return { tab: 'watchlist', ticker: null };
+  return { tab: 'money-desk', ticker: null };
 }
 
 function hashFor(tab: TabId, ticker: string | null): string {
-  if (tab === 'stock' && ticker) return `#stock/${encodeURIComponent(ticker)}`;
+  if ((tab === 'stock' || tab === 'company') && ticker) return `#${tab}/${encodeURIComponent(ticker)}`;
   return `#${tab}`;
 }
 
@@ -80,7 +88,7 @@ export default function Home() {
   // First render matches the server (watchlist); the mount effect restores the
   // real route before paint settles. Hash routing survives refresh without
   // useSearchParams' Suspense/prerender pain.
-  const [tab, setTab] = useState<TabId>('watchlist');
+  const [tab, setTab] = useState<TabId>('money-desk');
   const [routeReady, setRouteReady] = useState(false);
   const [ticker, setTicker] = useState<string | null>(null);
   const [amount, setAmount] = useState<number | null>(null);
@@ -93,12 +101,12 @@ export default function Home() {
     const applyRoute = (normalize: boolean) => {
       const route = routeFromHash();
       setTab(route.tab);
-      if (route.tab === 'stock') {
+      if (route.tab === 'stock' || route.tab === 'company') {
         const t = route.ticker ?? window.sessionStorage.getItem(TICKER_KEY);
         if (t) setTicker(t.toUpperCase());
         try {
           const o = window.sessionStorage.getItem(ORIGIN_TAB_KEY);
-          if (o && CANONICAL_TABS.includes(o as TabId) && o !== 'stock') setOriginTab(o as TabId);
+          if (o && CANONICAL_TABS.includes(o as TabId) && o !== 'stock' && o !== 'company') setOriginTab(o as TabId);
         } catch {
           /* storage unavailable */
         }
@@ -143,6 +151,24 @@ export default function Home() {
   );
 
   /** Drill into Stock Detail from any list row or search result. */
+  const openCompany = useCallback(
+    (symbol: string) => {
+      const up = symbol.toUpperCase().replace(/\.NS$/, '');
+      setTicker(up);
+      const from = tab === 'stock' || tab === 'company' ? originTab : tab;
+      if (from && from !== 'stock' && from !== 'company') {
+        setOriginTab(from);
+        try { window.sessionStorage.setItem(ORIGIN_TAB_KEY, from); } catch { /* non-fatal */ }
+      }
+      try { window.sessionStorage.setItem(TICKER_KEY, up); } catch { /* non-fatal */ }
+      setTab('company');
+      if (tab !== 'company') window.history.pushState(null, '', hashFor('company', up));
+      else window.history.replaceState(null, '', hashFor('company', up));
+      window.scrollTo({ top: 0 });
+    },
+    [tab, originTab],
+  );
+
   const openStock = useCallback(
     (t: string) => {
       const up = t.toUpperCase();
@@ -225,7 +251,10 @@ export default function Home() {
                   onOpenStock={openStock}
                 />
               )}
-              {tab === 'discover' && <DiscoverView onOpenStock={openStock} />}
+              {tab === 'money-desk' && <MoneyDeskView onOpenStock={openStock} onGoToShortTerm={() => openTab('short-term')} />}
+              {tab === 'model-lab' && <ModelLabView />}
+              {tab === 'system' && <SystemDiagnosisView />}
+              {tab === 'discover' && <DiscoverView onOpenStock={openStock} onOpenCompany={openCompany} />}
               {tab === 'short-term' && <ShortTermView />}
               {tab === 'live' && <LiveView />}
               {tab === 'track-record' && <TrackRecordView />}
@@ -240,6 +269,7 @@ export default function Home() {
                   onGoToTrackRecord={() => openTab('track-record')}
                 />
               )}
+              {tab === 'company' && <CompanyIntelligenceView symbol={ticker} onOpenStock={openStock} onBack={() => openTab(originTab ?? 'discover')} />}
               {tab === 'sandbox' && <SandboxView onOpenStock={openStock} />}
             </TabPanel>
           </AnimatePresence>
